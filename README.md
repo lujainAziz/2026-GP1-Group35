@@ -31,7 +31,6 @@ with the `ASSAS_DB_PATH` environment variable.
 - **API** (`appliance/api.py`) — runs as the `assas-api` systemd service; FastAPI +
   uvicorn on `0.0.0.0:8000`, opening the DB read-only. Endpoints and polling guidance
   are in [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
-- **Flutter app** (`app/`) — the GUI a teammate builds against the API contract.
 
 ## Running the tests
 
