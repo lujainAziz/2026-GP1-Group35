@@ -1,0 +1,19 @@
+*.db
+__pycache__/
+*.pyc
+*.db-journal
+*.db-wal
+*.db-shm
+*.pcap
+.venv/
+*.bak
+assas_monitor.log
+
+# Flutter / Dart (generated + IDE)
+.dart_tool/
+.idea/
+*.iml
+*.log
+build/
+.flutter-plugins
+.flutter-plugins-dependencies

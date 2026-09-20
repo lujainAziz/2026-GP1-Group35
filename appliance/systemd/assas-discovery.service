@@ -1,0 +1,22 @@
+[Unit]
+Description=ASSAS Device Discovery and Passive Fingerprinting
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/assas/assas/appliance
+
+Environment=PYTHONUNBUFFERED=1
+Environment=ASSAS_DISCOVERY_IFACE=wlan0
+Environment=ASSAS_CAPTURE_IFACE=eth1
+Environment=ASSAS_UPNP_ENRICH=1
+
+ExecStart=/usr/bin/python3 /home/assas/assas/appliance/discovery.py
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

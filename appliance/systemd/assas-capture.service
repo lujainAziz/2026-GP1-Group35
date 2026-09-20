@@ -1,0 +1,11 @@
+[Unit]
+Description=Assas capture interface setup
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/ip link set eth1 promisc on
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- Advertises the ASSAS read-only inventory API over mDNS so clients can
+     discover the appliance by service type instead of a hardcoded IP.
+     Install to /etc/avahi/services/ (see appliance/avahi/README.md). -->
+<service-group>
+  <name replace-wildcards="yes">ASSAS Inventory API on %h</name>
+  <service>
+    <type>_assas._tcp</type>
+    <port>8000</port>
+    <txt-record>path=/</txt-record>
+  </service>
+</service-group>
