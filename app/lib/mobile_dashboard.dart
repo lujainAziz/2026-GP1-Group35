@@ -176,7 +176,7 @@ class _MobileDashboardState extends State<MobileDashboard> {
               _buildDetailRow("IP Address", ip, isDark),
               _buildDetailRow("MAC Address", mac, isDark),
               _buildDetailRow("Hardware Vendor (OUI)", vendor, isDark),
-              _buildDetailRow("Inspection Mode", "Passive SPAN (eth0)", isDark),
+              _buildDetailRow("Inspection Mode", "Passive SPAN (eth1)", isDark),
               const SizedBox(height: 12),
             ],
           ),
@@ -275,7 +275,7 @@ class _MobileDashboardState extends State<MobileDashboard> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          isConnected ? "Active • eth0 SPAN" : "Offline • Fallback",
+                          isConnected ? "Active • eth1 SPAN" : "Offline • Fallback",
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w500,

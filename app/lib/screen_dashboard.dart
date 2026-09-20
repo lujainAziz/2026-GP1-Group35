@@ -46,7 +46,7 @@ class ApplianceScreenDashboard extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         const Text(
-                          "Appliance Online • eth0 SPAN Mode",
+                          "Appliance Online • eth1 SPAN Mode",
                           style: TextStyle(
                             color: AppColors.darkPurpleBase,
                             fontSize: 12,
@@ -128,12 +128,12 @@ class ApplianceScreenDashboard extends StatelessWidget {
                                     width: 50,
                                     height: 50,
                                     decoration: BoxDecoration(
-                                      color: AppColors.statusSafe.withOpacity(0.12),
+                                      color: Colors.grey.withOpacity(0.12),
                                       borderRadius: BorderRadius.circular(14),
                                     ),
                                     child: const Icon(
                                       Icons.shield_outlined,
-                                      color: AppColors.statusSafe,
+                                      color: Colors.grey,
                                       size: 28,
                                     ),
                                   ),
@@ -144,7 +144,7 @@ class ApplianceScreenDashboard extends StatelessWidget {
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: const [
                                         Text(
-                                          'Suricata IDS Engine',
+                                          'Threat Detection',
                                           style: TextStyle(
                                             color: AppColors.darkPurpleBase,
                                             fontSize: 16,
@@ -153,7 +153,7 @@ class ApplianceScreenDashboard extends StatelessWidget {
                                         ),
                                         SizedBox(height: 4),
                                         Text(
-                                          'Zero active signature exploits detected',
+                                          'Planned for Sprint 1 — not yet enabled',
                                           style: TextStyle(
                                             color: Colors.black54,
                                             fontSize: 12,

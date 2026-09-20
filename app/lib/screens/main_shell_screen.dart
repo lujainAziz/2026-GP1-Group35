@@ -150,7 +150,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
               _buildDetailRow("IP Address", ip),
               _buildDetailRow("MAC Address", mac),
               _buildDetailRow("Hardware Vendor (OUI)", vendor),
-              _buildDetailRow("Inspection Mode", "Passive SPAN (eth0)"),
+              _buildDetailRow("Inspection Mode", "Passive SPAN (eth1)"),
               const SizedBox(height: 14),
             ],
           ),
@@ -294,7 +294,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    isConnected ? "Active • eth0 SPAN" : "Fallback • Local Mode",
+                    isConnected ? "Active • eth1 SPAN" : "Fallback • Local Mode",
                     style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w600,
@@ -559,7 +559,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
               const Icon(Icons.shield_outlined, size: 58, color: AppColors.vibrantPurple),
               const SizedBox(height: 14),
               const Text(
-                "Zero Exploits Detected",
+                "Threat Detection Not Yet Enabled",
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -568,7 +568,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                "Suricata IDS Engine is actively inspecting real-time mirror traffic on SPAN eth0",
+                "Threat detection is not enabled yet. Signature-based detection (Suricata) is planned for Sprint 1; the appliance currently performs passive device discovery and classification only.",
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
               ),

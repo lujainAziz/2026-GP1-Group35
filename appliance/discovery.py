@@ -72,7 +72,7 @@ DISCOVERY_INTERFACE = os.getenv("ASSAS_DISCOVERY_IFACE")
 # Dedicated SPAN / mirrored-traffic capture interface.
 # IMPORTANT: set this to the real no-IP SPAN interface on the Pi.
 # Override with: ASSAS_CAPTURE_IFACE=<iface>
-CAPTURE_INTERFACE = os.getenv("ASSAS_CAPTURE_IFACE", "eth0")
+CAPTURE_INTERFACE = os.getenv("ASSAS_CAPTURE_IFACE", "eth1")
 
 OUI_FILE = "/usr/share/arp-scan/ieee-oui.txt"
 
