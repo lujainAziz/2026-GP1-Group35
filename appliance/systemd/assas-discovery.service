@@ -9,7 +9,7 @@ User=root
 WorkingDirectory=/home/assas/assas/appliance
 
 Environment=PYTHONUNBUFFERED=1
-Environment=ASSAS_DISCOVERY_IFACE=wlan0
+Environment=ASSAS_DISCOVERY_IFACE=eth0
 Environment=ASSAS_CAPTURE_IFACE=eth1
 Environment=ASSAS_UPNP_ENRICH=1
 
