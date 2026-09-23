@@ -50,7 +50,18 @@ sudo systemctl restart assas-api
 systemctl status assas-discovery assas-api
 ```
 
-The installed unit files (and drop-ins) are mirrored under `appliance/systemd/`.
+The installed unit files (and drop-ins) are mirrored under `appliance/systemd/`. The
+`assas-discovery` service carries two drop-ins:
+
+- **`mdns-probe.conf`** — enables the two light-active fallback probes for
+  still-unclassified devices: a unicast mDNS/DNS-SD query (`ASSAS_MDNS_PROBE=1`, UDP 5353)
+  and a NetBIOS NBSTAT name request (`ASSAS_NBNS_PROBE=1`, UDP 137), each fired once per
+  device 10s after it is first seen.
+- **`override.conf`** — not an active-mechanism toggle; it drops the daemon from root to
+  `User=assas` with only `CAP_NET_RAW`/`CAP_NET_ADMIN`.
+
+The discovery interface (`ASSAS_DISCOVERY_IFACE=eth0`) and local UPnP/SSDP enrichment
+(`ASSAS_UPNP_ENRICH=1`) are set directly in the base unit, not via drop-ins.
 
 ## Network setup
 
@@ -65,11 +76,8 @@ eth0 and wlan0 share the subnet, so leaving wlan0 auto-connected dual-homes the 
 causes intermittent SSH drops. Pin management to eth0 and keep Wi-Fi as a manual fallback:
 
 ```
-# Discovery scans/join-observes on eth0 (drop-in overrides the unit's default):
-printf '[Service]\nEnvironment=ASSAS_DISCOVERY_IFACE=eth0\n' | \
-  sudo tee /etc/systemd/system/assas-discovery.service.d/discovery-iface.conf
-sudo systemctl daemon-reload
-sudo systemctl restart assas-discovery
+# Discovery already scans/join-observes on eth0: the assas-discovery unit sets
+# ASSAS_DISCOVERY_IFACE=eth0 directly, so no interface drop-in is needed.
 
 # Stop every saved Wi-Fi profile from auto-connecting (device-level autoconnect does
 # not persist across reboot, so disable it per-profile). while-read, not for-in, so
