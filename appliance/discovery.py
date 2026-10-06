@@ -232,6 +232,9 @@ from classification import (
     vendor_from_mdns_query_needle,
     fingerprint_tcp_syn,
     is_unclassified,
+    surveillance_type_from_ports,
+    CAMERA_PORTS,
+    SURVEILLANCE_MGMT_PORTS,
     merge_candidate,
 )
 
@@ -394,6 +397,158 @@ def extract_mdns_metadata(packet):
     return model, dtype, score, source, manufacturer, friendly
 
 
+def _dns_name_to_str(raw):
+    """Decode a scapy rrname/rdata to text (keeping backslash escapes)."""
+    if raw is None:
+        return ""
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("utf-8", errors="ignore")
+    return str(raw)
+
+
+def _split_dns_labels(name):
+    """Split a DNS name into labels on UNescaped dots, decoding \\DDD and \\x.
+
+    DNS-SD instance labels may legitimately contain dots/spaces encoded on the
+    wire as \\. or \\032; those must stay inside a single label, so splitting
+    has to respect the escaping rather than a naive str.split('.').
+    """
+    labels = []
+    cur = []
+    i = 0
+    n = len(name)
+    while i < n:
+        ch = name[i]
+        if ch == "\\" and i + 1 < n:
+            nxt = name[i + 1]
+            if nxt.isdigit() and i + 4 <= n and name[i + 1:i + 4].isdigit():
+                try:
+                    cur.append(chr(int(name[i + 1:i + 4])))
+                except ValueError:
+                    cur.append(nxt)
+                i += 4
+            else:
+                cur.append(nxt)
+                i += 2
+            continue
+        if ch == ".":
+            labels.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    if cur:
+        labels.append("".join(cur))
+    # Drop a trailing empty label produced by the root dot.
+    if labels and labels[-1] == "":
+        labels.pop()
+    return labels
+
+
+def _usable_mdns_name(value):
+    """Accept only a literal, human-readable mDNS-derived name, else None.
+
+    Rejects empty/generic values, service-type labels, reverse-DNS, IP/numeric
+    strings, and opaque hex identifiers. Nothing is inferred -- the text must be
+    present verbatim in the record.
+    """
+    value = clean_observed_text(value)
+    if not value:
+        return None
+    low = value.lower()
+    if low.startswith("_"):
+        return None                       # a service-type label, not a name
+    if "._tcp" in low or "._udp" in low:
+        return None                       # still a service name
+    if low.endswith(".arpa") or "in-addr" in low or "ip6.arpa" in low:
+        return None                       # reverse-DNS
+    if not re.search(r"[A-Za-z]", value):
+        return None                       # numeric / IP-like (no letters)
+    if re.fullmatch(r"[0-9a-f]{16,}", low):
+        return None                       # opaque hex/UUID identifier
+    if is_generic_friendly_name(value):
+        return None
+    return value
+
+
+def extract_mdns_hostname(packet):
+    """Hostname from an mDNS A/AAAA record owner name ending in .local.
+
+    Response packets only; the owner name of an address record is the device's
+    own hostname (e.g. "Living-Room-TV.local" -> "Living-Room-TV").
+    """
+    if DNS not in packet or int(packet[DNS].qr) != 1:
+        return None                            # response packets only
+    for section in ("an", "ns", "ar"):
+        for rr in _dns_rrs(getattr(packet[DNS], section, None)):
+            try:
+                if int(rr.type) not in (1, 28):   # A / AAAA
+                    continue
+            except (TypeError, ValueError):
+                continue
+            labels = _split_dns_labels(_dns_name_to_str(getattr(rr, "rrname", b"")))
+            if len(labels) >= 2 and labels[-1].lower() == "local":
+                name = _usable_mdns_name(".".join(labels[:-1]))
+                if name:
+                    return name
+    return None
+
+
+def extract_mdns_instance_name(packet):
+    """Friendly name from a DNS-SD service-instance label in an mDNS response.
+
+    For <instance>._service._tcp.local / ._udp.local (PTR rdata target or SRV
+    owner name), return only the <instance> portion, never the service type.
+    """
+    if DNS not in packet or int(packet[DNS].qr) != 1:
+        return None                            # response packets only
+    for section in ("an", "ns", "ar"):
+        for rr in _dns_rrs(getattr(packet[DNS], section, None)):
+            try:
+                rr_type = int(rr.type)
+            except (TypeError, ValueError):
+                continue
+            if rr_type == 12:        # PTR: instance is the rdata target
+                source = getattr(rr, "rdata", None)
+            elif rr_type == 33:      # SRV: instance is the owner (rrname)
+                source = getattr(rr, "rrname", None)
+            else:
+                continue
+            labels = _split_dns_labels(_dns_name_to_str(source))
+            proto_idx = next(
+                (i for i, lab in enumerate(labels) if lab.lower() in ("_tcp", "_udp")),
+                None,
+            )
+            # Need at least <instance>._service before the _tcp/_udp label.
+            if proto_idx is None or proto_idx < 2:
+                continue
+            if not labels[proto_idx - 1].startswith("_"):
+                continue             # label before _tcp/_udp must be the service
+            name = _usable_mdns_name(".".join(labels[:proto_idx - 1]))
+            if name:
+                return name
+    return None
+
+
+def mdns_name_candidate(packet, txt_friendly=None):
+    """Best mDNS-derived name: TXT fn/name, then A/AAAA owner, then instance.
+
+    Returns (name, source_label) or (None, None). Pure extraction of literal
+    record text; precedence against existing names is enforced downstream by
+    update_device()/hostname_quality().
+    """
+    if txt_friendly:
+        return txt_friendly, "mDNS friendly name"
+    host = extract_mdns_hostname(packet)
+    if host:
+        return host, "mDNS A-record hostname"
+    inst = extract_mdns_instance_name(packet)
+    if inst:
+        return inst, "mDNS service-instance name"
+    return None, None
+
+
 # NBT name suffix codes (RFC1002 sect 4.2.1) as encoded by scapy's SUFFIX
 # ShortEnumField -- only these two identify a device's own hostname service;
 # every other suffix (messenger 0x03, domain master browser 0x1B, domain
@@ -535,7 +690,10 @@ def extract_wsd_metadata(payload):
             friendly = value
         elif kind == "hardware" and not model and not _is_protocol_or_version_label(value):
             model = value
-        elif kind == "type" and "network_video_transmitter" in value.lower():
+        elif kind == "type" and "network_video_transmitter" in value.lower() \
+                and dtype != "Network Video Recorder":
+            # A transmitter scope must not downgrade an NVR already identified
+            # from a NetworkVideoStorage (NVS) token elsewhere in the payload.
             dtype = "Security Camera"
 
     if model:
@@ -1264,20 +1422,52 @@ def probe_device_ports(mac, ip):
     except Exception:
         return
 
+    open_ports = []
     for line in out.splitlines():
         if "/tcp" in line and "open" in line:
             try:
-                port = int(line.split("/")[0])
+                open_ports.append(int(line.split("/")[0]))
             except ValueError:
                 continue
-            hint = PORT_HINTS.get(port)
-            if hint:
-                print(f"[PROBED] {mac} ({ip}) -> {hint} via port {port}")
-                update_device(
-                    mac, ip=ip,
-                    candidate=(hint, SCORES["port"], f"nmap active probe port {port}"),
-                )
-                return
+
+    # RTSP (with or without a corroborating mgmt port like 8000) -> the broad
+    # surveillance category only. Never Security Camera / NVR from ports alone.
+    surveillance = surveillance_type_from_ports(open_ports)
+    if surveillance:
+        rtsp = next((p for p in open_ports if p in CAMERA_PORTS), 554)
+        mgmt = sorted(set(open_ports) & SURVEILLANCE_MGMT_PORTS)
+        label = f"{rtsp}+{mgmt[0]}" if mgmt else str(rtsp)
+        print(f"[PROBED] {mac} ({ip}) -> {surveillance} via ports {label}")
+        update_device(
+            mac, ip=ip,
+            candidate=(surveillance, SCORES["port"],
+                       f"nmap active probe ports {label}"),
+        )
+        return
+
+    # Otherwise fall back to the first single-port hint (printer/computer/etc).
+    for port in open_ports:
+        hint = PORT_HINTS.get(port)
+        if hint:
+            print(f"[PROBED] {mac} ({ip}) -> {hint} via port {port}")
+            update_device(
+                mac, ip=ip,
+                candidate=(hint, SCORES["port"], f"nmap active probe port {port}"),
+            )
+            return
+
+
+def _name_enrichment_eligible(device_type, hostname):
+    """Eligible for the NAME probes (existing mDNS/NBNS) when a device is still
+    unclassified OR has no usable hostname yet.
+
+    Broader than is_unclassified() on purpose: a device can be confidently
+    classified (e.g. "Apple Device") yet still have no name, and those should
+    get one more chance at a name. The one-time-per-runtime probed-set guards
+    and the probe workers' own re-checks keep this from probing repeatedly or
+    probing a device that already has a usable hostname.
+    """
+    return is_unclassified(device_type) or not (hostname or "").strip()
 
 
 def schedule_active_probe(mac, ip):
@@ -1391,11 +1581,12 @@ def _apply_mdns_reply(mac, ip, pkt):
         candidate, model_type, SCORES["model"], "device model identifier"
     )
     hostname = None
-    if friendly:
-        hostname = friendly
+    mdns_name, mdns_name_src = mdns_name_candidate(pkt, friendly)
+    if mdns_name:
+        hostname = mdns_name
         candidate = merge_candidate(
-            candidate, type_from_hostname(friendly), SCORES["hostname"],
-            "mDNS probe friendly name",
+            candidate, type_from_hostname(mdns_name), SCORES["hostname"],
+            f"{mdns_name_src} (probe)",
         )
     if candidate or model or hostname or vendor:
         update_device(
@@ -1420,10 +1611,10 @@ def mdns_probe_device(mac, ip):
     with db_lock:
         conn = connect_db()
         row = conn.execute(
-            "SELECT device_type FROM devices WHERE mac=?", (mac,)
+            "SELECT device_type, hostname FROM devices WHERE mac=?", (mac,)
         ).fetchone()
         conn.close()
-    if row is None or not is_unclassified(row[0]):
+    if row is None or not _name_enrichment_eligible(row[0], row[1]):
         return
 
     # Diagnostic start line so the journal can distinguish "probe ran but got
@@ -1531,10 +1722,10 @@ def nbns_probe_device(mac, ip):
     with db_lock:
         conn = connect_db()
         row = conn.execute(
-            "SELECT device_type FROM devices WHERE mac=?", (mac,)
+            "SELECT device_type, hostname FROM devices WHERE mac=?", (mac,)
         ).fetchone()
         conn.close()
-    if row is None or not is_unclassified(row[0]):
+    if row is None or not _name_enrichment_eligible(row[0], row[1]):
         return
 
     print(f"[NBNS-PROBE] {mac} ({ip}) querying NBSTAT node status")
@@ -2085,6 +2276,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
             )
             if ip and is_unclassified(dtype):
                 schedule_active_probe(mac, ip)
+            if ip and _name_enrichment_eligible(dtype, hostname):
                 schedule_mdns_probe(mac, ip)
                 schedule_nbns_probe(mac, ip)
         else:
@@ -2245,8 +2437,11 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
             # The target randomized-MAC unknowns already exist in the DB, so a
             # new-device-only trigger would never probe them. The probed sets
             # make this once-per-runtime; the workers self-gate on ENABLE_*.
-            if ip and is_unclassified(new_type or old_type):
+            effective_type = new_type or old_type
+            effective_name = hostname or old_hostname
+            if ip and is_unclassified(effective_type):
                 schedule_active_probe(mac, ip)
+            if ip and _name_enrichment_eligible(effective_type, effective_name):
                 schedule_mdns_probe(mac, ip)
                 schedule_nbns_probe(mac, ip)
 
@@ -2653,13 +2848,14 @@ def handle(packet):
                     "device model identifier"
                 )
 
-                if friendly_name and not hostname:
-                    hostname = friendly_name
+                mdns_name, mdns_name_src = mdns_name_candidate(packet, friendly_name)
+                if mdns_name and not hostname:
+                    hostname = mdns_name
                     candidate = merge_candidate(
                         candidate,
-                        type_from_hostname(friendly_name),
+                        type_from_hostname(mdns_name),
                         SCORES["hostname"],
-                        "mDNS friendly name",
+                        mdns_name_src,
                     )
 
             elif DNS in packet and int(packet[DNS].qdcount):
@@ -2758,6 +2954,13 @@ def handle(packet):
             candidate = merge_candidate(
                 candidate, dtype, SCORES["service"],
                 "WS-Discovery / ONVIF advertisement"
+            )
+            # Generic ONVIF (no explicit NVT/NVS/camera token) is only broad
+            # evidence -> Video Surveillance Device via WEAK_SERVICE_HINTS, kept
+            # at a lower score so explicit NVT/NVS (above) can refine it later.
+            candidate = merge_candidate(
+                candidate, weak_type_from_payload(payload), SCORES["weak_service"],
+                "WS-Discovery / ONVIF (generic)"
             )
 
             observed_vendor = wsd_vendor or extract_manufacturer(payload) or observed_vendor

@@ -48,13 +48,20 @@ SERVICE_HINTS = [
     (b"printerservice", "Printer"),
     (b"scanservice", "Printer / Scanner"),
 
-    # Cameras
-    (b"ipcamera", "Security Camera"),
-    (b"networkcamera", "Security Camera"),
-    (b"onvif", "Security Camera"),
+    # Cameras / video surveillance -- EXPLICIT ONVIF device types and explicit
+    # camera identifiers only; all high-confidence (SCORES["service"]). Generic
+    # onvif/onvif.org is intentionally NOT here -- it only proves "some ONVIF
+    # device" and lives in WEAK_SERVICE_HINTS -> Video Surveillance Device at a
+    # lower score, so later explicit NVT/NVS evidence (85 > 45) refines it.
+    #   NVS (storage)      -> Network Video Recorder
+    #   NVT (transmitter)  -> Security Camera
+    #   ip/network camera  -> Security Camera
+    (b"networkvideostorage", "Network Video Recorder"),
+    (b"network_video_storage", "Network Video Recorder"),
     (b"networkvideotransmitter", "Security Camera"),
     (b"network_video_transmitter", "Security Camera"),
-    (b"onvif.org", "Security Camera"),
+    (b"ipcamera", "Security Camera"),
+    (b"networkcamera", "Security Camera"),
 
     # TV / streaming / media
     (b"mediarenderer", "Smart TV / Media Device"),
@@ -99,12 +106,19 @@ WEAK_SERVICE_HINTS = [
     (b"_raop._tcp", "Apple Device"),
     (b"_smb._tcp", "Computer / Server"),
     (b"_ssh._tcp", "Computer / Server"),
+    # Generic ONVIF only proves "some ONVIF device" (camera/recorder/encoder/
+    # display). Broad + low-confidence (weak_service) so an explicit ONVIF
+    # device type (SCORES["service"]) refines it to Camera or NVR.
+    (b"onvif.org", "Video Surveillance Device"),
+    (b"onvif", "Video Surveillance Device"),
 ]
 
 # A port hint is used only on a SYN+ACK sent BY the device.
 PORT_HINTS = {
-    554: "Security Camera",
-    8554: "Security Camera",
+    # RTSP alone cannot separate a camera from an NVR/recorder or any other
+    # RTSP server, so port evidence yields only the broad surveillance category.
+    554: "Video Surveillance Device",
+    8554: "Video Surveillance Device",
     515: "Printer",
     631: "Printer",
     9100: "Printer",
@@ -115,6 +129,33 @@ PORT_HINTS = {
     8009: "Smart TV / Media Device",
     32400: "Smart TV / Media Device",
 }
+
+# Ports consumed by the active-probe classifier, which sees the whole SET of
+# open ports (unlike the passive single SYN+ACK path).
+CAMERA_PORTS = {554, 8554}           # RTSP: broad surveillance evidence
+SURVEILLANCE_MGMT_PORTS = {8000}     # mgmt/SDK (e.g. Hikvision): corroborating only
+
+
+def surveillance_type_from_ports(open_ports):
+    """Return "Video Surveillance Device" if RTSP is open, else None.
+
+    Port evidence alone cannot tell a standalone camera from an NVR/recorder or
+    any other RTSP server, so the only port-level verdict is the broad
+    surveillance category -- never Security Camera and never NVR. A management
+    port such as 8000 WITHOUT RTSP is just http-alt and yields None; with RTSP
+    it only corroborates (it does not change the verdict) and is recorded in the
+    evidence string. Explicit identity (model/hostname/ONVIF) refines the type
+    later via higher-scored evidence.
+    """
+    ports = set()
+    for p in open_ports:
+        try:
+            ports.add(int(p))
+        except (TypeError, ValueError):
+            continue
+    if ports & CAMERA_PORTS:
+        return "Video Surveillance Device"
+    return None
 
 # DHCP Parameter Request List (option 55) signatures are supporting evidence only.
 # Exact-tuple match, merged at SCORES["dhcp"] (below hostname/mDNS/model) so any
@@ -236,9 +277,15 @@ HOSTNAME_HINTS = [
     ("pixma", "Printer"),
     ("brother", "Printer"),
     ("epson", "Printer"),
+    # Recorder identity must win over the generic camera needles below.
+    ("network video recorder", "Network Video Recorder"),
+    ("nvr", "Network Video Recorder"),
+    ("dvr", "Network Video Recorder"),
     ("camera", "Security Camera"),
     ("ipcam", "Security Camera"),
-    ("reolink", "Security Camera"),
+    # Brand-only hostname text (e.g. "reolink") is NOT classified here: at the
+    # hostname score (90) it would block later explicit ONVIF NVT/NVS (85). A
+    # bare surveillance brand is handled weakly via VENDOR_HINTS instead.
     ("roku", "Smart TV / Media Device"),
     ("chromecast", "Smart TV / Media Device"),
     ("bravia", "Smart TV / Media Device"),
@@ -267,11 +314,14 @@ HOSTNAME_HINTS = [
 VENDOR_HINTS = [
     ("roku", "Smart TV / Media Device"),
     ("sonos", "Smart Speaker / Media Device"),
-    ("hikvision", "Security Camera"),
-    ("hangzhou hikvision", "Security Camera"),
-    ("dahua", "Security Camera"),
-    ("axis communications", "Security Camera"),
-    ("reolink", "Security Camera"),
+    # A surveillance brand alone (these vendors ship cameras AND NVRs/DVRs) is
+    # not enough to decide camera vs recorder -> broad category only, at the weak
+    # vendor score (35) so explicit ONVIF/hostname/model evidence refines it.
+    ("hikvision", "Video Surveillance Device"),
+    ("hangzhou hikvision", "Video Surveillance Device"),
+    ("dahua", "Video Surveillance Device"),
+    ("axis communications", "Video Surveillance Device"),
+    ("reolink", "Video Surveillance Device"),
     ("brother", "Printer"),
     ("epson", "Printer"),
     ("lexmark", "Printer"),
@@ -324,11 +374,14 @@ MODEL_TYPE_HINTS = [
     ("ecotank", "Printer"),
     ("workforce", "Printer"),
     ("imageclass", "Printer"),
+    # Explicit recorder/camera wording is classified; brand-only model text is
+    # NOT (at the model score 95 it would block later explicit ONVIF NVT/NVS at
+    # 85). A bare surveillance brand is handled weakly via VENDOR_HINTS instead.
+    ("network video recorder", "Network Video Recorder"),
+    ("nvr", "Network Video Recorder"),
+    ("dvr", "Network Video Recorder"),
     ("ip camera", "Security Camera"),
     ("network camera", "Security Camera"),
-    ("reolink", "Security Camera"),
-    ("hikvision", "Security Camera"),
-    ("dahua", "Security Camera"),
     ("synology", "NAS / Server"),
     ("qnap", "NAS / Server"),
     ("playstation", "Game Console"),

@@ -292,12 +292,12 @@ class ProbeTriggerTests(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
-    def _insert(self, mac, device_type):
+    def _insert(self, mac, device_type, hostname=None):
         conn = sqlite3.connect(self.db_path)
         conn.execute(
-            "INSERT INTO devices (mac, ip, device_type, first_seen, last_seen, status) "
-            "VALUES (?, '192.168.100.50', ?, 'x', 'x', 'online')",
-            (mac, device_type),
+            "INSERT INTO devices (mac, ip, device_type, hostname, first_seen, last_seen, status) "
+            "VALUES (?, '192.168.100.50', ?, ?, 'x', 'x', 'online')",
+            (mac, device_type, hostname),
         )
         conn.commit()
         conn.close()
@@ -318,11 +318,21 @@ class ProbeTriggerTests(unittest.TestCase):
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertIn(mac, discovery.mdns_probed)
 
-    def test_existing_classified_device_not_scheduled(self):
+    def test_existing_classified_and_named_device_not_scheduled(self):
+        # Classified AND already has a usable hostname -> no enrichment at all.
         mac = "72:e4:6b:44:a6:11"
-        self._insert(mac, "Computer")
+        self._insert(mac, "Computer", hostname="OFFICE-PC")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertNotIn(mac, discovery.mdns_probed)
+        self.assertNotIn(mac, discovery.active_probed)
+
+    def test_existing_classified_without_name_gets_mdns(self):
+        # Classified but NO hostname -> eligible for mDNS name enrichment,
+        # but NOT the active/Nmap probe (which stays unclassified-only).
+        mac = "72:e4:6b:44:a6:22"
+        self._insert(mac, "Apple Device")
+        discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
+        self.assertIn(mac, discovery.mdns_probed)
         self.assertNotIn(mac, discovery.active_probed)
 
 
@@ -552,12 +562,12 @@ class NbnsProbeTriggerTests(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
-    def _insert(self, mac, device_type):
+    def _insert(self, mac, device_type, hostname=None):
         conn = sqlite3.connect(self.db_path)
         conn.execute(
-            "INSERT INTO devices (mac, ip, device_type, first_seen, last_seen, status) "
-            "VALUES (?, '192.168.100.50', ?, 'x', 'x', 'online')",
-            (mac, device_type),
+            "INSERT INTO devices (mac, ip, device_type, hostname, first_seen, last_seen, status) "
+            "VALUES (?, '192.168.100.50', ?, ?, 'x', 'x', 'online')",
+            (mac, device_type, hostname),
         )
         conn.commit()
         conn.close()
@@ -570,11 +580,19 @@ class NbnsProbeTriggerTests(unittest.TestCase):
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertEqual(sum(1 for m in discovery.nbns_probed if m == mac), 1)
 
-    def test_existing_classified_not_scheduled(self):
+    def test_existing_classified_and_named_not_scheduled(self):
+        # Classified AND already named -> no NBNS enrichment.
         mac = "72:e4:6b:44:a6:11"
-        self._insert(mac, "Computer")
+        self._insert(mac, "Computer", hostname="OFFICE-PC")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertNotIn(mac, discovery.nbns_probed)
+
+    def test_existing_classified_without_name_gets_nbns(self):
+        # Classified but NO hostname -> eligible for NBNS name enrichment.
+        mac = "72:e4:6b:44:a6:33"
+        self._insert(mac, "Computer")
+        discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
+        self.assertIn(mac, discovery.nbns_probed)
 
 
 class SynFingerprintLocalOnlyTests(unittest.TestCase):
@@ -769,6 +787,385 @@ class CleanupStaleMdnsQueryTests(unittest.TestCase):
                      class_source="mDNS query (_raop._tcp)")
         self.assertEqual(discovery.cleanup_stale_mdns_query_classifications(verbose=False), 1)
         self.assertEqual(discovery.cleanup_stale_mdns_query_classifications(verbose=False), 0)
+
+
+class ActiveProbeSurveillanceTests(unittest.TestCase):
+    """Drive the REAL probe_device_ports() with faked nmap output and assert
+    it stores the broad Video Surveillance Device verdict (never a bare
+    Security Camera) for RTSP-bearing devices."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db_path = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        # Neutralize the pre-probe wait and the real nmap invocation.
+        self._orig_delay = discovery.ACTIVE_PROBE_DELAY_SECONDS
+        self._orig_check_output = discovery.subprocess.check_output
+        discovery.ACTIVE_PROBE_DELAY_SECONDS = 0
+
+    def tearDown(self):
+        discovery.ACTIVE_PROBE_DELAY_SECONDS = self._orig_delay
+        discovery.subprocess.check_output = self._orig_check_output
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db_path
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert_unclassified(self, mac, ip):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO devices (mac, ip, device_type, first_seen, last_seen, status) "
+            "VALUES (?, ?, NULL, 'x', 'x', 'online')",
+            (mac, ip),
+        )
+        conn.commit()
+        conn.close()
+
+    def _fake_nmap(self, table_text):
+        def _check_output(cmd, **kwargs):
+            return table_text
+        discovery.subprocess.check_output = _check_output
+
+    def _row(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT device_type, class_score, class_source FROM devices WHERE mac=?",
+            (mac,),
+        ).fetchone()
+        conn.close()
+        return row
+
+    def test_probe_80_443_554_8000_is_video_surveillance(self):
+        mac, ip = "52:d4:f6:d3:28:55", "192.168.1.236"
+        self._insert_unclassified(mac, ip)
+        self._fake_nmap(
+            "PORT     STATE  SERVICE\n"
+            "80/tcp   open   http\n"
+            "443/tcp  open   https\n"
+            "554/tcp  open   rtsp\n"
+            "8000/tcp open   http-alt\n"
+        )
+        discovery.probe_device_ports(mac, ip)
+        dtype, score, source = self._row(mac)
+        self.assertEqual(dtype, "Video Surveillance Device")
+        self.assertEqual(score, discovery.SCORES["port"])
+        self.assertIn("554+8000", source)
+
+    def test_probe_rtsp_only_is_video_surveillance_not_camera(self):
+        mac, ip = "52:d4:f6:aa:bb:cc", "192.168.1.237"
+        self._insert_unclassified(mac, ip)
+        self._fake_nmap(
+            "PORT     STATE  SERVICE\n"
+            "80/tcp   open   http\n"
+            "443/tcp  open   https\n"
+            "554/tcp  open   rtsp\n"
+        )
+        discovery.probe_device_ports(mac, ip)
+        dtype, score, source = self._row(mac)
+        self.assertEqual(dtype, "Video Surveillance Device")
+        self.assertNotEqual(dtype, "Security Camera")
+        self.assertEqual(score, discovery.SCORES["port"])
+        self.assertIn("554", source)
+
+
+class OnvifRefinementTests(unittest.TestCase):
+    """Generic ONVIF is stored broad (weak_service) and MUST be refinable by
+    later explicit NVT/NVS evidence (service), via update_device's real merge."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+
+    def tearDown(self):
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _row(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute(
+            "SELECT device_type, class_score FROM devices WHERE mac=?", (mac,)
+        ).fetchone()
+        conn.close()
+        return r
+
+    def test_generic_onvif_stored_broad_then_nvt_refines_to_camera(self):
+        mac = "aa:bb:cc:dd:ee:01"
+        discovery.update_device(
+            mac, ip="192.168.1.50", seen_on_span=True,
+            candidate=("Video Surveillance Device", discovery.SCORES["weak_service"],
+                       "WS-Discovery / ONVIF (generic)"),
+        )
+        self.assertEqual(
+            self._row(mac),
+            ("Video Surveillance Device", discovery.SCORES["weak_service"]),
+        )
+        discovery.update_device(
+            mac, ip="192.168.1.50", seen_on_span=True,
+            candidate=("Security Camera", discovery.SCORES["service"],
+                       "WS-Discovery / ONVIF advertisement"),
+        )
+        self.assertEqual(
+            self._row(mac), ("Security Camera", discovery.SCORES["service"])
+        )
+
+    def test_generic_onvif_stored_broad_then_nvs_refines_to_nvr(self):
+        mac = "aa:bb:cc:dd:ee:02"
+        discovery.update_device(
+            mac, ip="192.168.1.51", seen_on_span=True,
+            candidate=("Video Surveillance Device", discovery.SCORES["weak_service"],
+                       "WS-Discovery / ONVIF (generic)"),
+        )
+        self.assertEqual(self._row(mac)[0], "Video Surveillance Device")
+        discovery.update_device(
+            mac, ip="192.168.1.51", seen_on_span=True,
+            candidate=("Network Video Recorder", discovery.SCORES["service"],
+                       "WS-Discovery / ONVIF advertisement"),
+        )
+        self.assertEqual(
+            self._row(mac), ("Network Video Recorder", discovery.SCORES["service"])
+        )
+
+
+class MdnsNameExtractionTests(unittest.TestCase):
+    """mDNS A/AAAA owner + DNS-SD instance name extraction (response packets)."""
+
+    def test_a_record_owner_hostname(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname="Living-Room-TV.local", type="A",
+                                 rdata="192.168.1.5"))
+        self.assertEqual(discovery.extract_mdns_hostname(pkt), "Living-Room-TV")
+
+    def test_aaaa_record_owner_hostname(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname="MacBook-Pro.local", type="AAAA",
+                                 rdata="fe80::1"))
+        self.assertEqual(discovery.extract_mdns_hostname(pkt), "MacBook-Pro")
+
+    def test_ptr_instance_name(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname="_rdlink._tcp.local", type="PTR",
+                                 rdata="Lujain-iPhone._rdlink._tcp.local"))
+        self.assertEqual(discovery.extract_mdns_instance_name(pkt), "Lujain-iPhone")
+
+    def test_escaped_dot_in_instance_label(self):
+        # \. is an escaped dot inside one label, not a separator.
+        labels = discovery._split_dns_labels("Lujains\\.iPhone._rdlink._tcp.local")
+        self.assertEqual(labels, ["Lujains.iPhone", "_rdlink", "_tcp", "local"])
+
+    def test_service_only_owner_rejected(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname="_rdlink._tcp.local", type="A",
+                                 rdata="192.168.1.9"))
+        self.assertIsNone(discovery.extract_mdns_hostname(pkt))
+
+    def test_bare_service_ptr_has_no_instance(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname="_rdlink._tcp.local", type="PTR",
+                                 rdata="_rdlink._tcp.local"))
+        self.assertIsNone(discovery.extract_mdns_instance_name(pkt))
+
+    def test_numeric_ip_like_owner_rejected(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname="192-168-1-5.local", type="A",
+                                 rdata="192.168.1.5"))
+        self.assertIsNone(discovery.extract_mdns_hostname(pkt))
+
+    def test_generic_instance_rejected(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname="_http._tcp.local", type="PTR",
+                                 rdata="Media Renderer._http._tcp.local"))
+        self.assertIsNone(discovery.extract_mdns_instance_name(pkt))
+
+    def test_txt_fn_still_supported_and_preferred(self):
+        pkt = DNS(qr=1, an=[
+            DNSRR(rrname="x._airplay._tcp.local", type="TXT",
+                  rdata=[b"fn=Living Room TV"]),
+            DNSRR(rrname="Living-Room-TV.local", type="A", rdata="192.168.1.5"),
+        ])
+        friendly = extract_mdns_metadata(pkt)[5]
+        self.assertEqual(friendly, "Living Room TV")
+        name, src = discovery.mdns_name_candidate(pkt, friendly)
+        self.assertEqual((name, src), ("Living Room TV", "mDNS friendly name"))
+
+    def test_candidate_falls_back_to_a_record_then_instance(self):
+        a_pkt = DNS(qr=1, an=DNSRR(rrname="Office-PC.local", type="A",
+                                   rdata="192.168.1.7"))
+        self.assertEqual(discovery.mdns_name_candidate(a_pkt, None),
+                         ("Office-PC", "mDNS A-record hostname"))
+        ptr_pkt = DNS(qr=1, an=DNSRR(rrname="_rdlink._tcp.local", type="PTR",
+                                     rdata="Pixel-7._rdlink._tcp.local"))
+        self.assertEqual(discovery.mdns_name_candidate(ptr_pkt, None),
+                         ("Pixel-7", "mDNS service-instance name"))
+
+    def test_query_packet_yields_no_name(self):
+        # Passive DNS/mDNS QUERIES must not become a hostname (privacy).
+        q = DNS(qr=0, qd=DNSQR(qname="private-host.example.com"))
+        self.assertIsNone(discovery.extract_mdns_hostname(q))
+        self.assertIsNone(discovery.extract_mdns_instance_name(q))
+
+    def test_query_with_known_answer_records_yields_no_name(self):
+        # An mDNS QUERY (qr=0) may legitimately carry known-answer A/PTR records
+        # in its answer section; those name OTHER hosts, never the sender, so
+        # neither helper may extract from a query packet.
+        q = DNS(qr=0, qd=DNSQR(qname="_rdlink._tcp.local", qtype="PTR"), an=[
+            DNSRR(rrname="Someone-Else-TV.local", type="A", rdata="192.168.1.80"),
+            DNSRR(rrname="_rdlink._tcp.local", type="PTR",
+                  rdata="Someone-Else-iPhone._rdlink._tcp.local"),
+        ])
+        self.assertEqual(int(q[DNS].qr), 0)
+        self.assertIsNone(discovery.extract_mdns_hostname(q))
+        self.assertIsNone(discovery.extract_mdns_instance_name(q))
+
+
+class _SyncThread:
+    """Run a scheduled worker synchronously so scheduling can be asserted."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None, **_):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        if self._target:
+            self._target(*self._args, **self._kwargs)
+
+
+class NameEnrichmentEligibilityTests(unittest.TestCase):
+    """mDNS/NBNS NAME enrichment eligibility: unclassified OR hostname missing.
+    The Nmap/active probe must stay unclassified-only (not broadened)."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+
+        self._orig_thread = discovery.threading.Thread
+        discovery.threading.Thread = _SyncThread
+        self._orig_mdns = discovery.mdns_probe_device
+        self._orig_nbns = discovery.nbns_probe_device
+        self._orig_active = discovery.probe_device_ports
+        self.calls = {"mdns": [], "nbns": [], "active": []}
+        discovery.mdns_probe_device = lambda mac, ip: self.calls["mdns"].append(mac)
+        discovery.nbns_probe_device = lambda mac, ip: self.calls["nbns"].append(mac)
+        discovery.probe_device_ports = lambda mac, ip: self.calls["active"].append(mac)
+
+        self._orig_flags = (discovery.ENABLE_MDNS_PROBE,
+                            discovery.ENABLE_NBNS_PROBE,
+                            discovery.ENABLE_ACTIVE_PROBE)
+        discovery.ENABLE_MDNS_PROBE = True
+        discovery.ENABLE_NBNS_PROBE = True
+        discovery.ENABLE_ACTIVE_PROBE = True
+        discovery.mdns_probed.clear()
+        discovery.nbns_probed.clear()
+        discovery.active_probed.clear()
+
+    def tearDown(self):
+        discovery.threading.Thread = self._orig_thread
+        discovery.mdns_probe_device = self._orig_mdns
+        discovery.nbns_probe_device = self._orig_nbns
+        discovery.probe_device_ports = self._orig_active
+        (discovery.ENABLE_MDNS_PROBE,
+         discovery.ENABLE_NBNS_PROBE,
+         discovery.ENABLE_ACTIVE_PROBE) = self._orig_flags
+        discovery.mdns_probed.clear()
+        discovery.nbns_probed.clear()
+        discovery.active_probed.clear()
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    # 1. classified + hostname present -> no name-enrichment probe
+    def test_classified_with_hostname_not_probed(self):
+        discovery.update_device(
+            "aa:00:00:00:22:01", ip="192.168.1.70", seen_on_span=True,
+            hostname="OfficePC",
+            candidate=("Computer", discovery.SCORES["service"], "test"),
+        )
+        self.assertEqual(self.calls["mdns"], [])
+        self.assertEqual(self.calls["nbns"], [])
+        self.assertEqual(self.calls["active"], [])
+
+    # 2. classified + hostname missing -> eligible for mDNS/NBNS (not Nmap)
+    def test_classified_without_hostname_gets_name_enrichment(self):
+        mac = "aa:00:00:00:22:02"
+        discovery.update_device(
+            mac, ip="192.168.1.71", seen_on_span=True, hostname=None,
+            candidate=("Apple Device", discovery.SCORES["service"], "test"),
+        )
+        self.assertEqual(self.calls["mdns"], [mac])
+        self.assertEqual(self.calls["nbns"], [mac])
+        self.assertEqual(self.calls["active"], [])  # active probe NOT broadened
+
+    # 3. unclassified -> still eligible as before (incl. active probe)
+    def test_unclassified_still_eligible(self):
+        mac = "aa:00:00:00:22:03"
+        discovery.update_device(mac, ip="192.168.1.72", seen_on_span=True)
+        self.assertEqual(self.calls["mdns"], [mac])
+        self.assertEqual(self.calls["nbns"], [mac])
+        self.assertEqual(self.calls["active"], [mac])
+
+    # 4. cooldown / dedup still prevents repeated probing
+    def test_dedup_prevents_repeat_probe(self):
+        mac = "aa:00:00:00:22:04"
+        for _ in range(3):
+            discovery.update_device(
+                mac, ip="192.168.1.73", seen_on_span=True, hostname=None,
+                candidate=("Apple Device", discovery.SCORES["service"], "test"),
+            )
+        self.assertEqual(self.calls["mdns"], [mac])   # scheduled exactly once
+        self.assertEqual(self.calls["nbns"], [mac])
+
+    def test_eligibility_helper(self):
+        self.assertFalse(discovery._name_enrichment_eligible("Computer", "OfficePC"))
+        self.assertTrue(discovery._name_enrichment_eligible("Computer", None))
+        self.assertTrue(discovery._name_enrichment_eligible("Apple Device", "   "))
+        self.assertTrue(discovery._name_enrichment_eligible(None, None))
+        self.assertTrue(discovery._name_enrichment_eligible("Generic / Unknown", "x"))
+
+
+class MdnsNamePersistenceTests(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+
+    def tearDown(self):
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _hostname(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute("SELECT hostname FROM devices WHERE mac=?", (mac,)).fetchone()
+        conn.close()
+        return r[0] if r else None
+
+    def test_stronger_existing_hostname_not_overwritten_by_weaker_mdns(self):
+        mac = "aa:00:00:00:11:01"
+        discovery.update_device(mac, ip="192.168.1.60", hostname="OfficePC",
+                                seen_on_span=True)
+        self.assertEqual(self._hostname(mac), "OfficePC")
+        # A weaker/equal-quality mDNS-derived name must not replace it.
+        discovery.update_device(mac, ip="192.168.1.60", hostname="laptop",
+                                seen_on_span=True)
+        self.assertEqual(self._hostname(mac), "OfficePC")
+
+    def test_probe_reply_persists_a_record_hostname(self):
+        mac = "aa:00:00:00:11:02"
+        pkt = DNS(qr=1, an=DNSRR(rrname="Pixel-7.local", type="A",
+                                 rdata="192.168.1.61"))
+        discovery._apply_mdns_reply(mac, "192.168.1.61", pkt)
+        self.assertEqual(self._hostname(mac), "Pixel-7")
 
 
 if __name__ == "__main__":

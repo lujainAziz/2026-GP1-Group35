@@ -4,14 +4,20 @@ from scapy.all import Ether, IP, TCP
 
 from classification import (
     DHCP_SIGNATURES,
+    PORT_HINTS,
     SCORES,
     fingerprint_tcp_syn,
     is_unclassified,
     merge_candidate,
+    surveillance_type_from_ports,
     type_from_dns_query,
+    type_from_hostname,
     type_from_mdns_query,
+    type_from_model,
+    type_from_payload,
     type_from_vendor,
     type_from_vendor_class,
+    weak_type_from_payload,
     vendor_from_domain_needle,
     vendor_from_mdns_query_needle,
     vendor_from_model_in_hostname,
@@ -238,6 +244,96 @@ class TcpSynFingerprintTests(unittest.TestCase):
 
     def test_weight_is_weak(self):
         self.assertLess(SCORES["syn_fp"], SCORES["weak_service"])
+
+
+class SurveillanceClassificationTests(unittest.TestCase):
+    def test_rtsp_only_is_broad_not_camera(self):
+        # 554 alone must NOT read as a standalone Security Camera.
+        self.assertEqual(surveillance_type_from_ports({554}), "Video Surveillance Device")
+        self.assertEqual(surveillance_type_from_ports({8554}), "Video Surveillance Device")
+        self.assertNotEqual(surveillance_type_from_ports({554}), "Security Camera")
+        self.assertEqual(PORT_HINTS[554], "Video Surveillance Device")
+        self.assertEqual(PORT_HINTS[8554], "Video Surveillance Device")
+
+    def test_rtsp_plus_mgmt_is_broad(self):
+        self.assertEqual(
+            surveillance_type_from_ports({80, 443, 554, 8000}),
+            "Video Surveillance Device",
+        )
+
+    def test_mgmt_or_web_only_is_none(self):
+        self.assertIsNone(surveillance_type_from_ports({8000}))
+        self.assertIsNone(surveillance_type_from_ports({80, 443, 8000}))
+        self.assertIsNone(surveillance_type_from_ports({80, 443}))
+
+    def test_non_integer_ports_ignored(self):
+        self.assertEqual(
+            surveillance_type_from_ports(["554", "80", None]),
+            "Video Surveillance Device",
+        )
+
+    def test_onvif_storage_is_nvr_and_outranks_port(self):
+        # ONVIF NVS (NetworkVideoStorage) -> explicit recorder evidence.
+        self.assertEqual(
+            type_from_payload(b"<d:Types>dn:NetworkVideoStorage tds:Device</d:Types>"),
+            "Network Video Recorder",
+        )
+        self.assertGreater(SCORES["service"], SCORES["port"])  # 85 > 75
+
+    def test_onvif_transmitter_still_camera(self):
+        self.assertEqual(
+            type_from_payload(b"onvif://www.onvif.org/type/NetworkVideoTransmitter"),
+            "Security Camera",
+        )
+
+    def test_nvr_hostname_beats_generic_camera(self):
+        self.assertEqual(type_from_hostname("hikvision-nvr-01"), "Network Video Recorder")
+        self.assertEqual(type_from_hostname("lobby-dvr"), "Network Video Recorder")
+
+    def test_nvr_model_ordering_beats_vendor_camera(self):
+        self.assertEqual(
+            type_from_model("Hikvision NVR DS-7608NI-K2"), "Network Video Recorder"
+        )
+        self.assertGreater(SCORES["model"], SCORES["port"])  # 95 > 75
+
+    def test_plain_ipcam_still_camera(self):
+        self.assertEqual(type_from_hostname("ipcam-door"), "Security Camera")
+
+    # --- v3.1: generic ONVIF is weak/broad and refinable; brand alone is weak ---
+
+    def test_generic_onvif_is_weak_broad_not_service_camera(self):
+        # generic onvif is no longer a SERVICE (camera) match...
+        self.assertIsNone(type_from_payload(b"http://www.onvif.org/ver10/network/wsdl"))
+        # ...it is a WEAK broad surveillance match instead.
+        self.assertEqual(
+            weak_type_from_payload(b"http://www.onvif.org/ver10/network/wsdl"),
+            "Video Surveillance Device",
+        )
+
+    def test_generic_onvif_weaker_than_explicit(self):
+        self.assertLess(SCORES["weak_service"], SCORES["service"])  # 45 < 85
+
+    def test_plain_vendor_hikvision_is_video_surveillance(self):
+        self.assertEqual(
+            type_from_vendor("Hangzhou Hikvision Digital Technology Co.,Ltd."),
+            "Video Surveillance Device",
+        )
+
+    def test_brand_only_model_no_high_score_broad(self):
+        # brand-only model text must NOT classify (score 95 would block later
+        # explicit ONVIF NVT/NVS at 85).
+        self.assertIsNone(type_from_model("Hikvision DS-2CD2042"))
+        self.assertIsNone(type_from_model("Dahua IPC series"))
+
+    def test_brand_only_hostname_no_high_score_broad(self):
+        self.assertIsNone(type_from_hostname("reolink"))
+
+    def test_hikvision_nvr_model_is_nvr(self):
+        self.assertEqual(type_from_model("Hikvision NVR DS-7608NI-K2"),
+                         "Network Video Recorder")
+
+    def test_reolink_ip_camera_model_is_camera(self):
+        self.assertEqual(type_from_model("Reolink IP Camera"), "Security Camera")
 
 
 if __name__ == "__main__":
