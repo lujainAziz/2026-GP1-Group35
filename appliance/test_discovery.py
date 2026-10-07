@@ -30,6 +30,7 @@ from discovery import (
     vendor_from_domain_needle,
     merge_candidate,
     extract_mdns_metadata,
+    normalize_arpscan_vendor,
     DHCP_SIGNATURES,
     SCORES,
 )
@@ -139,6 +140,35 @@ class RandomizedMacTests(unittest.TestCase):
         )
 
 
+class ArpScanVendorNormalizationTests(unittest.TestCase):
+    def test_unknown_parenthesized_to_none(self):
+        self.assertIsNone(normalize_arpscan_vendor("(Unknown)"))
+
+    def test_unknown_bare_to_none(self):
+        self.assertIsNone(normalize_arpscan_vendor("Unknown"))
+
+    def test_unknown_with_dup_suffix_to_none(self):
+        # The confirmed RE-laptop bug: an unknown placeholder carrying a
+        # duplicate-response annotation must still normalize to None.
+        self.assertIsNone(normalize_arpscan_vendor("(Unknown) (DUP: 2)"))
+
+    def test_real_vendor_with_dup_suffix_preserved(self):
+        self.assertEqual(
+            normalize_arpscan_vendor("Some Vendor (DUP: 2)"), "Some Vendor"
+        )
+
+    def test_normal_vendor_unchanged(self):
+        self.assertEqual(
+            normalize_arpscan_vendor("Raspberry Pi Foundation"),
+            "Raspberry Pi Foundation",
+        )
+
+    def test_empty_and_none_to_none(self):
+        self.assertIsNone(normalize_arpscan_vendor(""))
+        self.assertIsNone(normalize_arpscan_vendor("   "))
+        self.assertIsNone(normalize_arpscan_vendor(None))
+
+
 class BackfillMigrationTests(unittest.TestCase):
     def setUp(self):
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -204,6 +234,26 @@ class BackfillMigrationTests(unittest.TestCase):
         self._insert("dc:a6:32:11:22:33", "Raspberry Pi Foundation", None)
         discovery.init_db()
         self.assertEqual(self._vendor("dc:a6:32:11:22:33"), "Raspberry Pi Foundation")
+
+    def test_global_mac_unknown_dup_placeholder_is_nulled(self):
+        # The confirmed bug: a globally administered MAC (the RE laptop) with a
+        # missing-OUI placeholder carrying a DUP annotation must be reset. The
+        # locally-administered-only cleanup never reaches a global MAC.
+        self._insert("dc:97:ba:fc:34:ce", "(Unknown) (DUP: 2)", None)
+        discovery.init_db()
+        self.assertIsNone(self._vendor("dc:97:ba:fc:34:ce"))
+
+    def test_global_mac_plain_unknown_is_nulled(self):
+        self._insert("dc:97:ba:11:22:33", "(Unknown)", None)
+        discovery.init_db()
+        self.assertIsNone(self._vendor("dc:97:ba:11:22:33"))
+
+    def test_global_mac_real_vendor_preserved(self):
+        # A legitimate OUI vendor on a globally administered MAC must never be
+        # cleared by the new placeholder cleanup.
+        self._insert("28:39:5e:d7:44:0c", "Samsung Electronics", None)
+        discovery.init_db()
+        self.assertEqual(self._vendor("28:39:5e:d7:44:0c"), "Samsung Electronics")
 
 
 class MdnsProbeTests(unittest.TestCase):

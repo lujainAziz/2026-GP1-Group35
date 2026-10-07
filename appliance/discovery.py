@@ -828,6 +828,25 @@ def init_db():
           )
     """)
 
+    # Globally administered MACs never match the locally-administered cleanup
+    # above, so a genuine missing-OUI arp-scan placeholder that leaked past
+    # normalization (e.g. the "(Unknown) (DUP: 2)" stored before
+    # normalize_arpscan_vendor() existed) would otherwise persist forever.
+    # Reset ONLY the exact known arp-scan unknown placeholders -- with or
+    # without a trailing "(DUP: N)" annotation -- so a real vendor is never
+    # cleared. vendor_source IS NULL guards inferred vendors as above.
+    conn.execute("""
+        UPDATE devices SET vendor = NULL
+        WHERE vendor IS NOT NULL
+          AND vendor_source IS NULL
+          AND substr(mac, 2, 1) NOT IN ('2','3','6','7','a','A','b','B','e','E','f','F')
+          AND (
+              vendor IN ('(Unknown)', 'Unknown')
+              OR vendor LIKE '(Unknown) (DUP: %)'
+              OR vendor LIKE 'Unknown (DUP: %)'
+          )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -2456,6 +2475,30 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
     }
 
 
+# arp-scan appends a duplicate-response annotation like " (DUP: 2)" to the
+# vendor/description column when a host answers more than once. That suffix is
+# not part of the vendor name, so strip it before judging the remaining text.
+ARP_SCAN_DUP_SUFFIX_RE = re.compile(r"\s*\(DUP:\s*\d+\)\s*$", re.IGNORECASE)
+
+
+def normalize_arpscan_vendor(vendor):
+    """Clean an arp-scan vendor/description field.
+
+    Strips a trailing "(DUP: N)" duplicate-response annotation, then maps the
+    known arp-scan unknown placeholders ("(Unknown)", "Unknown",
+    empty/whitespace) to None. Legitimate vendor text is preserved, including a
+    real vendor that happened to carry a DUP suffix (e.g. "Some Vendor (DUP: 2)"
+    -> "Some Vendor"). This does not touch the locally-administered /
+    private-MAC handling, which stays authoritative on its own.
+    """
+    if not vendor:
+        return None
+    cleaned = ARP_SCAN_DUP_SUFFIX_RE.sub("", vendor).strip()
+    if cleaned.lower() in ("(unknown)", "unknown", ""):
+        return None
+    return cleaned
+
+
 def arp_scan(verbose=True):
     """Active ARP discovery of devices on the configured local subnet."""
     if not DISCOVERY_INTERFACE:
@@ -2505,10 +2548,8 @@ def arp_scan(verbose=True):
         if not match:
             continue
         ip, mac, vendor = match.groups()
-        vendor = vendor.strip() if vendor else None
+        vendor = normalize_arpscan_vendor(vendor)
         mac = mac.lower()
-        if vendor in ("(Unknown)", "Unknown"):
-            vendor = None
         if is_locally_administered_mac(mac):
             # Discard whatever text arp-scan printed for a randomized MAC
             # (wording/DUP-suffix varies) -- the bit test is authoritative.
