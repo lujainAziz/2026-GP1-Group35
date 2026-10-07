@@ -3,6 +3,7 @@ import socket
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 
 from scapy.layers.netbios import (
     NBNSHeader, NBNSRegistrationRequest, NBNSQueryRequest,
@@ -31,6 +32,7 @@ from discovery import (
     merge_candidate,
     extract_mdns_metadata,
     normalize_arpscan_vendor,
+    presence_status,
     DHCP_SIGNATURES,
     SCORES,
 )
@@ -254,6 +256,115 @@ class BackfillMigrationTests(unittest.TestCase):
         self._insert("28:39:5e:d7:44:0c", "Samsung Electronics", None)
         discovery.init_db()
         self.assertEqual(self._vendor("28:39:5e:d7:44:0c"), "Samsung Electronics")
+
+
+class ObservedStatusAgingTests(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db_path = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        discovery.write_cache.clear()
+        now = datetime.now()
+        self.fresh = (now - timedelta(seconds=10)).isoformat(timespec="seconds")
+        self.stale = (
+            now - timedelta(seconds=discovery.DISCOVERY_STALE_SECONDS + 60)
+        ).isoformat(timespec="seconds")
+
+    def tearDown(self):
+        discovery.DB_PATH = self._orig_db_path
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert(self, mac, **cols):
+        keys = ["mac", "first_seen", "last_seen"] + list(cols)
+        vals = [mac, "x", "x"] + list(cols.values())
+        ph = ",".join("?" * len(keys))
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(f"INSERT INTO devices ({','.join(keys)}) VALUES ({ph})", vals)
+        conn.commit()
+        conn.close()
+
+    def _row(self, mac, *fields):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute(
+            f"SELECT {','.join(fields)} FROM devices WHERE mac=?", (mac,)
+        ).fetchone()
+        conn.close()
+        return r
+
+    def test_passive_observed_fresh_span_stays_observed(self):
+        self._insert("aa:00:00:00:00:01", status="observed", discovered_current=0,
+                     ap_associated=0, session_seen=1, last_span_seen=self.fresh)
+        discovery.mark_stale_discovery_records()
+        self.assertEqual(self._row("aa:00:00:00:00:01", "status")[0], "observed")
+
+    def test_passive_observed_stale_span_becomes_offline(self):
+        self._insert("aa:00:00:00:00:02", status="observed", discovered_current=0,
+                     ap_associated=0, session_seen=1, last_span_seen=self.stale)
+        discovery.mark_stale_discovery_records()
+        self.assertEqual(self._row("aa:00:00:00:00:02", "status")[0], "offline")
+
+    def test_discovered_aged_out_fresh_span_becomes_observed(self):
+        self._insert("aa:00:00:00:00:03", status="online", discovered_current=1,
+                     ap_associated=0, session_seen=1,
+                     last_discovery_seen=self.stale, last_span_seen=self.fresh)
+        discovery.mark_stale_discovery_records()
+        st, dc = self._row("aa:00:00:00:00:03", "status", "discovered_current")
+        self.assertEqual(st, "observed")
+        self.assertEqual(dc, 0)
+
+    def test_discovered_aged_out_stale_span_becomes_offline(self):
+        self._insert("aa:00:00:00:00:04", status="online", discovered_current=1,
+                     ap_associated=0, session_seen=1,
+                     last_discovery_seen=self.stale, last_span_seen=self.stale)
+        discovery.mark_stale_discovery_records()
+        st, dc = self._row("aa:00:00:00:00:04", "status", "discovered_current")
+        self.assertEqual(st, "offline")
+        self.assertEqual(dc, 0)
+
+    def test_ap_associated_remains_online(self):
+        self._insert("aa:00:00:00:00:05", status="online", discovered_current=0,
+                     ap_associated=1, session_seen=0,
+                     last_discovery_seen=self.stale, last_span_seen=self.stale)
+        discovery.mark_stale_discovery_records()
+        self.assertEqual(self._row("aa:00:00:00:00:05", "status")[0], "online")
+
+    def test_session_seen_preserved_when_observed_becomes_offline(self):
+        self._insert("aa:00:00:00:00:06", status="observed", discovered_current=0,
+                     ap_associated=0, session_seen=1, last_span_seen=self.stale)
+        discovery.mark_stale_discovery_records()
+        st, ss = self._row("aa:00:00:00:00:06", "status", "session_seen")
+        self.assertEqual(st, "offline")
+        self.assertEqual(ss, 1)  # runtime metric untouched
+
+    def test_fresh_span_after_offline_restores_observed(self):
+        self._insert("aa:00:00:00:00:07", ip="192.168.1.80", status="offline",
+                     discovered_current=0, ap_associated=0, session_seen=0,
+                     last_span_seen=self.stale)
+        discovery.update_device("aa:00:00:00:00:07", ip="192.168.1.80", seen_on_span=True)
+        st, ss = self._row("aa:00:00:00:00:07", "status", "session_seen")
+        self.assertEqual(st, "observed")
+        self.assertEqual(ss, 1)
+
+    def test_currently_discovered_stays_online(self):
+        # Normal online behaviour is unchanged by the ager.
+        self._insert("aa:00:00:00:00:08", status="online", discovered_current=1,
+                     ap_associated=0, session_seen=1,
+                     last_discovery_seen=self.fresh, last_span_seen=self.fresh)
+        discovery.mark_stale_discovery_records()
+        st, dc = self._row("aa:00:00:00:00:08", "status", "discovered_current")
+        self.assertEqual(st, "online")
+        self.assertEqual(dc, 1)
+
+    def test_presence_status_helper_rules(self):
+        self.assertEqual(presence_status(1, 0, None), "online")
+        self.assertEqual(presence_status(0, 1, None), "online")
+        self.assertEqual(presence_status(0, 0, self.fresh), "observed")
+        self.assertEqual(presence_status(0, 0, self.stale), "offline")
+        self.assertEqual(presence_status(0, 0, None), "offline")
 
 
 class MdnsProbeTests(unittest.TestCase):

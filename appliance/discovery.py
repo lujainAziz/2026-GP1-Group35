@@ -2579,15 +2579,55 @@ def _all_known_macs():
     return {row[0].lower() for row in rows}
 
 
+def span_stale_cutoff(now=None):
+    """ISO cutoff below which a last_span_seen timestamp is considered stale.
+
+    Reuses DISCOVERY_STALE_SECONDS so passive-SPAN recency and ARP-discovery
+    recency share one freshness window (no separate threshold/config).
+    """
+    now = now or datetime.now()
+    return (now - timedelta(seconds=DISCOVERY_STALE_SECONDS)).isoformat(timespec="seconds")
+
+
+def presence_status(discovered_current, ap_associated, last_span_seen, now=None):
+    """Single source of truth for a device's live presence status.
+
+    'observed' means passive SPAN traffic seen *recently* (within
+    DISCOVERY_STALE_SECONDS), NOT merely at some point this runtime --
+    session_seen is deliberately not consulted here and stays a
+    runtime-historical metric. The DB writer (mark_stale_discovery_records),
+    the CLI inventory view, and -- via the stored status column -- the API all
+    derive status from this same rule so they cannot disagree.
+    """
+    if discovered_current or ap_associated:
+        return "online"
+    # last_span_seen is stored as isoformat(timespec="seconds"); string compare
+    # matches chronological order and the SQL used in mark_stale below.
+    if last_span_seen and last_span_seen >= span_stale_cutoff(now):
+        return "observed"
+    return "offline"
+
+
 def mark_stale_discovery_records():
-    """Age out subnet presence without erasing traffic/history evidence."""
-    cutoff = (datetime.now() - timedelta(seconds=DISCOVERY_STALE_SECONDS)).isoformat(
-        timespec="seconds"
-    )
+    """Age out subnet presence without erasing traffic/history evidence.
+
+    Two independent decays, both bounded by DISCOVERY_STALE_SECONDS:
+      1. A device previously confirmed on the subnet (discovered_current=1)
+         that stops replying to ARP loses discovered_current.
+      2. Every lifecycle row's status is re-derived from *recent* evidence via
+         presence_status(): online if discovered/AP-associated, else 'observed'
+         only while last_span_seen is still fresh, else 'offline'. This lets a
+         device that left become offline without a service restart, and lets a
+         fresh SPAN packet restore 'observed' -- all without touching
+         session_seen (kept as the runtime-historical traffic metric).
+    """
+    now = datetime.now()
+    cutoff = span_stale_cutoff(now)
     with db_lock:
         conn = connect_db()
+        # (1) Report + clear subnet-discovery presence that has gone stale.
         stale_rows = conn.execute(
-            "SELECT mac, ip, COALESCE(session_seen,0), COALESCE(ap_associated,0) "
+            "SELECT mac, ip, COALESCE(ap_associated,0), last_span_seen "
             "FROM devices "
             "WHERE COALESCE(discovered_current,0)=1 "
             "AND last_discovery_seen IS NOT NULL AND last_discovery_seen < ?",
@@ -2595,25 +2635,34 @@ def mark_stale_discovery_records():
         ).fetchall()
         if stale_rows:
             conn.execute(
-                "UPDATE devices SET discovered_current=0, "
-                "status=CASE "
-                "WHEN COALESCE(ap_associated,0)=1 THEN 'online' "
-                "WHEN COALESCE(session_seen,0)=1 THEN 'observed' "
-                "ELSE 'offline' END "
+                "UPDATE devices SET discovered_current=0 "
                 "WHERE COALESCE(discovered_current,0)=1 "
                 "AND last_discovery_seen IS NOT NULL AND last_discovery_seen < ?",
                 (cutoff,),
             )
+        # (2) Re-derive status for every lifecycle row. This SQL mirrors
+        # presence_status() exactly; 'candidate' (pre-presence) is left alone.
+        conn.execute(
+            "UPDATE devices SET status = CASE "
+            "WHEN COALESCE(discovered_current,0)=1 OR COALESCE(ap_associated,0)=1 "
+            "THEN 'online' "
+            "WHEN last_span_seen IS NOT NULL AND last_span_seen >= ? THEN 'observed' "
+            "ELSE 'offline' END "
+            "WHERE status IN ('online','observed','offline')",
+            (cutoff,),
+        )
         conn.commit()
         conn.close()
 
-    for mac, ip, session_seen, ap_associated in stale_rows:
-        if ap_associated:
+    for mac, ip, ap_associated, last_span_seen in stale_rows:
+        # discovered_current is now 0 for these rows; report the resulting state.
+        resulting = presence_status(0, ap_associated, last_span_seen, now)
+        if resulting == "online":  # still AP-associated
             print(
                 f"[ARP-STALE] {mac}  ip={ip or '-'}  "
                 "not replying to subnet discovery; still associated to Assas-Test"
             )
-        elif session_seen:
+        elif resulting == "observed":
             print(
                 f"[OBSERVED] {mac}  ip={ip or '-'}  "
                 f"not replying to subnet discovery; traffic still visible on SPAN {CAPTURE_INTERFACE}"
@@ -3230,7 +3279,7 @@ def show_inventory(show_all=False, show_history=False):
                    COALESCE(discovered_current,0), last_discovery_seen,
                    COALESCE(traffic_seen,0), COALESCE(session_seen,0), last_traffic_seen,
                    COALESCE(is_ap_client,0), COALESCE(ap_associated,0),
-                   last_ap_seen, membership_source
+                   last_ap_seen, membership_source, last_span_seen
             FROM devices
             {where}
         """).fetchall()
@@ -3275,14 +3324,9 @@ def show_inventory(show_all=False, show_history=False):
         status, ip, mac, hostname, dtype, model, vendor, vendor_source, source, class_score, model_source,
         discovered_current, last_discovery_seen,
         traffic_seen, session_seen, last_traffic_seen,
-        is_ap_client, ap_associated, last_ap_seen, membership_source,
+        is_ap_client, ap_associated, last_ap_seen, membership_source, last_span_seen,
     ) in rows:
-        if discovered_current or ap_associated:
-            display_status = "online"
-        elif session_seen:
-            display_status = "observed"
-        else:
-            display_status = "offline"
+        display_status = presence_status(discovered_current, ap_associated, last_span_seen)
 
         if session_seen:
             traffic_label = "yes"
