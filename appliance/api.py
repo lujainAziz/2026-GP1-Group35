@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
@@ -18,7 +19,24 @@ DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 # Above this many seconds without a daemon write, /healthz flags the daemon stale.
 HEARTBEAT_STALE_SECONDS = int(os.getenv("ASSAS_HEARTBEAT_STALE_SECONDS", "120"))
 
+# Matches http/https on localhost or 127.0.0.1 at any port (e.g. the port the
+# Flutter Web dev server picks). Anchored so lookalikes like
+# "http://localhost.evil.com" do not match.
+DEV_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
 app = FastAPI(title="ASSAS Device Inventory API", version="1.0")
+
+# CORS for local Flutter Web development only. The API serves no cookies, so
+# credentials stay disabled; a matched origin is echoed back (never "*").
+# Authorization is allowed now so a future Bearer scheme works without a
+# second preflight round-trip.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=DEV_ORIGIN_REGEX,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 def get_connection():

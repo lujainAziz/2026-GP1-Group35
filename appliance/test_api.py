@@ -5,6 +5,7 @@
 (The discovery test suite, test_discovery.py, needs scapy and runs under the
 system interpreter; the two suites use different interpreters by design.)
 """
+import asyncio
 import os
 import sqlite3
 import tempfile
@@ -147,6 +148,107 @@ class EffectiveVendorSourceTests(unittest.TestCase):
     def test_locally_administered_bit(self):
         self.assertTrue(api._is_locally_administered_mac("02:11:22:33:44:55"))
         self.assertFalse(api._is_locally_administered_mac("dc:a6:32:11:22:33"))
+
+
+def _asgi_request(method, path, headers):
+    """Drive the real ASGI app (middleware included) and return
+    (status, lowercased-response-headers). TestClient needs httpx, which is
+    absent here, and calling endpoint functions directly bypasses middleware --
+    so CORS can only be exercised by invoking the app as an ASGI callable."""
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    captured = {}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            captured["status"] = message["status"]
+            captured["headers"] = {
+                k.decode().lower(): v.decode() for k, v in message["headers"]
+            }
+
+    asyncio.run(api.app(scope, receive, send))
+    return captured["status"], captured["headers"]
+
+
+class CorsTests(unittest.TestCase):
+    """CORS for local Flutter Web dev. Uses a seeded temp DB so an actual
+    (non-preflight) request reaches a route and returns 200."""
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def test_allowed_localhost_origin_gets_acao(self):
+        origin = "http://localhost:12345"
+        status, headers = _asgi_request("GET", "/healthz", {"origin": origin})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("access-control-allow-origin"), origin)
+        # No cookies in play, so credentials must stay off.
+        self.assertNotIn("access-control-allow-credentials", headers)
+
+    def test_allowed_loopback_ip_origin_gets_acao(self):
+        origin = "http://127.0.0.1:8080"
+        _, headers = _asgi_request("GET", "/healthz", {"origin": origin})
+        self.assertEqual(headers.get("access-control-allow-origin"), origin)
+
+    def test_preflight_allows_authorization_and_content_type(self):
+        origin = "http://localhost:3000"
+        status, headers = _asgi_request(
+            "OPTIONS",
+            "/devices",
+            {
+                "origin": origin,
+                "access-control-request-method": "POST",
+                "access-control-request-headers": "authorization, content-type",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("access-control-allow-origin"), origin)
+        allow_headers = headers.get("access-control-allow-headers", "").lower()
+        self.assertIn("authorization", allow_headers)
+        self.assertIn("content-type", allow_headers)
+        allow_methods = headers.get("access-control-allow-methods", "")
+        self.assertIn("POST", allow_methods)
+
+    def test_unrelated_origin_is_not_allowed(self):
+        status, headers = _asgi_request(
+            "GET", "/healthz", {"origin": "http://evil.example.com"}
+        )
+        self.assertEqual(status, 200)  # request still served; just no CORS grant
+        self.assertNotIn("access-control-allow-origin", headers)
+
+    def test_localhost_lookalike_origin_is_not_allowed(self):
+        # Anchored regex must reject a domain that merely starts with localhost.
+        _, headers = _asgi_request(
+            "GET", "/healthz", {"origin": "http://localhost.evil.com"}
+        )
+        self.assertNotIn("access-control-allow-origin", headers)
 
 
 if __name__ == "__main__":
