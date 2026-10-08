@@ -853,8 +853,70 @@ def init_db():
           )
     """)
 
+    # Persistent app settings, single row (id is pinned to 1). This is the
+    # canonical schema owner; api.py has a narrow guard that creates the same
+    # table if it must answer GET/PUT /settings before discovery has restarted.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id            INTEGER PRIMARY KEY CHECK (id = 1),
+            active_probes INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    # Seed the row exactly once. The legacy ASSAS_*_PROBE env flags SEED the
+    # initial value only -- preserving an operator who enabled any active probe
+    # before this setting existed. INSERT OR IGNORE never overwrites an existing
+    # row, so once seeded the DB value is authoritative and the env flags are
+    # ignored at runtime (see reload_runtime_settings): one live config source.
+    env_seed = 1 if (ENABLE_MDNS_PROBE or ENABLE_NBNS_PROBE or ENABLE_ACTIVE_PROBE) else 0
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (id, active_probes) VALUES (1, ?)",
+        (env_seed,),
+    )
+
     conn.commit()
     conn.close()
+
+
+def read_active_probes_setting():
+    """Return the persisted active_probes flag as a bool.
+
+    Returns None if the value could not be read (e.g. a transient DB error), so
+    callers can keep the current runtime state rather than flap the probe gates.
+    A missing row means "not seeded yet" and reads as False (the default).
+    """
+    try:
+        conn = connect_db()
+        try:
+            row = conn.execute(
+                "SELECT active_probes FROM app_settings WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return False if row is None else bool(row[0])
+
+
+def reload_runtime_settings():
+    """Apply the persisted active_probes flag to the three active-probe gates.
+
+    active_probes is the single user switch exposed by api.py (GET/PUT /settings)
+    and the Flutter app. It gates the three active identification probes together
+    -- unicast mDNS, NBNS name query, and the limited nmap probe -- and nothing
+    else: passive sniffing, ARP discovery, inventory, Suricata, and passive-
+    evidence classification are untouched (SSDP/UPnP M-SEARCH is deliberately out
+    of scope and keeps its own ENABLE_UPNP_ENRICHMENT flag). Called at startup
+    and periodically (housekeeping), so a change saved in the app applies without
+    a manual restart. On a transient read failure the gates are left as-is.
+    """
+    global ENABLE_MDNS_PROBE, ENABLE_NBNS_PROBE, ENABLE_ACTIVE_PROBE
+    active = read_active_probes_setting()
+    if active is None:
+        return None
+    ENABLE_MDNS_PROBE = active
+    ENABLE_NBNS_PROBE = active
+    ENABLE_ACTIVE_PROBE = active
+    return active
 
 
 def load_oui():
@@ -2781,6 +2843,10 @@ def discovery_arp_observer_loop():
 def housekeeping():
     while True:
         time.sleep(60)
+        # Pick up an active_probes change saved via the API without a restart.
+        # This loop always runs (unlike the optional refresh loop), so it is the
+        # reliable place to reconcile runtime gates with the persisted setting.
+        reload_runtime_settings()
         if DELETE_AFTER_DAYS <= 0:
             continue
         stale = (datetime.now() - timedelta(days=DELETE_AFTER_DAYS)).isoformat(
@@ -3560,6 +3626,10 @@ def main():
     purge_self_records()
     cleanup_stale_mdns_query_classifications()
     rescore_stored_evidence()
+
+    # DB is authoritative from here on: apply the persisted active_probes value
+    # over the env-seeded defaults before the banners/gates below read them.
+    reload_runtime_settings()
 
     if ENABLE_UPNP_ENRICHMENT:
         print(

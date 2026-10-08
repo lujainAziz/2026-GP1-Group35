@@ -467,5 +467,148 @@ class TrustSchemaCompatTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path + ".nonexistent"))
 
 
+class SettingsStateTests(unittest.TestCase):
+    """GET/PUT /settings. Seeds a temp DB with the app_settings table (no row)
+    and points api.DB_PATH at it, since the write opens its own connection."""
+
+    JSON = {"content-type": "application/json"}
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(api._APP_SETTINGS_DDL)
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _stored(self):
+        con = sqlite3.connect(self.path)
+        try:
+            row = con.execute(
+                "SELECT active_probes FROM app_settings WHERE id = 1"
+            ).fetchone()
+            return None if row is None else row[0]
+        finally:
+            con.close()
+
+    def test_default_false_when_no_row(self):
+        self.assertIsNone(self._stored())
+        r = _asgi_request("GET", "/settings", {})
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(r.body), {"active_probes": False})
+
+    def test_get_returns_json_boolean(self):
+        _asgi_request("PUT", "/settings", self.JSON, body='{"active_probes": true}')
+        r = _asgi_request("GET", "/settings", {})
+        self.assertIsInstance(json.loads(r.body)["active_probes"], bool)
+
+    def test_put_true_persists_and_idempotent(self):
+        for _ in range(2):
+            r = _asgi_request(
+                "PUT", "/settings", self.JSON, body='{"active_probes": true}'
+            )
+            self.assertEqual(r.status, 200)
+            self.assertEqual(json.loads(r.body), {"active_probes": True})
+            self.assertEqual(self._stored(), 1)
+
+    def test_put_false_persists_and_idempotent(self):
+        _asgi_request("PUT", "/settings", self.JSON, body='{"active_probes": true}')
+        for _ in range(2):
+            r = _asgi_request(
+                "PUT", "/settings", self.JSON, body='{"active_probes": false}'
+            )
+            self.assertEqual(r.status, 200)
+            self.assertIs(json.loads(r.body)["active_probes"], False)
+            self.assertEqual(self._stored(), 0)
+
+    def test_get_reflects_put(self):
+        _asgi_request("PUT", "/settings", self.JSON, body='{"active_probes": true}')
+        r = _asgi_request("GET", "/settings", {})
+        self.assertIs(json.loads(r.body)["active_probes"], True)
+
+    def test_put_missing_field_is_422(self):
+        r = _asgi_request("PUT", "/settings", self.JSON, body="{}")
+        self.assertEqual(r.status, 422)
+        self.assertIsNone(self._stored())  # no write
+
+    def test_put_non_boolean_is_422(self):
+        # StrictBool rejects coercible values too: integer 1 and the string "true".
+        for raw in ('"maybe"', "1", '"true"'):
+            with self.subTest(raw=raw):
+                r = _asgi_request(
+                    "PUT", "/settings", self.JSON,
+                    body='{"active_probes": %s}' % raw,
+                )
+                self.assertEqual(r.status, 422)
+                self.assertIsNone(self._stored())
+
+
+class SettingsSchemaCompatTests(unittest.TestCase):
+    """Deployment safety: GET/PUT /settings must work when the API boots against
+    a DB that has no app_settings table yet (discovery not restarted)."""
+
+    JSON = {"content-type": "application/json"}
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        # Valid DB, but only a devices table -- no app_settings yet.
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _has_table(self):
+        con = sqlite3.connect(self.path)
+        try:
+            return con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_settings'"
+            ).fetchone() is not None
+        finally:
+            con.close()
+
+    def test_get_before_table_returns_default_false(self):
+        self.assertFalse(self._has_table())
+        r = _asgi_request("GET", "/settings", {})
+        self.assertEqual(r.status, 200)
+        self.assertIs(json.loads(r.body)["active_probes"], False)
+
+    def test_startup_creates_table(self):
+        self.assertFalse(self._has_table())
+        _run_lifespan_startup()
+        self.assertTrue(self._has_table())
+        r = _asgi_request("GET", "/settings", {})
+        self.assertEqual(r.status, 200)
+
+    def test_put_creates_table_when_missing(self):
+        self.assertFalse(self._has_table())
+        r = _asgi_request(
+            "PUT", "/settings", self.JSON, body='{"active_probes": true}'
+        )
+        self.assertEqual(r.status, 200)
+        self.assertTrue(self._has_table())
+        r2 = _asgi_request("GET", "/settings", {})
+        self.assertIs(json.loads(r2.body)["active_probes"], True)
+
+    def test_ensure_is_idempotent_and_safe_when_db_absent(self):
+        _run_lifespan_startup()
+        _run_lifespan_startup()  # second run must be a harmless no-op
+        api.DB_PATH = self.path + ".nonexistent"
+        api.ensure_settings_table()  # missing DB must not raise or create a file
+        self.assertFalse(os.path.exists(self.path + ".nonexistent"))
+
+
 if __name__ == "__main__":
     unittest.main()

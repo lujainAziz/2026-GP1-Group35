@@ -1,8 +1,9 @@
 /// Settings the user can change from the app.
 class ApplianceSettings {
-  /// Optional light local probes used to identify devices
-  /// (unicast mDNS, NetBIOS name query, limited nmap probe).
-  /// Off = fully passive monitoring (Scope section of the report).
+  /// Optional active identification probes used to identify devices:
+  /// unicast mDNS, NBNS / NetBIOS name query, and a limited Nmap probe.
+  /// Off disables only these optional probes; network monitoring and basic
+  /// device discovery (e.g. ARP) continue.
   final bool activeProbes;
 
   const ApplianceSettings({required this.activeProbes});

@@ -1433,5 +1433,121 @@ class TrustedColumnTests(unittest.TestCase):
         self.assertEqual(self._trusted(mac), 1)
 
 
+class ActiveProbesSettingTests(unittest.TestCase):
+    """active_probes is the single persisted switch for the three active
+    identification probes (mDNS / NBNS / limited nmap). The DB row is
+    authoritative; the ASSAS_*_PROBE env flags only seed the initial value."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)  # let init_db() create it fresh
+        self._orig_db_path = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        self._orig_flags = (
+            discovery.ENABLE_MDNS_PROBE,
+            discovery.ENABLE_NBNS_PROBE,
+            discovery.ENABLE_ACTIVE_PROBE,
+        )
+        self._orig_upnp = discovery.ENABLE_UPNP_ENRICHMENT
+        # Deterministic baseline: all active probes off (independent of the
+        # env the test process happens to run under).
+        discovery.ENABLE_MDNS_PROBE = False
+        discovery.ENABLE_NBNS_PROBE = False
+        discovery.ENABLE_ACTIVE_PROBE = False
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.DB_PATH = self._orig_db_path
+        (discovery.ENABLE_MDNS_PROBE,
+         discovery.ENABLE_NBNS_PROBE,
+         discovery.ENABLE_ACTIVE_PROBE) = self._orig_flags
+        discovery.ENABLE_UPNP_ENRICHMENT = self._orig_upnp
+        discovery.write_cache.clear()
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _row(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            return conn.execute(
+                "SELECT active_probes FROM app_settings WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+
+    def _set_active_probes(self, value):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute(
+                "UPDATE app_settings SET active_probes = ? WHERE id = 1",
+                (1 if value else 0,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_fresh_db_seeds_default_false(self):
+        discovery.init_db()
+        self.assertEqual(self._row()[0], 0)
+        self.assertIs(discovery.reload_runtime_settings(), False)
+        self.assertFalse(discovery.ENABLE_MDNS_PROBE)
+        self.assertFalse(discovery.ENABLE_NBNS_PROBE)
+        self.assertFalse(discovery.ENABLE_ACTIVE_PROBE)
+
+    def test_env_flag_seeds_true_once(self):
+        # An operator who enabled nmap via env before this setting existed keeps
+        # it on as the seeded initial value.
+        discovery.ENABLE_ACTIVE_PROBE = True
+        discovery.init_db()
+        self.assertEqual(self._row()[0], 1)
+
+    def test_db_value_is_authoritative_over_env(self):
+        discovery.init_db()  # seeds 0 (all off)
+        # Env now claims "on", but the persisted row says off -> DB wins.
+        discovery.ENABLE_MDNS_PROBE = True
+        discovery.ENABLE_NBNS_PROBE = True
+        discovery.ENABLE_ACTIVE_PROBE = True
+        self.assertIs(discovery.reload_runtime_settings(), False)
+        self.assertFalse(discovery.ENABLE_MDNS_PROBE)
+        self.assertFalse(discovery.ENABLE_NBNS_PROBE)
+        self.assertFalse(discovery.ENABLE_ACTIVE_PROBE)
+
+    def test_periodic_reload_updates_three_flags_only(self):
+        discovery.init_db()
+        self._set_active_probes(True)
+        before_upnp = discovery.ENABLE_UPNP_ENRICHMENT
+        self.assertIs(discovery.reload_runtime_settings(), True)
+        self.assertTrue(discovery.ENABLE_MDNS_PROBE)
+        self.assertTrue(discovery.ENABLE_NBNS_PROBE)
+        self.assertTrue(discovery.ENABLE_ACTIVE_PROBE)
+        # SSDP/UPnP M-SEARCH is out of scope and must not be touched.
+        self.assertEqual(discovery.ENABLE_UPNP_ENRICHMENT, before_upnp)
+
+    def test_setting_persists_across_reopen_and_reinit(self):
+        discovery.init_db()
+        self._set_active_probes(True)
+        discovery.init_db()  # restart: INSERT OR IGNORE keeps the stored row
+        self.assertEqual(self._row()[0], 1)
+        self.assertIs(discovery.reload_runtime_settings(), True)
+
+    def test_active_probes_off_does_not_block_inventory(self):
+        discovery.init_db()
+        self._set_active_probes(False)
+        discovery.reload_runtime_settings()
+        mac = "aa:00:00:00:bb:01"
+        # Passive/discovery inventory still records the device with probes off.
+        discovery.update_device(mac, ip="192.168.1.90", seen_in_discovery=True,
+                                mark_current=True)
+        conn = sqlite3.connect(self.db_path)
+        try:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM devices WHERE mac = ?", (mac,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(n, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

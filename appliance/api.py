@@ -67,11 +67,43 @@ def ensure_trusted_column() -> None:
         conn.close()
 
 
+# Kept textually identical to discovery.init_db()'s app_settings DDL so the two
+# processes never create diverging schemas for the same table.
+_APP_SETTINGS_DDL = (
+    "CREATE TABLE IF NOT EXISTS app_settings ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1),"
+    " active_probes INTEGER NOT NULL DEFAULT 0"
+    ")"
+)
+
+
+def ensure_settings_table() -> None:
+    """Deployment safety: guarantee app_settings exists so GET/PUT /settings work
+    even if the API starts before discovery.py has (re)started to run its
+    canonical init_db migration.
+
+    Mirrors ONLY the table shape, and deliberately does NOT seed a row: the
+    initial value is env-seeded by discovery.init_db, and a GET before any seed
+    reads the default (false). This keeps a single authoritative config source.
+    Idempotent and a no-op if the DB file does not exist yet.
+    """
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError:
+        return  # DB not created yet; discovery.init_db() will build it fresh.
+    try:
+        conn.execute(_APP_SETTINGS_DDL)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @asynccontextmanager
 async def lifespan(_app: "FastAPI"):
-    # Runs once on startup (uvicorn drives the ASGI lifespan protocol) before
-    # any request is served, so the trusted column is guaranteed present.
+    # Runs once on startup (uvicorn drives the ASGI lifespan protocol) before any
+    # request is served, so the trusted column and settings table are present.
     ensure_trusted_column()
+    ensure_settings_table()
     yield
 
 
@@ -167,6 +199,20 @@ class TrustUpdate(BaseModel):
     # or coercible value (1, 0, "true") yields 422 before any DB access, so a
     # malformed body can never change stored state.
     trusted: StrictBool
+
+
+class SettingsState(BaseModel):
+    # The single user-facing appliance setting (matches the Flutter contract
+    # {"active_probes": bool}): the master switch for the active identification
+    # probes (unicast mDNS, NBNS name query, limited nmap). Off disables only
+    # those optional probes; network monitoring and basic device discovery
+    # (ARP, inventory) continue, and SSDP/UPnP M-SEARCH is out of scope.
+    active_probes: bool
+
+
+class SettingsUpdate(BaseModel):
+    # StrictBool, same rationale as TrustUpdate: missing / 1 / "true" -> 422.
+    active_probes: StrictBool
 
 
 class Classification(BaseModel):
@@ -428,3 +474,46 @@ def summary(conn: sqlite3.Connection = Depends(get_connection)):
         by_status=by_status,
         by_device_type=by_device_type,
     )
+
+
+@app.get("/settings", response_model=SettingsState)
+def get_settings(conn: sqlite3.Connection = Depends(get_connection)):
+    """Return the persisted appliance setting. A missing table or row (not seeded
+    yet) reads as the default, so this never 404s once the API is up."""
+    try:
+        row = conn.execute(
+            "SELECT active_probes FROM app_settings WHERE id = 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None  # table not created yet -> default
+    active = bool(row["active_probes"]) if row is not None else False
+    return SettingsState(active_probes=active)
+
+
+@app.put("/settings", response_model=SettingsState)
+def put_settings(body: SettingsUpdate):
+    """Persist the single appliance setting (idempotent upsert of the one row).
+
+    Discovery re-reads this value on its own schedule and applies it to the
+    active-probe gates; this endpoint only writes app_settings and never touches
+    device rows, discovery state, or classification.
+    """
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        # Guarantee the target exists even if lifespan startup did not run.
+        conn.execute(_APP_SETTINGS_DDL)
+        conn.execute(
+            "INSERT INTO app_settings (id, active_probes) VALUES (1, ?) "
+            "ON CONFLICT(id) DO UPDATE SET active_probes = excluded.active_probes",
+            (int(body.active_probes),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return SettingsState(active_probes=body.active_probes)

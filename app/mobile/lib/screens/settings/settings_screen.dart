@@ -251,7 +251,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         subtitle: Text(
           'Lets Assas send light local checks to identify devices more accurately. '
-          'Turn off for fully passive monitoring.',
+          'Turn off optional active identification probes. Network monitoring and '
+          'basic device discovery continue.',
           style: AssasText.small,
         ),
       ),
