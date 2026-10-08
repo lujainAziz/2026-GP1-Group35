@@ -7,12 +7,13 @@ runs in WAL journal mode, so concurrent reads while it writes are safe.
 """
 import os
 import sqlite3
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 
@@ -24,7 +25,57 @@ HEARTBEAT_STALE_SECONDS = int(os.getenv("ASSAS_HEARTBEAT_STALE_SECONDS", "120"))
 # "http://localhost.evil.com" do not match.
 DEV_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
-app = FastAPI(title="ASSAS Device Inventory API", version="1.0")
+def _open_writable() -> sqlite3.Connection:
+    """Open the devices DB read-write WITHOUT creating it (mode=rw, not rwc).
+
+    This is the only writable door into the DB. It exists solely for (1) the
+    additive `trusted` schema guard below and (2) explicit user trust writes.
+    Ordinary API reads keep using the mode=ro connection in get_connection().
+    Raises sqlite3.OperationalError if the DB file does not exist yet.
+    """
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=rw", uri=True, timeout=5.0)
+    # Discovery is a concurrent WAL writer; wait rather than fail on its lock.
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
+
+
+def ensure_trusted_column() -> None:
+    """Deployment safety: guarantee devices.trusted exists before any endpoint
+    reads it, without waiting for discovery.py to be restarted.
+
+    The API may boot against a DB written by an older discovery.py that predates
+    the `trusted` column, whose canonical migration (discovery.init_db) has not
+    run yet. Without this, GET /devices would fail with "no such column". This
+    mirrors ONLY the single `trusted` column -- all other schema evolution stays
+    owned by discovery.py's migration set; we deliberately do not duplicate it.
+    Idempotent and a no-op if the DB or devices table does not exist yet.
+    """
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError:
+        return  # DB not created yet; discovery.init_db() will build it fresh.
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+        # Empty cols => devices table absent; nothing to migrate (discovery owns
+        # table creation). Only add the column when the table exists without it.
+        if cols and "trusted" not in cols:
+            conn.execute(
+                "ALTER TABLE devices ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+@asynccontextmanager
+async def lifespan(_app: "FastAPI"):
+    # Runs once on startup (uvicorn drives the ASGI lifespan protocol) before
+    # any request is served, so the trusted column is guaranteed present.
+    ensure_trusted_column()
+    yield
+
+
+app = FastAPI(title="ASSAS Device Inventory API", version="1.0", lifespan=lifespan)
 
 # CORS for local Flutter Web development only. The API serves no cookies, so
 # credentials stay disabled; a matched origin is echoed back (never "*").
@@ -99,8 +150,23 @@ class DeviceSummary(BaseModel):
     vendor: Optional[str] = None
     vendor_source: Optional[str] = None
     status: Optional[str] = None
+    # User recognition state, independent of classification/monitoring. Stored
+    # as 0/1; surfaced here as a real JSON boolean. Old rows default to false.
+    trusted: bool = False
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
+
+
+class TrustState(BaseModel):
+    mac: str
+    trusted: bool
+
+
+class TrustUpdate(BaseModel):
+    # StrictBool so only JSON true/false is accepted: a missing, non-boolean,
+    # or coercible value (1, 0, "true") yields 422 before any DB access, so a
+    # malformed body can never change stored state.
+    trusted: StrictBool
 
 
 class Classification(BaseModel):
@@ -159,7 +225,7 @@ class SummaryStats(BaseModel):
 
 SUMMARY_COLUMNS = (
     "mac, ip, hostname, device_type, model, vendor, vendor_source, "
-    "status, first_seen, last_seen"
+    "status, trusted, first_seen, last_seen"
 )
 
 DETAIL_COLUMNS = SUMMARY_COLUMNS + (
@@ -181,6 +247,7 @@ def row_to_summary(row) -> DeviceSummary:
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
+    data["trusted"] = bool(data["trusted"])
     return DeviceSummary(**data)
 
 
@@ -188,7 +255,7 @@ def row_to_detail(row) -> DeviceDetail:
     data = dict(row)
     for flag in (
         "is_ap_client", "ap_associated", "discovered_current",
-        "traffic_seen", "session_seen",
+        "traffic_seen", "session_seen", "trusted",
     ):
         data[flag] = bool(data[flag])
     data["vendor_source"] = _effective_vendor_source(
@@ -284,6 +351,35 @@ def get_device(mac: str, conn: sqlite3.Connection = Depends(get_connection)):
     if row is None:
         raise HTTPException(status_code=404, detail=f"No device with mac {mac}")
     return row_to_detail(row)
+
+
+@app.put("/devices/{mac}/trust", response_model=TrustState)
+def set_device_trust(mac: str, body: TrustUpdate):
+    """Set the user recognition state for one existing device.
+
+    The only write the API performs on device rows. It touches a single column
+    (`trusted`) of a single existing row and creates nothing: a MAC that is not
+    already known returns 404. It never affects discovery, classification,
+    traffic capture, monitoring, or status.
+    """
+    mac = normalize_mac(mac)
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        cur = conn.execute(
+            "UPDATE devices SET trusted = ? WHERE mac = ?", (int(body.trusted), mac)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"No device with mac {mac}")
+        conn.commit()
+    finally:
+        conn.close()
+    return TrustState(mac=mac, trusted=body.trusted)
 
 
 @app.get("/summary", response_model=SummaryStats)

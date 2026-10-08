@@ -6,10 +6,12 @@
 system interpreter; the two suites use different interpreters by design.)
 """
 import asyncio
+import json
 import os
 import sqlite3
 import tempfile
 import unittest
+from collections import namedtuple
 from datetime import datetime, timedelta
 
 import api
@@ -22,7 +24,8 @@ _DEVICES_SCHEMA = (
     "model_score INTEGER, model_source TEXT, session_seen INTEGER, upnp_location TEXT, "
     "vendor_class TEXT, is_ap_client INTEGER, ap_associated INTEGER, last_ap_seen TEXT, "
     "membership_source TEXT, discovered_current INTEGER, last_discovery_seen TEXT, "
-    "traffic_seen INTEGER, last_traffic_seen TEXT, vendor_source TEXT"
+    "traffic_seen INTEGER, last_traffic_seen TEXT, vendor_source TEXT, "
+    "trusted INTEGER NOT NULL DEFAULT 0"
 )
 
 
@@ -150,11 +153,17 @@ class EffectiveVendorSourceTests(unittest.TestCase):
         self.assertFalse(api._is_locally_administered_mac("dc:a6:32:11:22:33"))
 
 
-def _asgi_request(method, path, headers):
-    """Drive the real ASGI app (middleware included) and return
-    (status, lowercased-response-headers). TestClient needs httpx, which is
-    absent here, and calling endpoint functions directly bypasses middleware --
-    so CORS can only be exercised by invoking the app as an ASGI callable."""
+Resp = namedtuple("Resp", ["status", "headers", "body"])
+
+
+def _asgi_request(method, path, headers, body=b""):
+    """Drive the real ASGI app (middleware + routing) and return a Resp with
+    status, lowercased response headers, and the raw body bytes. TestClient
+    needs httpx, which is absent here, and calling endpoint functions directly
+    bypasses middleware and request-body validation -- so CORS and the PUT
+    contract can only be exercised by invoking the app as an ASGI callable."""
+    if isinstance(body, str):
+        body = body.encode()
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -171,9 +180,10 @@ def _asgi_request(method, path, headers):
     }
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.request", "body": body, "more_body": False}
 
     captured = {}
+    chunks = []
 
     async def send(message):
         if message["type"] == "http.response.start":
@@ -181,9 +191,31 @@ def _asgi_request(method, path, headers):
             captured["headers"] = {
                 k.decode().lower(): v.decode() for k, v in message["headers"]
             }
+        elif message["type"] == "http.response.body":
+            chunks.append(message.get("body", b""))
 
     asyncio.run(api.app(scope, receive, send))
-    return captured["status"], captured["headers"]
+    return Resp(captured["status"], captured["headers"], b"".join(chunks))
+
+
+def _run_lifespan_startup():
+    """Drive the real ASGI lifespan protocol (startup then shutdown) so tests
+    exercise the wired startup path -- i.e. ensure_trusted_column() -- exactly
+    as uvicorn would, not by calling the helper directly."""
+    async def _drive():
+        queue = asyncio.Queue()
+        await queue.put({"type": "lifespan.startup"})
+        await queue.put({"type": "lifespan.shutdown"})
+
+        async def receive():
+            return await queue.get()
+
+        async def send(_message):
+            pass
+
+        await api.app({"type": "lifespan", "asgi": {"version": "3.0"}}, receive, send)
+
+    asyncio.run(_drive())
 
 
 class CorsTests(unittest.TestCase):
@@ -206,20 +238,20 @@ class CorsTests(unittest.TestCase):
 
     def test_allowed_localhost_origin_gets_acao(self):
         origin = "http://localhost:12345"
-        status, headers = _asgi_request("GET", "/healthz", {"origin": origin})
-        self.assertEqual(status, 200)
-        self.assertEqual(headers.get("access-control-allow-origin"), origin)
+        r = _asgi_request("GET", "/healthz", {"origin": origin})
+        self.assertEqual(r.status, 200)
+        self.assertEqual(r.headers.get("access-control-allow-origin"), origin)
         # No cookies in play, so credentials must stay off.
-        self.assertNotIn("access-control-allow-credentials", headers)
+        self.assertNotIn("access-control-allow-credentials", r.headers)
 
     def test_allowed_loopback_ip_origin_gets_acao(self):
         origin = "http://127.0.0.1:8080"
-        _, headers = _asgi_request("GET", "/healthz", {"origin": origin})
-        self.assertEqual(headers.get("access-control-allow-origin"), origin)
+        r = _asgi_request("GET", "/healthz", {"origin": origin})
+        self.assertEqual(r.headers.get("access-control-allow-origin"), origin)
 
     def test_preflight_allows_authorization_and_content_type(self):
         origin = "http://localhost:3000"
-        status, headers = _asgi_request(
+        r = _asgi_request(
             "OPTIONS",
             "/devices",
             {
@@ -228,27 +260,211 @@ class CorsTests(unittest.TestCase):
                 "access-control-request-headers": "authorization, content-type",
             },
         )
-        self.assertEqual(status, 200)
-        self.assertEqual(headers.get("access-control-allow-origin"), origin)
-        allow_headers = headers.get("access-control-allow-headers", "").lower()
+        self.assertEqual(r.status, 200)
+        self.assertEqual(r.headers.get("access-control-allow-origin"), origin)
+        allow_headers = r.headers.get("access-control-allow-headers", "").lower()
         self.assertIn("authorization", allow_headers)
         self.assertIn("content-type", allow_headers)
-        allow_methods = headers.get("access-control-allow-methods", "")
+        allow_methods = r.headers.get("access-control-allow-methods", "")
         self.assertIn("POST", allow_methods)
 
     def test_unrelated_origin_is_not_allowed(self):
-        status, headers = _asgi_request(
-            "GET", "/healthz", {"origin": "http://evil.example.com"}
-        )
-        self.assertEqual(status, 200)  # request still served; just no CORS grant
-        self.assertNotIn("access-control-allow-origin", headers)
+        r = _asgi_request("GET", "/healthz", {"origin": "http://evil.example.com"})
+        self.assertEqual(r.status, 200)  # request still served; just no CORS grant
+        self.assertNotIn("access-control-allow-origin", r.headers)
 
     def test_localhost_lookalike_origin_is_not_allowed(self):
         # Anchored regex must reject a domain that merely starts with localhost.
-        _, headers = _asgi_request(
-            "GET", "/healthz", {"origin": "http://localhost.evil.com"}
+        r = _asgi_request("GET", "/healthz", {"origin": "http://localhost.evil.com"})
+        self.assertNotIn("access-control-allow-origin", r.headers)
+
+
+class TrustStateTests(unittest.TestCase):
+    """PUT /devices/{mac}/trust and the trusted field on GET. Uses a seeded
+    temp DB with api.DB_PATH pointed at it, since the trust write opens its own
+    writable connection rather than taking an injected one."""
+
+    JSON = {"content-type": "application/json"}
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.execute(
+            "INSERT INTO devices (mac, ip, status, last_seen) VALUES "
+            "('aa:bb:cc:dd:ee:ff', '192.168.1.9', 'online', '2026-09-20T10:00:00')"
         )
-        self.assertNotIn("access-control-allow-origin", headers)
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _stored_trusted(self, mac):
+        con = sqlite3.connect(self.path)
+        try:
+            return con.execute(
+                "SELECT trusted FROM devices WHERE mac=?", (mac,)
+            ).fetchone()[0]
+        finally:
+            con.close()
+
+    def test_new_row_defaults_false(self):
+        # The seeded row never set trusted, so the column default must apply.
+        self.assertEqual(self._stored_trusted("aa:bb:cc:dd:ee:ff"), 0)
+        r = _asgi_request("GET", "/devices/aa:bb:cc:dd:ee:ff", {})
+        self.assertEqual(r.status, 200)
+        self.assertIs(json.loads(r.body)["trusted"], False)
+
+    def test_put_true_then_idempotent(self):
+        for _ in range(2):  # idempotent true -> true
+            r = _asgi_request(
+                "PUT", "/devices/aa:bb:cc:dd:ee:ff/trust",
+                self.JSON, body='{"trusted": true}',
+            )
+            self.assertEqual(r.status, 200)
+            self.assertEqual(
+                json.loads(r.body), {"mac": "aa:bb:cc:dd:ee:ff", "trusted": True}
+            )
+            self.assertEqual(self._stored_trusted("aa:bb:cc:dd:ee:ff"), 1)
+
+    def test_put_false_then_idempotent(self):
+        _asgi_request(
+            "PUT", "/devices/aa:bb:cc:dd:ee:ff/trust",
+            self.JSON, body='{"trusted": true}',
+        )
+        for _ in range(2):  # idempotent false -> false
+            r = _asgi_request(
+                "PUT", "/devices/aa:bb:cc:dd:ee:ff/trust",
+                self.JSON, body='{"trusted": false}',
+            )
+            self.assertEqual(r.status, 200)
+            self.assertIs(json.loads(r.body)["trusted"], False)
+            self.assertEqual(self._stored_trusted("aa:bb:cc:dd:ee:ff"), 0)
+
+    def _full_row(self):
+        con = sqlite3.connect(self.path)
+        con.row_factory = sqlite3.Row
+        try:
+            return dict(con.execute(
+                "SELECT * FROM devices WHERE mac='aa:bb:cc:dd:ee:ff'"
+            ).fetchone())
+        finally:
+            con.close()
+
+    def test_put_only_touches_trusted_column(self):
+        before = self._full_row()
+        _asgi_request(
+            "PUT", "/devices/aa:bb:cc:dd:ee:ff/trust",
+            self.JSON, body='{"trusted": true}',
+        )
+        after = self._full_row()
+        changed = {k for k in before if before[k] != after[k]}
+        self.assertEqual(changed, {"trusted"})
+
+    def test_put_normalizes_mac_and_echoes_normalized(self):
+        r = _asgi_request(
+            "PUT", "/devices/AA-BB-CC-DD-EE-FF/trust",
+            self.JSON, body='{"trusted": true}',
+        )
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(r.body)["mac"], "aa:bb:cc:dd:ee:ff")
+
+    def test_put_nonexistent_mac_404_creates_nothing(self):
+        r = _asgi_request(
+            "PUT", "/devices/00:00:00:00:00:01/trust",
+            self.JSON, body='{"trusted": true}',
+        )
+        self.assertEqual(r.status, 404)
+        con = sqlite3.connect(self.path)
+        try:
+            n = con.execute(
+                "SELECT COUNT(*) FROM devices WHERE mac='00:00:00:00:00:01'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+        self.assertEqual(n, 0)
+
+    def test_put_missing_field_is_422(self):
+        r = _asgi_request(
+            "PUT", "/devices/aa:bb:cc:dd:ee:ff/trust", self.JSON, body="{}"
+        )
+        self.assertEqual(r.status, 422)
+        self.assertEqual(self._stored_trusted("aa:bb:cc:dd:ee:ff"), 0)
+
+    def test_put_non_boolean_field_is_422(self):
+        # StrictBool rejects not just garbage ("maybe") but also values pydantic
+        # would otherwise coerce: integer 1 and the string "true". None may
+        # change the stored state.
+        for raw in ('"maybe"', "1", '"true"'):
+            with self.subTest(raw=raw):
+                r = _asgi_request(
+                    "PUT", "/devices/aa:bb:cc:dd:ee:ff/trust",
+                    self.JSON, body='{"trusted": %s}' % raw,
+                )
+                self.assertEqual(r.status, 422)
+                self.assertEqual(self._stored_trusted("aa:bb:cc:dd:ee:ff"), 0)
+
+    def test_get_list_exposes_boolean(self):
+        _asgi_request(
+            "PUT", "/devices/aa:bb:cc:dd:ee:ff/trust",
+            self.JSON, body='{"trusted": true}',
+        )
+        r = _asgi_request("GET", "/devices", {})
+        self.assertEqual(r.status, 200)
+        dev = next(d for d in json.loads(r.body) if d["mac"] == "aa:bb:cc:dd:ee:ff")
+        self.assertIs(dev["trusted"], True)
+
+
+class TrustSchemaCompatTests(unittest.TestCase):
+    """Deployment safety: the API must not break when it boots against a
+    pre-migration DB (no trusted column) before discovery.py is restarted."""
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        # Pre-migration schema: every current column EXCEPT trusted.
+        pre = _DEVICES_SCHEMA.rsplit(",", 1)[0]
+        self.assertNotIn("trusted", pre)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({pre})")
+        con.execute(
+            "INSERT INTO devices (mac, status, last_seen) VALUES "
+            "('aa:bb:cc:dd:ee:ff', 'online', '2026-09-20T10:00:00')"
+        )
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def test_startup_adds_column_and_get_does_not_break(self):
+        # Before startup the column is absent.
+        con = sqlite3.connect(self.path)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(devices)")}
+        con.close()
+        self.assertNotIn("trusted", cols)
+
+        _run_lifespan_startup()  # the wired startup path runs ensure_trusted_column
+
+        r = _asgi_request("GET", "/devices", {})
+        self.assertEqual(r.status, 200)
+        dev = next(d for d in json.loads(r.body) if d["mac"] == "aa:bb:cc:dd:ee:ff")
+        self.assertIs(dev["trusted"], False)  # backfilled default
+
+    def test_ensure_is_idempotent_and_safe_when_db_absent(self):
+        _run_lifespan_startup()
+        _run_lifespan_startup()  # second run must be a harmless no-op
+        api.DB_PATH = self.path + ".nonexistent"
+        api.ensure_trusted_column()  # missing DB must not raise or create a file
+        self.assertFalse(os.path.exists(self.path + ".nonexistent"))
 
 
 if __name__ == "__main__":

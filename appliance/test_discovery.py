@@ -1329,5 +1329,109 @@ class MdnsNamePersistenceTests(unittest.TestCase):
         self.assertEqual(self._hostname(mac), "Pixel-7")
 
 
+class TrustedColumnTests(unittest.TestCase):
+    """devices.trusted is a user-only recognition state. discovery.py must
+    create it (default 0) but never write or reset it."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)  # let init_db() create it fresh
+        self._orig_db_path = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.DB_PATH = self._orig_db_path
+        discovery.write_cache.clear()
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _columns(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            return {r[1]: r for r in conn.execute("PRAGMA table_info(devices)")}
+        finally:
+            conn.close()
+
+    def _trusted(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            return conn.execute(
+                "SELECT trusted FROM devices WHERE mac=?", (mac,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+    def _set_trusted(self, mac, value):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("UPDATE devices SET trusted=? WHERE mac=?", (value, mac))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_fresh_db_has_trusted_not_null_default_zero(self):
+        discovery.init_db()
+        col = self._columns()["trusted"]
+        # PRAGMA row: (cid, name, type, notnull, dflt_value, pk)
+        self.assertEqual(col[2], "INTEGER")
+        self.assertEqual(col[3], 1)       # NOT NULL
+        self.assertEqual(str(col[4]), "0")  # DEFAULT 0
+
+    def test_newly_discovered_device_defaults_untrusted(self):
+        discovery.init_db()
+        discovery.update_device("aa:00:00:00:aa:01", ip="192.168.1.70",
+                                seen_in_discovery=True, mark_current=True)
+        self.assertEqual(self._trusted("aa:00:00:00:aa:01"), 0)
+
+    def test_old_db_without_column_is_migrated_and_backfilled_false(self):
+        # Simulate a pre-trusted DB: base table + a row, no trusted column.
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "CREATE TABLE devices (mac TEXT PRIMARY KEY, ip TEXT, vendor TEXT, "
+            "first_seen TEXT, last_seen TEXT, status TEXT)"
+        )
+        conn.execute("INSERT INTO devices (mac, status) VALUES ('aa:00:00:00:aa:02','online')")
+        conn.commit()
+        conn.close()
+        self.assertNotIn("trusted", self._columns())
+        discovery.init_db()  # additive migration adds the column
+        self.assertIn("trusted", self._columns())
+        self.assertEqual(self._trusted("aa:00:00:00:aa:02"), 0)  # backfilled
+
+    def test_update_device_never_changes_trusted(self):
+        discovery.init_db()
+        mac = "aa:00:00:00:aa:03"
+        discovery.update_device(mac, ip="192.168.1.71", seen_in_discovery=True,
+                                mark_current=True)
+        self._set_trusted(mac, 1)
+        discovery.write_cache.clear()
+        # A later discovery event hits the UPDATE path and enriches identity...
+        discovery.update_device(mac, ip="192.168.1.71", hostname="OfficePC",
+                                seen_in_discovery=True, mark_current=True)
+        self.assertEqual(self._trusted(mac), 1)  # ...but trusted is untouched.
+
+    def test_reset_session_state_never_clears_trusted(self):
+        discovery.init_db()
+        mac = "aa:00:00:00:aa:04"
+        discovery.update_device(mac, ip="192.168.1.72", seen_in_discovery=True,
+                                mark_current=True)
+        self._set_trusted(mac, 1)
+        discovery.reset_session_state()  # startup reset of runtime flags
+        self.assertEqual(self._trusted(mac), 1)
+
+    def test_trusted_persists_across_reopen_and_reinit(self):
+        discovery.init_db()
+        mac = "aa:00:00:00:aa:05"
+        discovery.update_device(mac, ip="192.168.1.73", seen_in_discovery=True,
+                                mark_current=True)
+        self._set_trusted(mac, 1)
+        # Simulate API + discovery service restart against the same DB file.
+        discovery.init_db()
+        discovery.reset_session_state()
+        self.assertEqual(self._trusted(mac), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

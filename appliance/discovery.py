@@ -797,6 +797,12 @@ def init_db():
         # the backfill below can guard against ever overwriting an inferred
         # vendor.
         "vendor_source": "TEXT",
+        # User recognition state, set only via the API (PUT /devices/{mac}/trust)
+        # and never written or reset by discovery. Separate from classification,
+        # device_type, and monitoring: marking a device Trusted does not change
+        # discovery, traffic capture, or later anomaly detection. Defaults to 0
+        # (Unrecognized) so every newly discovered device starts untrusted.
+        "trusted": "INTEGER NOT NULL DEFAULT 0",
     }
 
     existing = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
