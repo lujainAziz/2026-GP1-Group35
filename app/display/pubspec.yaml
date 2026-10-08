@@ -1,0 +1,26 @@
+name: assas_display
+description: Assas 7-inch on-device status screen (Linux kiosk on the Raspberry Pi).
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Shared theme, models and data layer (same repo, not downloaded)
+  assas_core:
+    path: ../packages/assas_core
+
+  # Draws the pairing QR code (pure Dart, works on Linux)
+  qr_flutter: ^4.1.0
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
