@@ -182,6 +182,9 @@ class DeviceSummary(BaseModel):
     vendor: Optional[str] = None
     vendor_source: Optional[str] = None
     status: Optional[str] = None
+    # Last-confirmed SPAN coverage; not current traffic activity.
+    # May remain true after a topology change outside SPAN coverage.
+    monitored: bool = False
     # User recognition state, independent of classification/monitoring. Stored
     # as 0/1; surfaced here as a real JSON boolean. Old rows default to false.
     trusted: bool = False
@@ -271,8 +274,7 @@ class SummaryStats(BaseModel):
 
 SUMMARY_COLUMNS = (
     "mac, ip, hostname, device_type, model, vendor, vendor_source, "
-    "status, trusted, first_seen, last_seen"
-)
+    "status, COALESCE(is_monitored, 0) AS monitored, trusted, first_seen, last_seen")
 
 DETAIL_COLUMNS = SUMMARY_COLUMNS + (
     ", class_score, model_source, model_score, "
@@ -293,6 +295,7 @@ def row_to_summary(row) -> DeviceSummary:
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
+    data["monitored"] = bool(data["monitored"])
     data["trusted"] = bool(data["trusted"])
     return DeviceSummary(**data)
 
@@ -301,8 +304,7 @@ def row_to_detail(row) -> DeviceDetail:
     data = dict(row)
     for flag in (
         "is_ap_client", "ap_associated", "discovered_current",
-        "traffic_seen", "session_seen", "trusted",
-    ):
+    "traffic_seen", "session_seen", "trusted", "monitored",    ):
         data[flag] = bool(data[flag])
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")

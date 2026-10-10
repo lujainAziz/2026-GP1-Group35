@@ -123,6 +123,36 @@ class OnlineOnlyConsistencyTests(_SeededDBTest):
         self.assertEqual(sorted(x.mac for x in res), ["a", "d"])
 
 
+class MonitoredStateTests(_SeededDBTest):
+    """The API exposes last-confirmed capture coverage, not presence."""
+
+    def test_monitored_true_in_device_list(self):
+        self.insert(mac="aa:bb:cc:dd:ee:01", status="online", is_monitored=1)
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(len(devices), 1)
+        self.assertIs(devices[0].monitored, True)
+        self.assertEqual(devices[0].status, "online")
+
+    def test_monitored_false_in_device_list(self):
+        self.insert(mac="aa:bb:cc:dd:ee:02", status="online", is_monitored=0)
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(len(devices), 1)
+        self.assertIs(devices[0].monitored, False)
+        self.assertEqual(devices[0].status, "online")
+
+    def test_monitored_true_in_device_detail(self):
+        self.insert(mac="aa:bb:cc:dd:ee:03", status="offline", is_monitored=1)
+        device = api.get_device("aa:bb:cc:dd:ee:03", self.conn)
+        self.assertIs(device.monitored, True)
+        self.assertEqual(device.status, "offline")
+
+    def test_monitored_false_in_device_detail(self):
+        self.insert(mac="aa:bb:cc:dd:ee:04", status="online", is_monitored=0)
+        device = api.get_device("aa:bb:cc:dd:ee:04", self.conn)
+        self.assertIs(device.monitored, False)
+        self.assertEqual(device.status, "online")
+
+
 class EffectiveVendorSourceTests(unittest.TestCase):
     def test_randomized_null_source_becomes_inferred(self):
         # Legacy row: real vendor on a randomized MAC, vendor_source NULL.
@@ -418,6 +448,32 @@ class TrustStateTests(unittest.TestCase):
         self.assertEqual(r.status, 200)
         dev = next(d for d in json.loads(r.body) if d["mac"] == "aa:bb:cc:dd:ee:ff")
         self.assertIs(dev["trusted"], True)
+
+
+class MonitoredJSONResponseTests(_SeededDBTest):
+    """Check actual serialized GET responses and existing trusted/status fields."""
+
+    def test_monitored_in_json_responses(self):
+        self.insert(mac="aa:bb:cc:dd:ee:05", status="online", trusted=1, is_monitored=1)
+        original_path = api.DB_PATH
+        api.DB_PATH = self.path
+        try:
+            list_response = _asgi_request("GET", "/devices", {})
+            self.assertEqual(list_response.status, 200)
+            device = next(d for d in json.loads(list_response.body)
+                          if d["mac"] == "aa:bb:cc:dd:ee:05")
+            self.assertIs(device["monitored"], True)
+            self.assertIs(device["trusted"], True)
+            self.assertEqual(device["status"], "online")
+
+            detail_response = _asgi_request("GET", "/devices/aa:bb:cc:dd:ee:05", {})
+            self.assertEqual(detail_response.status, 200)
+            detail = json.loads(detail_response.body)
+            self.assertIs(detail["monitored"], True)
+            self.assertIs(detail["trusted"], True)
+            self.assertEqual(detail["status"], "online")
+        finally:
+            api.DB_PATH = original_path
 
 
 class TrustSchemaCompatTests(unittest.TestCase):
