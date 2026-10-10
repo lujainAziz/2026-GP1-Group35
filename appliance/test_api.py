@@ -652,6 +652,89 @@ class PairingCodeTests(unittest.TestCase):
         r = _asgi_request("GET", "/pairing/code", {}, client=self.LAN_CLIENT)
         self.assertEqual(r.status, 403)
         self.assertNotIn("code", json.loads(r.body))
+
+
+class PairingTests(unittest.TestCase):
+    """POST /pair: the current code buys a token; only its hash is stored."""
+
+    JSON = {"Content-Type": "application/json"}
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+        api._pairing_code = None
+        api._pairing_expires_at = None
+        api._pairing_failed_attempts = 0
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _code(self):
+        return json.loads(_asgi_request("GET", "/pairing/code", {}).body)["code"]
+
+    def _pair(self, code):
+        return _asgi_request("POST", "/pair", self.JSON, body=json.dumps({"code": code}))
+
+    def _stored_hashes(self):
+        con = sqlite3.connect(self.path)
+        try:
+            return [r[0] for r in con.execute("SELECT token_hash FROM paired_sessions")]
+        except sqlite3.OperationalError:
+            return []  # table not created yet -> no sessions
+        finally:
+            con.close()
+
+    def test_correct_code_returns_token_and_stores_only_hash(self):
+        r = self._pair(self._code())
+        self.assertEqual(r.status, 200)
+        token = json.loads(r.body)["token"]
+        self.assertGreater(len(token), 30)
+        hashes = self._stored_hashes()
+        self.assertEqual(hashes, [api._hash_token(token)])
+        self.assertNotIn(token, hashes)
+
+    def test_lowercase_and_spaces_are_accepted(self):
+        r = self._pair("  " + self._code().lower() + " ")
+        self.assertEqual(r.status, 200)
+
+    def test_wrong_code_is_401_and_stores_nothing(self):
+        self._code()
+        # "O" and "1" are never in a real code, so this can never match.
+        r = self._pair("WRONG1")
+        self.assertEqual(r.status, 401)
+        self.assertNotIn("token", json.loads(r.body))
+        self.assertEqual(self._stored_hashes(), [])
+
+    def test_expired_code_is_401(self):
+        code = self._code()
+        api._pairing_expires_at = datetime.now() - timedelta(seconds=1)
+        self.assertEqual(self._pair(code).status, 401)
+
+    def test_too_many_wrong_guesses_burn_the_code(self):
+        code = self._code()
+        for _ in range(api.MAX_FAILED_PAIRING_ATTEMPTS):
+            self.assertEqual(self._pair("WRONG1").status, 401)
+        # Even the right code no longer works: the display must show a new one.
+        self.assertEqual(self._pair(code).status, 401)
+
+    def test_each_pairing_gets_its_own_token(self):
+        code = self._code()
+        t1 = json.loads(self._pair(code).body)["token"]
+        t2 = json.loads(self._pair(code).body)["token"]
+        self.assertNotEqual(t1, t2)
+        self.assertEqual(len(self._stored_hashes()), 2)
+
+    def test_missing_code_field_is_422(self):
+        r = _asgi_request("POST", "/pair", self.JSON, body="{}")
+        self.assertEqual(r.status, 422)
+
  
 if __name__ == "__main__":
     unittest.main()

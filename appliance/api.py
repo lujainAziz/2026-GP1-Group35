@@ -6,6 +6,7 @@ connection in mode=ro so this process can never write to it. discovery.py
 runs in WAL journal mode, so concurrent reads while it writes are safe.
 """
 import os
+import hashlib
 import secrets
 import threading
 import sqlite3
@@ -540,6 +541,8 @@ LOCAL_HOSTS = {"127.0.0.1", "::1"}
 _pairing_lock = threading.Lock()
 _pairing_code: Optional[str] = None
 _pairing_expires_at: Optional[datetime] = None
+_pairing_failed_attempts = 0
+MAX_FAILED_PAIRING_ATTEMPTS = 5
 
 
 def _new_pairing_code() -> str:
@@ -550,12 +553,13 @@ def _new_pairing_code() -> str:
 
 def current_pairing_code() -> tuple[str, datetime]:
     """Return the current code, making a new one when the old one has expired."""
-    global _pairing_code, _pairing_expires_at
+    global _pairing_code, _pairing_expires_at, _pairing_failed_attempts
     with _pairing_lock:
         now = datetime.now()
         if _pairing_code is None or now >= _pairing_expires_at:
             _pairing_code = _new_pairing_code()
             _pairing_expires_at = now + timedelta(seconds=PAIRING_CODE_TTL_SECONDS)
+            _pairing_failed_attempts = 0
         return _pairing_code, _pairing_expires_at
 
 
@@ -579,3 +583,78 @@ def get_pairing_code(request: Request):
     return PairingCodeOut(
         code=code, expires_at=expires_at.isoformat(timespec="seconds")
     )
+
+# ---------------------------------------------------------------------------
+# Pairing sessions (PBI-08)
+#
+# A phone that sends the current code gets a random token. Only a SHA-256 hash
+# of the token is stored, so a copy of the database cannot be used to log in.
+# Like app_settings, the table is created on first write; reads treat a
+# missing table as "no sessions".
+# ---------------------------------------------------------------------------
+
+_SESSIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS paired_sessions ("
+    " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    " token_hash TEXT NOT NULL UNIQUE,"
+    " created_at TEXT NOT NULL"
+    ")"
+)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _check_pairing_code(code: str) -> bool:
+    """True if code matches the current, unexpired code.
+
+    Every wrong guess counts; after MAX_FAILED_PAIRING_ATTEMPTS the code is
+    dropped, so the display fetches a new one and guessing becomes useless.
+    """
+    global _pairing_code, _pairing_failed_attempts
+    with _pairing_lock:
+        valid = (
+            _pairing_code is not None
+            and datetime.now() < _pairing_expires_at
+            and secrets.compare_digest(code.encode(), _pairing_code.encode())
+        )
+        if not valid and _pairing_code is not None:
+            _pairing_failed_attempts += 1
+            if _pairing_failed_attempts >= MAX_FAILED_PAIRING_ATTEMPTS:
+                _pairing_code = None
+        return valid
+
+
+class PairRequest(BaseModel):
+    code: str
+
+
+class PairResponse(BaseModel):
+    token: str
+
+
+@app.post("/pair", response_model=PairResponse)
+def pair(body: PairRequest):
+    code = body.code.strip().upper()
+    if not _check_pairing_code(code):
+        raise HTTPException(status_code=401, detail="Invalid or expired pairing code.")
+
+    token = secrets.token_urlsafe(32)
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        conn.execute(_SESSIONS_DDL)
+        conn.execute(
+            "INSERT INTO paired_sessions (token_hash, created_at) VALUES (?, ?)",
+            (_hash_token(token), datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return PairResponse(token=token)
