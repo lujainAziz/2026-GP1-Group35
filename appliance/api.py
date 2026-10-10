@@ -6,12 +6,15 @@ connection in mode=ro so this process can never write to it. discovery.py
 runs in WAL journal mode, so concurrent reads while it writes are safe.
 """
 import os
+import hashlib
+import secrets
+import threading
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool
 
@@ -107,7 +110,42 @@ async def lifespan(_app: "FastAPI"):
     yield
 
 
-app = FastAPI(title="ASSAS Device Inventory API", version="1.0", lifespan=lifespan)
+
+def require_auth(request: Request) -> None:
+    """Gate for every endpoint (PBI-08); the pairing section is further down.
+
+    Defined here because FastAPI needs it when the app is created. Lets through
+    the appliance itself (localhost, e.g. the 7-inch display), the public
+    endpoints, and phones that send a valid paired token.
+    """
+    if request.url.path in PUBLIC_PATHS or _is_local_request(request):
+        return
+    token = _bearer_token(request)
+    if token is None or not _session_exists(token):
+        raise HTTPException(
+            status_code=401,
+            detail="Pairing required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+app = FastAPI(
+    title="ASSAS Device Inventory API",
+    version="1.0",
+    lifespan=lifespan,
+    dependencies=[Depends(require_auth)],
+    description=(
+        "**Authentication (PBI-08).** Phones on the LAN must pair first: read "
+        "the code on the Assas screen, send it to `POST /pair`, then send the "
+        "returned token as `Authorization: Bearer <token>` on every request. "
+        "The Assas device itself (the 7-inch display) and `/healthz`, `/pair` "
+        "and `/pairing/code` need no token. Any other request without a valid "
+        "token gets **401**."
+    ),
+)
+
+
+
 
 # CORS for local Flutter Web development only. The API serves no cookies, so
 # credentials stay disabled; a matched origin is echoed back (never "*").
@@ -124,7 +162,12 @@ app.add_middleware(
 
 def get_connection():
     try:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0)
+                # FastAPI may open, use and close this connection on different
+        # worker threads within one request (never at the same time), so the
+        # same-thread check must be off or concurrent requests fail with 500.
+        conn = sqlite3.connect(
+            f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0, check_same_thread=False
+        )
         conn.row_factory = sqlite3.Row
     except sqlite3.OperationalError as exc:
         raise HTTPException(
@@ -517,3 +560,218 @@ def put_settings(body: SettingsUpdate):
     finally:
         conn.close()
     return SettingsState(active_probes=body.active_probes)
+
+
+# ---------------------------------------------------------------------------
+# Pairing (PBI-08)
+#
+# The 7-inch display shows a short code that changes every minute. A phone that
+# sends the current code gets a token (added in the next step). The code lives
+# only in memory: it is short-lived, so it never needs to survive a restart.
+# ---------------------------------------------------------------------------
+
+# Letters and digits that are easy to read on a screen: no 0/O, no 1/I/L.
+PAIRING_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+PAIRING_CODE_LENGTH = 6
+PAIRING_CODE_TTL_SECONDS = int(os.getenv("ASSAS_PAIRING_CODE_TTL_SECONDS", "60"))
+
+# Only the appliance itself (the display) may read the current code.
+LOCAL_HOSTS = {"127.0.0.1", "::1"}
+
+_pairing_lock = threading.Lock()
+_pairing_code: Optional[str] = None
+_pairing_expires_at: Optional[datetime] = None
+_pairing_failed_attempts = 0
+MAX_FAILED_PAIRING_ATTEMPTS = 5
+
+
+def _new_pairing_code() -> str:
+    return "".join(
+        secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(PAIRING_CODE_LENGTH)
+    )
+
+
+def current_pairing_code() -> tuple[str, datetime]:
+    """Return the current code, making a new one when the old one has expired."""
+    global _pairing_code, _pairing_expires_at, _pairing_failed_attempts
+    with _pairing_lock:
+        now = datetime.now()
+        if _pairing_code is None or now >= _pairing_expires_at:
+            _pairing_code = _new_pairing_code()
+            _pairing_expires_at = now + timedelta(seconds=PAIRING_CODE_TTL_SECONDS)
+            _pairing_failed_attempts = 0
+        return _pairing_code, _pairing_expires_at
+
+
+def _is_local_request(request: Request) -> bool:
+    return request.client is not None and request.client.host in LOCAL_HOSTS
+
+
+class PairingCodeOut(BaseModel):
+    code: str
+    expires_at: str
+
+
+@app.get(
+    "/pairing/code",
+    response_model=PairingCodeOut,
+    responses={403: {"description": "Only the Assas device itself can read the code."}},
+)
+def get_pairing_code(request: Request):
+    if not _is_local_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="The pairing code is only shown on the Assas device itself.",
+        )
+    code, expires_at = current_pairing_code()
+    return PairingCodeOut(
+        code=code, expires_at=expires_at.isoformat(timespec="seconds")
+    )
+
+# ---------------------------------------------------------------------------
+# Pairing sessions (PBI-08)
+#
+# A phone that sends the current code gets a random token. Only a SHA-256 hash
+# of the token is stored, so a copy of the database cannot be used to log in.
+# Like app_settings, the table is created on first write; reads treat a
+# missing table as "no sessions".
+# ---------------------------------------------------------------------------
+
+_SESSIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS paired_sessions ("
+    " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    " token_hash TEXT NOT NULL UNIQUE,"
+    " created_at TEXT NOT NULL"
+    ")"
+)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _check_pairing_code(code: str) -> bool:
+    """True if code matches the current, unexpired code.
+
+    Every wrong guess counts; after MAX_FAILED_PAIRING_ATTEMPTS the code is
+    dropped, so the display fetches a new one and guessing becomes useless.
+    """
+    global _pairing_code, _pairing_failed_attempts
+    with _pairing_lock:
+        valid = (
+            _pairing_code is not None
+            and datetime.now() < _pairing_expires_at
+            and secrets.compare_digest(code.encode(), _pairing_code.encode())
+        )
+        if not valid and _pairing_code is not None:
+            _pairing_failed_attempts += 1
+            if _pairing_failed_attempts >= MAX_FAILED_PAIRING_ATTEMPTS:
+                _pairing_code = None
+        return valid
+
+
+class PairRequest(BaseModel):
+    code: str
+
+
+class PairResponse(BaseModel):
+    token: str
+
+
+@app.post(
+    "/pair",
+    response_model=PairResponse,
+    responses={
+        401: {"description": "Invalid or expired pairing code."},
+        503: {"description": "Device database is not available yet."},
+    },
+)
+def pair(body: PairRequest):
+    code = body.code.strip().upper()
+    if not _check_pairing_code(code):
+        raise HTTPException(status_code=401, detail="Invalid or expired pairing code.")
+
+    token = secrets.token_urlsafe(32)
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        conn.execute(_SESSIONS_DDL)
+        conn.execute(
+            "INSERT INTO paired_sessions (token_hash, created_at) VALUES (?, ?)",
+            (_hash_token(token), datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return PairResponse(token=token)
+
+
+# ---------------------------------------------------------------------------
+# Authentication (PBI-08)
+# ---------------------------------------------------------------------------
+
+# Reachable without a token. /pairing/code is listed because it guards itself:
+# it only answers the appliance (403 for everyone else, paired or not).
+PUBLIC_PATHS = {"/healthz", "/pair", "/pairing/code"}
+
+
+def _bearer_token(request: Request) -> Optional[str]:
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def _session_exists(token: str) -> bool:
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM paired_sessions WHERE token_hash = ?",
+            (_hash_token(token),),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None  # no sessions table yet -> nobody is paired
+    finally:
+        conn.close()
+    return row is not None
+
+
+@app.post(
+    "/unpair",
+    status_code=204,
+    responses={503: {"description": "Device database is not available yet."}},
+)
+def unpair(request: Request) -> None:
+    """End this phone's session. Its token stops working immediately."""
+    token = _bearer_token(request)
+    if token is None:
+        return  # the appliance itself has no session to end
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        conn.execute(
+            "DELETE FROM paired_sessions WHERE token_hash = ?",
+            (_hash_token(token),),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # no sessions table -> nothing to delete
+    finally:
+        conn.close()
