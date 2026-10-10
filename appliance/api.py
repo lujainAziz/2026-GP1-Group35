@@ -110,7 +110,31 @@ async def lifespan(_app: "FastAPI"):
     yield
 
 
-app = FastAPI(title="ASSAS Device Inventory API", version="1.0", lifespan=lifespan)
+
+def require_auth(request: Request) -> None:
+    """Gate for every endpoint (PBI-08); the pairing section is further down.
+
+    Defined here because FastAPI needs it when the app is created. Lets through
+    the appliance itself (localhost, e.g. the 7-inch display), the public
+    endpoints, and phones that send a valid paired token.
+    """
+    if request.url.path in PUBLIC_PATHS or _is_local_request(request):
+        return
+    token = _bearer_token(request)
+    if token is None or not _session_exists(token):
+        raise HTTPException(
+            status_code=401,
+            detail="Pairing required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+app = FastAPI(
+    title="ASSAS Device Inventory API",
+    version="1.0",
+    lifespan=lifespan,
+    dependencies=[Depends(require_auth)],
+)
 
 # CORS for local Flutter Web development only. The API serves no cookies, so
 # credentials stay disabled; a matched origin is echoed back (never "*").
@@ -658,3 +682,65 @@ def pair(body: PairRequest):
     finally:
         conn.close()
     return PairResponse(token=token)
+
+
+# ---------------------------------------------------------------------------
+# Authentication (PBI-08)
+# ---------------------------------------------------------------------------
+
+# Reachable without a token. /pairing/code is listed because it guards itself:
+# it only answers the appliance (403 for everyone else, paired or not).
+PUBLIC_PATHS = {"/healthz", "/pair", "/pairing/code"}
+
+
+def _bearer_token(request: Request) -> Optional[str]:
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def _session_exists(token: str) -> bool:
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM paired_sessions WHERE token_hash = ?",
+            (_hash_token(token),),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None  # no sessions table yet -> nobody is paired
+    finally:
+        conn.close()
+    return row is not None
+
+
+@app.post("/unpair", status_code=204)
+def unpair(request: Request) -> None:
+    """End this phone's session. Its token stops working immediately."""
+    token = _bearer_token(request)
+    if token is None:
+        return  # the appliance itself has no session to end
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        conn.execute(
+            "DELETE FROM paired_sessions WHERE token_hash = ?",
+            (_hash_token(token),),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # no sessions table -> nothing to delete
+    finally:
+        conn.close()

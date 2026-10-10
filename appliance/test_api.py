@@ -735,6 +735,82 @@ class PairingTests(unittest.TestCase):
         r = _asgi_request("POST", "/pair", self.JSON, body="{}")
         self.assertEqual(r.status, 422)
 
+
+class AuthTests(unittest.TestCase):
+    """The gate: phones on the LAN need a paired token; the display does not."""
+
+    JSON = {"Content-Type": "application/json"}
+    LAN = ("192.168.1.50", 5555)
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+        api._pairing_code = None
+        api._pairing_expires_at = None
+        api._pairing_failed_attempts = 0
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _new_token(self):
+        code = json.loads(_asgi_request("GET", "/pairing/code", {}).body)["code"]
+        r = _asgi_request(
+            "POST", "/pair", self.JSON, body=json.dumps({"code": code}), client=self.LAN
+        )
+        return json.loads(r.body)["token"]
+
+    def _bearer(self, token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_phone_without_token_is_401(self):
+        r = _asgi_request("GET", "/devices", {}, client=self.LAN)
+        self.assertEqual(r.status, 401)
+        self.assertEqual(r.headers.get("www-authenticate"), "Bearer")
+
+    def test_phone_with_unknown_token_is_401(self):
+        r = _asgi_request("GET", "/devices", self._bearer("made-up"), client=self.LAN)
+        self.assertEqual(r.status, 401)
+
+    def test_phone_with_paired_token_is_200(self):
+        token = self._new_token()
+        r = _asgi_request("GET", "/devices", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 200)
+
+    def test_display_needs_no_token(self):
+        r = _asgi_request("GET", "/devices", {})  # default client is 127.0.0.1
+        self.assertEqual(r.status, 200)
+
+    def test_healthz_is_public(self):
+        r = _asgi_request("GET", "/healthz", {}, client=self.LAN)
+        self.assertEqual(r.status, 200)
+
+    def test_paired_phone_still_cannot_read_the_code(self):
+        token = self._new_token()
+        r = _asgi_request("GET", "/pairing/code", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 403)
+
+    def test_unpair_revokes_the_token(self):
+        token = self._new_token()
+        r = _asgi_request("POST", "/unpair", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 204)
+        r = _asgi_request("GET", "/devices", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 401)
+
+    def test_unpair_ends_only_this_phones_session(self):
+        mine = self._new_token()
+        other = self._new_token()
+        _asgi_request("POST", "/unpair", self._bearer(mine), client=self.LAN)
+        r = _asgi_request("GET", "/devices", self._bearer(other), client=self.LAN)
+        self.assertEqual(r.status, 200)
+
+
  
 if __name__ == "__main__":
     unittest.main()
