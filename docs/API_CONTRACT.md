@@ -45,6 +45,45 @@ The service definition lives in the repo at `appliance/avahi/assas-api.service`;
 it on the Pi with the commands in that file's README section below (see
 `appliance/avahi/`).
 
+## Authentication (pairing, PBI-08)
+
+Every endpoint needs a paired token, except:
+- requests from the appliance itself (`127.0.0.1` / `::1`), e.g. the 7-inch display;
+- `GET /healthz`, `POST /pair` and `GET /pairing/code` (the last one answers the
+  appliance only).
+
+Send the token on every request:
+```
+Authorization: Bearer <token>
+```
+A request without a valid token gets `401` with the header `WWW-Authenticate: Bearer`.
+
+### GET /pairing/code
+The current pairing code, for the display. Appliance only: any other caller gets
+`403`, even a paired phone. The code has 6 characters from
+`ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0/O/1/I/L, so it is easy to read) and lives
+60 seconds (env `ASSAS_PAIRING_CODE_TTL_SECONDS`). A new code is made only when the
+old one has expired and someone asks for it.
+```json
+{"code": "K7MQ3X", "expires_at": "2026-10-10T15:46:30"}
+```
+
+### POST /pair
+Body: `{"code": "K7MQ3X"}` (letter case and surrounding spaces are ignored).
+- `200` → `{"token": "..."}`. The app must store it: it is never shown again.
+- `401` → invalid or expired code. After 5 wrong codes the current code is dropped
+  and the display shows a new one, so guessing is useless.
+- `422` → the `code` field is missing.
+- `503` → the database is not available yet.
+
+Only a SHA-256 hash of the token is stored (table `paired_sessions`, see
+[database-schema.md](database-schema.md)), so a copy of the database cannot be used
+to log in.
+
+### POST /unpair
+Ends the calling phone's session: its token stops working at once. Other paired
+phones are not affected. Returns `204` with no body.
+
 ## Timestamps
 All timestamps are **server-local naive ISO-8601** to the second, e.g.
 `2026-09-20T10:57:37` (no timezone suffix). Staleness is computed on the server
@@ -209,9 +248,9 @@ Aggregate counts. Shape:
 ---
 
 ## Known limitations
-- **No authentication yet.** The API is unauthenticated; anyone on the LAN can read the
-  inventory. Auth/pairing is tracked as **PBI-01**.
+- **Tokens do not expire.** A paired token stays valid until that phone calls
+  `POST /unpair`. There is no automatic expiry yet.
 - **Deliberate IPv4-only binding.** uvicorn binds `0.0.0.0:8000` (IPv4) and is **not**
-  bound to `::`. The Pi's global IPv6 address is internet-routable, and until pairing
-  (PBI-01) lands, binding IPv6 would expose the unauthenticated API beyond the LAN. The
-  app must therefore use the IPv4 address from the mDNS result (see Service discovery).
+  bound to `::`. Pairing (PBI-08) now protects the data endpoints, but enabling IPv6
+  is still a separate decision. Until then the app must use the IPv4 address from the
+  mDNS result (see Service discovery).
