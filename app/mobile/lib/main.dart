@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'config/data_source.dart';
 import 'screens/pairing/pairing_screen.dart';
 import 'screens/shell/main_shell.dart';
+import 'services/appliance_locator.dart';
 import 'services/session_store.dart';
 import 'state/app_settings.dart';
 
@@ -13,6 +14,11 @@ Future<void> main() async {
   // Appearance (dark mode, text size) saved from last time.
   await AppSettings.instance.load();
   AssasColors.useDark(AppSettings.instance.darkMode);
+
+  // Build the active repository before first paint. The real backend resolves
+  // its base URL via resolveApiBaseUrl (ASSAS_API_BASE_URL override -> DNS-SD
+  // _assas._tcp -> assas-pi.local fallback); the demo repository ignores it.
+  repository = await createRepository(resolveApiBaseUrl);
 
   // Already paired before? Use the saved token and skip the pairing screen.
   final token = await SessionStore.getToken();

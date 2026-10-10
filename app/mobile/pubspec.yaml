@@ -17,6 +17,7 @@ dependencies:
   # Phone-only packages (NOT used by the 7-inch display)
   mobile_scanner: ^7.0.0        # QR scanning with the camera
   shared_preferences: ^2.3.0    # stores the pairing token
+  nsd: ^4.1.0                   # DNS-SD browse for _assas._tcp (android/ios/macos/windows)
 
 dev_dependencies:
   flutter_test:

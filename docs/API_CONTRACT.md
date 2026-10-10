@@ -30,10 +30,17 @@ can find it without any hardcoded address. Avahi publishes:
 - **Host:** `assas-pi.local` (the A record resolves to the current IP)
 - **TXT:** `path=/` (API base path)
 
-**Flutter app:** browse for `_assas._tcp` on the local network (e.g. the
-[`nsd`](https://pub.dev/packages/nsd) or `multicast_dns` package), take the resolved
-host + port from the first result, and build the base URL from it. Fall back to
-`http://assas-pi.local:8000` if the browse returns nothing. Never hardcode an IP.
+**Flutter app (implemented, real-backend path):** the mobile app discovers the appliance
+via the [`nsd`](https://pub.dev/packages/nsd) package
+(`app/mobile/lib/services/appliance_locator.dart`). DNS-SD runs only on the real-backend
+path. The current **DEMO** mode is the active default and serves canned data, so it does
+**not** perform the `_assas._tcp` browse at all.
+Resolution order (real backend): an explicit `ASSAS_API_BASE_URL` `--dart-define` override
+wins; otherwise, on supported native platforms it browses `_assas._tcp`, takes the first
+result's IPv4 + port, and builds the base URL; it falls back to
+`http://assas-pi.local:8000` on web or on any discovery failure/timeout/denied-permission/
+empty result. Never hardcodes an IP. DNS-SD is not attempted on Flutter Web (the plugin is
+native-only).
 
 **Use the IPv4 address.** A resolve of `_assas._tcp` / `assas-pi.local` returns multiple
 addresses — an IPv4 (e.g. `192.168.100.216`), a **global IPv6**, and loopback. The API
