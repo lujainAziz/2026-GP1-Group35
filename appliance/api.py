@@ -134,7 +134,18 @@ app = FastAPI(
     version="1.0",
     lifespan=lifespan,
     dependencies=[Depends(require_auth)],
+    description=(
+        "**Authentication (PBI-08).** Phones on the LAN must pair first: read "
+        "the code on the Assas screen, send it to `POST /pair`, then send the "
+        "returned token as `Authorization: Bearer <token>` on every request. "
+        "The Assas device itself (the 7-inch display) and `/healthz`, `/pair` "
+        "and `/pairing/code` need no token. Any other request without a valid "
+        "token gets **401**."
+    ),
 )
+
+
+
 
 # CORS for local Flutter Web development only. The API serves no cookies, so
 # credentials stay disabled; a matched origin is echoed back (never "*").
@@ -596,7 +607,11 @@ class PairingCodeOut(BaseModel):
     expires_at: str
 
 
-@app.get("/pairing/code", response_model=PairingCodeOut)
+@app.get(
+    "/pairing/code",
+    response_model=PairingCodeOut,
+    responses={403: {"description": "Only the Assas device itself can read the code."}},
+)
 def get_pairing_code(request: Request):
     if not _is_local_request(request):
         raise HTTPException(
@@ -658,7 +673,14 @@ class PairResponse(BaseModel):
     token: str
 
 
-@app.post("/pair", response_model=PairResponse)
+@app.post(
+    "/pair",
+    response_model=PairResponse,
+    responses={
+        401: {"description": "Invalid or expired pairing code."},
+        503: {"description": "Device database is not available yet."},
+    },
+)
 def pair(body: PairRequest):
     code = body.code.strip().upper()
     if not _check_pairing_code(code):
@@ -721,7 +743,11 @@ def _session_exists(token: str) -> bool:
     return row is not None
 
 
-@app.post("/unpair", status_code=204)
+@app.post(
+    "/unpair",
+    status_code=204,
+    responses={503: {"description": "Device database is not available yet."}},
+)
 def unpair(request: Request) -> None:
     """End this phone's session. Its token stops working immediately."""
     token = _bearer_token(request)
