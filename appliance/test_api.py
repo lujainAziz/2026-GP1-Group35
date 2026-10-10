@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from collections import namedtuple
 from datetime import datetime, timedelta
@@ -186,7 +187,7 @@ class EffectiveVendorSourceTests(unittest.TestCase):
 Resp = namedtuple("Resp", ["status", "headers", "body"])
 
 
-def _asgi_request(method, path, headers, body=b""):
+def _asgi_request(method, path, headers, body=b"", client=("127.0.0.1", 12345)):
     """Drive the real ASGI app (middleware + routing) and return a Resp with
     status, lowercased response headers, and the raw body bytes. TestClient
     needs httpx, which is absent here, and calling endpoint functions directly
@@ -205,7 +206,7 @@ def _asgi_request(method, path, headers, body=b""):
         "query_string": b"",
         "root_path": "",
         "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
-        "client": ("127.0.0.1", 12345),
+        "client": client,
         "server": ("testserver", 80),
     }
 
@@ -665,6 +666,244 @@ class SettingsSchemaCompatTests(unittest.TestCase):
         api.ensure_settings_table()  # missing DB must not raise or create a file
         self.assertFalse(os.path.exists(self.path + ".nonexistent"))
 
+class PairingCodeTests(unittest.TestCase):
+    """GET /pairing/code: only the appliance itself (the display) may read it."""
 
+    LAN_CLIENT = ("192.168.1.50", 5555)
+
+    def setUp(self):
+        # Start every test with no code, as on a fresh start.
+        api._pairing_code = None
+        api._pairing_expires_at = None
+
+    def test_local_request_gets_valid_code(self):
+        r = _asgi_request("GET", "/pairing/code", {})
+        self.assertEqual(r.status, 200)
+        data = json.loads(r.body)
+        self.assertEqual(len(data["code"]), api.PAIRING_CODE_LENGTH)
+        self.assertTrue(all(c in api.PAIRING_CODE_ALPHABET for c in data["code"]))
+        expires = datetime.fromisoformat(data["expires_at"])
+        seconds_left = (expires - datetime.now()).total_seconds()
+        self.assertGreater(seconds_left, 0)
+        self.assertLessEqual(seconds_left, api.PAIRING_CODE_TTL_SECONDS)
+
+    def test_code_stays_the_same_before_expiry(self):
+        first = json.loads(_asgi_request("GET", "/pairing/code", {}).body)
+        second = json.loads(_asgi_request("GET", "/pairing/code", {}).body)
+        self.assertEqual(first, second)
+
+    def test_new_code_after_expiry(self):
+        _asgi_request("GET", "/pairing/code", {})
+        # Pretend the code expired a second ago, and make the next code known.
+        api._pairing_expires_at = datetime.now() - timedelta(seconds=1)
+        original = api._new_pairing_code
+        api._new_pairing_code = lambda: "ABC234"
+        try:
+            data = json.loads(_asgi_request("GET", "/pairing/code", {}).body)
+        finally:
+            api._new_pairing_code = original
+        self.assertEqual(data["code"], "ABC234")
+        self.assertGreater(datetime.fromisoformat(data["expires_at"]), datetime.now())
+
+    def test_lan_request_is_forbidden(self):
+        r = _asgi_request("GET", "/pairing/code", {}, client=self.LAN_CLIENT)
+        self.assertEqual(r.status, 403)
+        self.assertNotIn("code", json.loads(r.body))
+
+
+class PairingTests(unittest.TestCase):
+    """POST /pair: the current code buys a token; only its hash is stored."""
+
+    JSON = {"Content-Type": "application/json"}
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+        api._pairing_code = None
+        api._pairing_expires_at = None
+        api._pairing_failed_attempts = 0
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _code(self):
+        return json.loads(_asgi_request("GET", "/pairing/code", {}).body)["code"]
+
+    def _pair(self, code):
+        return _asgi_request("POST", "/pair", self.JSON, body=json.dumps({"code": code}))
+
+    def _stored_hashes(self):
+        con = sqlite3.connect(self.path)
+        try:
+            return [r[0] for r in con.execute("SELECT token_hash FROM paired_sessions")]
+        except sqlite3.OperationalError:
+            return []  # table not created yet -> no sessions
+        finally:
+            con.close()
+
+    def test_correct_code_returns_token_and_stores_only_hash(self):
+        r = self._pair(self._code())
+        self.assertEqual(r.status, 200)
+        token = json.loads(r.body)["token"]
+        self.assertGreater(len(token), 30)
+        hashes = self._stored_hashes()
+        self.assertEqual(hashes, [api._hash_token(token)])
+        self.assertNotIn(token, hashes)
+
+    def test_lowercase_and_spaces_are_accepted(self):
+        r = self._pair("  " + self._code().lower() + " ")
+        self.assertEqual(r.status, 200)
+
+    def test_wrong_code_is_401_and_stores_nothing(self):
+        self._code()
+        # "O" and "1" are never in a real code, so this can never match.
+        r = self._pair("WRONG1")
+        self.assertEqual(r.status, 401)
+        self.assertNotIn("token", json.loads(r.body))
+        self.assertEqual(self._stored_hashes(), [])
+
+    def test_expired_code_is_401(self):
+        code = self._code()
+        api._pairing_expires_at = datetime.now() - timedelta(seconds=1)
+        self.assertEqual(self._pair(code).status, 401)
+
+    def test_too_many_wrong_guesses_burn_the_code(self):
+        code = self._code()
+        for _ in range(api.MAX_FAILED_PAIRING_ATTEMPTS):
+            self.assertEqual(self._pair("WRONG1").status, 401)
+        # Even the right code no longer works: the display must show a new one.
+        self.assertEqual(self._pair(code).status, 401)
+
+    def test_each_pairing_gets_its_own_token(self):
+        code = self._code()
+        t1 = json.loads(self._pair(code).body)["token"]
+        t2 = json.loads(self._pair(code).body)["token"]
+        self.assertNotEqual(t1, t2)
+        self.assertEqual(len(self._stored_hashes()), 2)
+
+    def test_missing_code_field_is_422(self):
+        r = _asgi_request("POST", "/pair", self.JSON, body="{}")
+        self.assertEqual(r.status, 422)
+
+
+class AuthTests(unittest.TestCase):
+    """The gate: phones on the LAN need a paired token; the display does not."""
+
+    JSON = {"Content-Type": "application/json"}
+    LAN = ("192.168.1.50", 5555)
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+        api._pairing_code = None
+        api._pairing_expires_at = None
+        api._pairing_failed_attempts = 0
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _new_token(self):
+        code = json.loads(_asgi_request("GET", "/pairing/code", {}).body)["code"]
+        r = _asgi_request(
+            "POST", "/pair", self.JSON, body=json.dumps({"code": code}), client=self.LAN
+        )
+        return json.loads(r.body)["token"]
+
+    def _bearer(self, token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_phone_without_token_is_401(self):
+        r = _asgi_request("GET", "/devices", {}, client=self.LAN)
+        self.assertEqual(r.status, 401)
+        self.assertEqual(r.headers.get("www-authenticate"), "Bearer")
+
+    def test_phone_with_unknown_token_is_401(self):
+        r = _asgi_request("GET", "/devices", self._bearer("made-up"), client=self.LAN)
+        self.assertEqual(r.status, 401)
+
+    def test_phone_with_paired_token_is_200(self):
+        token = self._new_token()
+        r = _asgi_request("GET", "/devices", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 200)
+
+    def test_display_needs_no_token(self):
+        r = _asgi_request("GET", "/devices", {})  # default client is 127.0.0.1
+        self.assertEqual(r.status, 200)
+
+    def test_healthz_is_public(self):
+        r = _asgi_request("GET", "/healthz", {}, client=self.LAN)
+        self.assertEqual(r.status, 200)
+
+    def test_paired_phone_still_cannot_read_the_code(self):
+        token = self._new_token()
+        r = _asgi_request("GET", "/pairing/code", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 403)
+
+    def test_unpair_revokes_the_token(self):
+        token = self._new_token()
+        r = _asgi_request("POST", "/unpair", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 204)
+        r = _asgi_request("GET", "/devices", self._bearer(token), client=self.LAN)
+        self.assertEqual(r.status, 401)
+
+    def test_unpair_ends_only_this_phones_session(self):
+        mine = self._new_token()
+        other = self._new_token()
+        _asgi_request("POST", "/unpair", self._bearer(mine), client=self.LAN)
+        r = _asgi_request("GET", "/devices", self._bearer(other), client=self.LAN)
+        self.assertEqual(r.status, 200)
+
+
+class ConnectionThreadTests(unittest.TestCase):
+    """get_connection() is a FastAPI dependency: the connection may be opened,
+    used and closed on different worker threads within one request."""
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _in_other_thread(self, fn):
+        errors = []
+
+        def run():
+            try:
+                fn()
+            except Exception as exc:  # collect it so the test can fail clearly
+                errors.append(exc)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+        return errors
+
+    def test_open_use_close_on_different_threads(self):
+        gen = api.get_connection()
+        conn = next(gen)  # opened on this thread
+        used = self._in_other_thread(lambda: conn.execute("SELECT 1").fetchone())
+        closed = self._in_other_thread(lambda: next(gen, None))
+        self.assertEqual(used, [])
+        self.assertEqual(closed, [])
+
+ 
 if __name__ == "__main__":
     unittest.main()

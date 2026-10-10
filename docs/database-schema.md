@@ -5,7 +5,8 @@ The discovery daemon (`appliance/discovery.py`) writes a single SQLite database,
 The API (`appliance/api.py`) opens it read-only. WAL journal mode allows concurrent
 reads while the daemon writes.
 
-There is one table, `devices`, keyed by MAC. All timestamps are **server-local naive
+The main table is `devices`, keyed by MAC. Pairing sessions live in
+`paired_sessions` (see below). All timestamps are **server-local naive
 ISO-8601** to the second (e.g. `2026-09-20T10:57:37`).
 
 ## Table: `devices`
@@ -50,5 +51,19 @@ ISO-8601** to the second (e.g. `2026-09-20T10:57:37`).
   - `observed` — seen via SPAN traffic but not currently on the subnet / AP.
   - `offline`  — neither present nor carrying live traffic.
   - `candidate`— inserted from a weak signal, never confirmed present.
+
+## Table: `paired_sessions`
+
+One row per paired phone (PBI-08). Created by the API (`appliance/api.py`) on the
+first successful pairing, the same way as `app_settings`; readers treat a missing
+table as "nobody is paired yet".
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | INTEGER (PK) | Row id, increases automatically. |
+| `token_hash` | TEXT (UNIQUE, NOT NULL) | SHA-256 hex digest of the phone's token. The token itself is never stored. |
+| `created_at` | TEXT | When the phone paired (server-local naive ISO-8601). |
+
+`POST /unpair` deletes the calling phone's row; other phones stay paired.
 
 See [API_CONTRACT.md](API_CONTRACT.md) for how these fields are exposed over HTTP.
