@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from collections import namedtuple
 from datetime import datetime, timedelta
@@ -810,6 +811,42 @@ class AuthTests(unittest.TestCase):
         r = _asgi_request("GET", "/devices", self._bearer(other), client=self.LAN)
         self.assertEqual(r.status, 200)
 
+
+class ConnectionThreadTests(unittest.TestCase):
+    """get_connection() is a FastAPI dependency: the connection may be opened,
+    used and closed on different worker threads within one request."""
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _in_other_thread(self, fn):
+        errors = []
+
+        def run():
+            try:
+                fn()
+            except Exception as exc:  # collect it so the test can fail clearly
+                errors.append(exc)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+        return errors
+
+    def test_open_use_close_on_different_threads(self):
+        gen = api.get_connection()
+        conn = next(gen)  # opened on this thread
+        used = self._in_other_thread(lambda: conn.execute("SELECT 1").fetchone())
+        closed = self._in_other_thread(lambda: next(gen, None))
+        self.assertEqual(used, [])
+        self.assertEqual(closed, [])
 
  
 if __name__ == "__main__":

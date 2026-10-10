@@ -162,7 +162,12 @@ app.add_middleware(
 
 def get_connection():
     try:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0)
+                # FastAPI may open, use and close this connection on different
+        # worker threads within one request (never at the same time), so the
+        # same-thread check must be off or concurrent requests fail with 500.
+        conn = sqlite3.connect(
+            f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0, check_same_thread=False
+        )
         conn.row_factory = sqlite3.Row
     except sqlite3.OperationalError as exc:
         raise HTTPException(
