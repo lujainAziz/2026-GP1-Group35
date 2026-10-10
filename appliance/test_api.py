@@ -156,7 +156,7 @@ class EffectiveVendorSourceTests(unittest.TestCase):
 Resp = namedtuple("Resp", ["status", "headers", "body"])
 
 
-def _asgi_request(method, path, headers, body=b""):
+def _asgi_request(method, path, headers, body=b"", client=("127.0.0.1", 12345)):
     """Drive the real ASGI app (middleware + routing) and return a Resp with
     status, lowercased response headers, and the raw body bytes. TestClient
     needs httpx, which is absent here, and calling endpoint functions directly
@@ -175,7 +175,7 @@ def _asgi_request(method, path, headers, body=b""):
         "query_string": b"",
         "root_path": "",
         "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
-        "client": ("127.0.0.1", 12345),
+        "client": client,
         "server": ("testserver", 80),
     }
 
@@ -609,6 +609,49 @@ class SettingsSchemaCompatTests(unittest.TestCase):
         api.ensure_settings_table()  # missing DB must not raise or create a file
         self.assertFalse(os.path.exists(self.path + ".nonexistent"))
 
+class PairingCodeTests(unittest.TestCase):
+    """GET /pairing/code: only the appliance itself (the display) may read it."""
 
+    LAN_CLIENT = ("192.168.1.50", 5555)
+
+    def setUp(self):
+        # Start every test with no code, as on a fresh start.
+        api._pairing_code = None
+        api._pairing_expires_at = None
+
+    def test_local_request_gets_valid_code(self):
+        r = _asgi_request("GET", "/pairing/code", {})
+        self.assertEqual(r.status, 200)
+        data = json.loads(r.body)
+        self.assertEqual(len(data["code"]), api.PAIRING_CODE_LENGTH)
+        self.assertTrue(all(c in api.PAIRING_CODE_ALPHABET for c in data["code"]))
+        expires = datetime.fromisoformat(data["expires_at"])
+        seconds_left = (expires - datetime.now()).total_seconds()
+        self.assertGreater(seconds_left, 0)
+        self.assertLessEqual(seconds_left, api.PAIRING_CODE_TTL_SECONDS)
+
+    def test_code_stays_the_same_before_expiry(self):
+        first = json.loads(_asgi_request("GET", "/pairing/code", {}).body)
+        second = json.loads(_asgi_request("GET", "/pairing/code", {}).body)
+        self.assertEqual(first, second)
+
+    def test_new_code_after_expiry(self):
+        _asgi_request("GET", "/pairing/code", {})
+        # Pretend the code expired a second ago, and make the next code known.
+        api._pairing_expires_at = datetime.now() - timedelta(seconds=1)
+        original = api._new_pairing_code
+        api._new_pairing_code = lambda: "ABC234"
+        try:
+            data = json.loads(_asgi_request("GET", "/pairing/code", {}).body)
+        finally:
+            api._new_pairing_code = original
+        self.assertEqual(data["code"], "ABC234")
+        self.assertGreater(datetime.fromisoformat(data["expires_at"]), datetime.now())
+
+    def test_lan_request_is_forbidden(self):
+        r = _asgi_request("GET", "/pairing/code", {}, client=self.LAN_CLIENT)
+        self.assertEqual(r.status, 403)
+        self.assertNotIn("code", json.loads(r.body))
+ 
 if __name__ == "__main__":
     unittest.main()

@@ -6,12 +6,14 @@ connection in mode=ro so this process can never write to it. discovery.py
 runs in WAL journal mode, so concurrent reads while it writes are safe.
 """
 import os
+import secrets
+import threading
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool
 
@@ -517,3 +519,63 @@ def put_settings(body: SettingsUpdate):
     finally:
         conn.close()
     return SettingsState(active_probes=body.active_probes)
+
+
+# ---------------------------------------------------------------------------
+# Pairing (PBI-08)
+#
+# The 7-inch display shows a short code that changes every minute. A phone that
+# sends the current code gets a token (added in the next step). The code lives
+# only in memory: it is short-lived, so it never needs to survive a restart.
+# ---------------------------------------------------------------------------
+
+# Letters and digits that are easy to read on a screen: no 0/O, no 1/I/L.
+PAIRING_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+PAIRING_CODE_LENGTH = 6
+PAIRING_CODE_TTL_SECONDS = int(os.getenv("ASSAS_PAIRING_CODE_TTL_SECONDS", "60"))
+
+# Only the appliance itself (the display) may read the current code.
+LOCAL_HOSTS = {"127.0.0.1", "::1"}
+
+_pairing_lock = threading.Lock()
+_pairing_code: Optional[str] = None
+_pairing_expires_at: Optional[datetime] = None
+
+
+def _new_pairing_code() -> str:
+    return "".join(
+        secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(PAIRING_CODE_LENGTH)
+    )
+
+
+def current_pairing_code() -> tuple[str, datetime]:
+    """Return the current code, making a new one when the old one has expired."""
+    global _pairing_code, _pairing_expires_at
+    with _pairing_lock:
+        now = datetime.now()
+        if _pairing_code is None or now >= _pairing_expires_at:
+            _pairing_code = _new_pairing_code()
+            _pairing_expires_at = now + timedelta(seconds=PAIRING_CODE_TTL_SECONDS)
+        return _pairing_code, _pairing_expires_at
+
+
+def _is_local_request(request: Request) -> bool:
+    return request.client is not None and request.client.host in LOCAL_HOSTS
+
+
+class PairingCodeOut(BaseModel):
+    code: str
+    expires_at: str
+
+
+@app.get("/pairing/code", response_model=PairingCodeOut)
+def get_pairing_code(request: Request):
+    if not _is_local_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="The pairing code is only shown on the Assas device itself.",
+        )
+    code, expires_at = current_pairing_code()
+    return PairingCodeOut(
+        code=code, expires_at=expires_at.isoformat(timespec="seconds")
+    )
