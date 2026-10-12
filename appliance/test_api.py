@@ -154,6 +154,76 @@ class MonitoredStateTests(_SeededDBTest):
         self.assertEqual(device.status, "online")
 
 
+class PresenceStateTests(_SeededDBTest):
+    """User-facing presence, derived from the stored status column: only
+    'online' maps to "online"; observed/candidate/offline map to "offline".
+    status itself is always left untouched (backward compatibility)."""
+
+    def test_online_is_present_in_device_list(self):
+        self.insert(mac="aa:bb:cc:dd:ee:11", status="online")
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(devices[0].presence, "online")
+        self.assertEqual(devices[0].status, "online")
+
+    def test_observed_is_offline_in_device_list(self):
+        self.insert(mac="aa:bb:cc:dd:ee:12", status="observed")
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(devices[0].presence, "offline")
+        self.assertEqual(devices[0].status, "observed")
+
+    def test_offline_is_offline_in_device_list(self):
+        self.insert(mac="aa:bb:cc:dd:ee:13", status="offline")
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(devices[0].presence, "offline")
+        self.assertEqual(devices[0].status, "offline")
+
+    def test_online_is_present_in_device_detail(self):
+        self.insert(mac="aa:bb:cc:dd:ee:14", status="online")
+        device = api.get_device("aa:bb:cc:dd:ee:14", self.conn)
+        self.assertEqual(device.presence, "online")
+        self.assertEqual(device.status, "online")
+
+    def test_observed_is_offline_in_device_detail(self):
+        self.insert(mac="aa:bb:cc:dd:ee:15", status="observed")
+        device = api.get_device("aa:bb:cc:dd:ee:15", self.conn)
+        self.assertEqual(device.presence, "offline")
+        self.assertEqual(device.status, "observed")
+
+
+class PresenceJSONResponseTests(_SeededDBTest):
+    """presence appears in both serialized endpoints and coexists with the
+    unchanged status, trusted, and monitored fields."""
+
+    def test_presence_in_json_responses(self):
+        self.insert(mac="aa:bb:cc:dd:ee:16", status="online",
+                    trusted=1, is_monitored=1)
+        self.insert(mac="aa:bb:cc:dd:ee:17", status="observed",
+                    trusted=0, is_monitored=0)
+        original_path = api.DB_PATH
+        api.DB_PATH = self.path
+        try:
+            list_response = _asgi_request("GET", "/devices", {})
+            self.assertEqual(list_response.status, 200)
+            by_mac = {d["mac"]: d for d in json.loads(list_response.body)}
+            self.assertEqual(by_mac["aa:bb:cc:dd:ee:16"]["presence"], "online")
+            self.assertEqual(by_mac["aa:bb:cc:dd:ee:16"]["status"], "online")
+            self.assertIs(by_mac["aa:bb:cc:dd:ee:16"]["trusted"], True)
+            self.assertIs(by_mac["aa:bb:cc:dd:ee:16"]["monitored"], True)
+            self.assertEqual(by_mac["aa:bb:cc:dd:ee:17"]["presence"], "offline")
+            self.assertEqual(by_mac["aa:bb:cc:dd:ee:17"]["status"], "observed")
+
+            detail_response = _asgi_request(
+                "GET", "/devices/aa:bb:cc:dd:ee:17", {})
+            self.assertEqual(detail_response.status, 200)
+            detail = json.loads(detail_response.body)
+            self.assertEqual(detail["presence"], "offline")
+            self.assertEqual(detail["status"], "observed")
+            self.assertIs(detail["trusted"], False)
+            self.assertIs(detail["monitored"], False)
+        finally:
+            api.DB_PATH = original_path
+
+
 class EffectiveVendorSourceTests(unittest.TestCase):
     def test_randomized_null_source_becomes_inferred(self):
         # Legacy row: real vendor on a randomized MAC, vendor_source NULL.

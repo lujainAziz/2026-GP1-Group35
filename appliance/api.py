@@ -225,6 +225,10 @@ class DeviceSummary(BaseModel):
     vendor: Optional[str] = None
     vendor_source: Optional[str] = None
     status: Optional[str] = None
+    # User-facing presence derived from the stored status column: "online" only
+    # when status == "online"; observed/candidate/offline all map to "offline"
+    # (matches the Flutter client contract). status itself is left unchanged.
+    presence: str = "offline"
     # Last-confirmed SPAN coverage; not current traffic activity.
     # May remain true after a topology change outside SPAN coverage.
     monitored: bool = False
@@ -333,13 +337,22 @@ DETAIL_COLUMNS = SUMMARY_COLUMNS + (
 )
 
 
+def _presence_from_status(status) -> str:
+    """User-facing presence from the stored status column. Only 'online' is
+    Online; observed/candidate/offline all map to 'offline'. Derived, never
+    recomputed -- the stored status stays the single source of truth."""
+    return "online" if status == "online" else "offline"
+
+
 def row_to_summary(row) -> DeviceSummary:
-    data = {k: row[k] for k in DeviceSummary.model_fields}
+    # presence is not a SQL column; it is derived from status below.
+    data = {k: row[k] for k in DeviceSummary.model_fields if k != "presence"}
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
     data["monitored"] = bool(data["monitored"])
     data["trusted"] = bool(data["trusted"])
+    data["presence"] = _presence_from_status(data.get("status"))
     return DeviceSummary(**data)
 
 
@@ -363,6 +376,7 @@ def row_to_detail(row) -> DeviceDetail:
         vendor=data.get("vendor"),
         vendor_source=data.get("vendor_source"),
     )
+    data["presence"] = _presence_from_status(data.get("status"))
     return DeviceDetail(**data)
 
 
