@@ -9,13 +9,13 @@ import 'package:assas_core/assas_core.dart';
 // #####################################################################
 
 // ======================= DEMO (active) ===============================
-final AssasRepository repository = DemoRepository();
+// final AssasRepository repository = DemoRepository();
 // =====================================================================
 
 // ======================= REAL BACKEND ================================
 // The display runs ON the Pi, so it talks to the API locally.
 // GET /pairing/code must only answer requests from 127.0.0.1.
 //
-// final AssasRepository repository =
-//     ApiRepository(ApiClient(baseUrl: 'http://127.0.0.1:8000'));
+final AssasRepository repository =
+    ApiRepository(ApiClient(baseUrl: 'http://127.0.0.1:8000'));
 // =====================================================================
