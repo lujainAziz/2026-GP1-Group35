@@ -225,6 +225,13 @@ class DeviceSummary(BaseModel):
     vendor: Optional[str] = None
     vendor_source: Optional[str] = None
     status: Optional[str] = None
+    # User-facing presence derived from the stored status column: "online" only
+    # when status == "online"; observed/candidate/offline all map to "offline"
+    # (matches the Flutter client contract). status itself is left unchanged.
+    presence: str = "offline"
+    # Last-confirmed SPAN coverage; not current traffic activity.
+    # May remain true after a topology change outside SPAN coverage.
+    monitored: bool = False
     # User recognition state, independent of classification/monitoring. Stored
     # as 0/1; surfaced here as a real JSON boolean. Old rows default to false.
     trusted: bool = False
@@ -314,8 +321,7 @@ class SummaryStats(BaseModel):
 
 SUMMARY_COLUMNS = (
     "mac, ip, hostname, device_type, model, vendor, vendor_source, "
-    "status, trusted, first_seen, last_seen"
-)
+    "status, COALESCE(is_monitored, 0) AS monitored, trusted, first_seen, last_seen")
 
 DETAIL_COLUMNS = SUMMARY_COLUMNS + (
     ", class_score, model_source, model_score, "
@@ -331,12 +337,22 @@ DETAIL_COLUMNS = SUMMARY_COLUMNS + (
 )
 
 
+def _presence_from_status(status) -> str:
+    """User-facing presence from the stored status column. Only 'online' is
+    Online; observed/candidate/offline all map to 'offline'. Derived, never
+    recomputed -- the stored status stays the single source of truth."""
+    return "online" if status == "online" else "offline"
+
+
 def row_to_summary(row) -> DeviceSummary:
-    data = {k: row[k] for k in DeviceSummary.model_fields}
+    # presence is not a SQL column; it is derived from status below.
+    data = {k: row[k] for k in DeviceSummary.model_fields if k != "presence"}
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
+    data["monitored"] = bool(data["monitored"])
     data["trusted"] = bool(data["trusted"])
+    data["presence"] = _presence_from_status(data.get("status"))
     return DeviceSummary(**data)
 
 
@@ -344,8 +360,7 @@ def row_to_detail(row) -> DeviceDetail:
     data = dict(row)
     for flag in (
         "is_ap_client", "ap_associated", "discovered_current",
-        "traffic_seen", "session_seen", "trusted",
-    ):
+    "traffic_seen", "session_seen", "trusted", "monitored",    ):
         data[flag] = bool(data[flag])
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
@@ -361,6 +376,7 @@ def row_to_detail(row) -> DeviceDetail:
         vendor=data.get("vendor"),
         vendor_source=data.get("vendor_source"),
     )
+    data["presence"] = _presence_from_status(data.get("status"))
     return DeviceDetail(**data)
 
 
