@@ -23,25 +23,25 @@ const String kApiBaseUrlFallback = 'http://assas-pi.local:8000';
 late final AssasRepository repository;
 
 // ======================= DEMO (active) ===============================
-const bool kShowPairingSkip = true; // "Skip" button on the pairing screen
+// const bool kShowPairingSkip = true; // "Skip" button on the pairing screen
 
-/// Builds the active repository. Demo data needs no backend, so it ignores the
-/// resolver and never triggers a network/DNS-SD browse.
-Future<AssasRepository> createRepository(
-  Future<String> Function() resolveBaseUrl,
-) async {
-  return DemoRepository();
-}
+// /// Builds the active repository. Demo data needs no backend, so it ignores the
+// /// resolver and never triggers a network/DNS-SD browse.
+// Future<AssasRepository> createRepository(
+  // Future<String> Function() resolveBaseUrl,
+// ) async {
+ //  return DemoRepository();
+// }
 // =====================================================================
 
 // ======================= REAL BACKEND ================================
-// const bool kShowPairingSkip = false;
-//
+const bool kShowPairingSkip = false;
+
 // /// The real backend resolves its base URL first (ASSAS_API_BASE_URL override
 // /// -> DNS-SD _assas._tcp -> assas-pi.local fallback), then builds the client.
-// Future<AssasRepository> createRepository(
-//   Future<String> Function() resolveBaseUrl,
-// ) async {
-//   return ApiRepository(ApiClient(baseUrl: await resolveBaseUrl()));
-// }
+Future<AssasRepository> createRepository(
+  Future<String> Function() resolveBaseUrl,
+ ) async {
+  return ApiRepository(ApiClient(baseUrl: await resolveBaseUrl()));
+ }
 // =====================================================================
