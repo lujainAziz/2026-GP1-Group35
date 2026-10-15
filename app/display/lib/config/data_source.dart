@@ -17,5 +17,7 @@ import 'package:assas_core/assas_core.dart';
 // GET /pairing/code must only answer requests from 127.0.0.1.
 //
 final AssasRepository repository =
-    ApiRepository(ApiClient(baseUrl: 'http://127.0.0.1:8000'));
+    const bool.fromEnvironment('ASSAS_DEMO')
+        ? DemoRepository()
+        : ApiRepository(ApiClient(baseUrl: 'http://127.0.0.1:8000'));
 // =====================================================================

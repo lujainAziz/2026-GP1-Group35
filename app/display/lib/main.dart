@@ -1,5 +1,6 @@
-import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
+
+import 'display_ui.dart';
 
 import 'screens/status_screen.dart';
 
@@ -17,9 +18,25 @@ class AssasDisplayApp extends StatelessWidget {
     return MaterialApp(
       title: 'Assas Display',
       debugShowCheckedModeBanner: false,
-      theme: AssasTheme.light,
-      builder: (context, child) => AssasBackground(child: child ?? const SizedBox()),
+      theme: DisplayUi.theme,
+      builder: (context, child) => _DisplayCanvas(child: child ?? const SizedBox()),
       home: const StatusScreen(),
     );
   }
+}
+
+class _DisplayCanvas extends StatelessWidget {
+  const _DisplayCanvas({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+        color: DisplayUi.bg,
+        child: LayoutBuilder(builder: (context, constraints) => Center(
+          child: FittedBox(fit: BoxFit.contain, child: SizedBox(
+            width: 1024, height: 600,
+            child: MediaQuery(data: MediaQuery.of(context).copyWith(size: const Size(1024, 600)),
+              child: DisplayBackground(child: child)),
+          )),
+        )),
+      );
 }
