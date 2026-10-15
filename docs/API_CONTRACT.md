@@ -161,12 +161,16 @@ Example element:
   "vendor": null,
   "vendor_source": null,
   "status": "online",
+  "user_name": null,
   "first_seen": "2026-09-14T17:06:16",
   "last_seen": "2026-09-20T10:57:37"
 }
 ```
 `vendor_source` is normalized: a vendor on a randomized (locally-administered) MAC
 is reported as `"inferred: private MAC"` rather than presented as an OUI fact.
+
+`user_name` is the user-chosen label set via `PUT /devices/{mac}/name`; it is
+`null` until a name is set.
 
 ---
 
@@ -185,6 +189,7 @@ Example:
   "vendor": null,
   "vendor_source": null,
   "status": "online",
+  "user_name": null,
   "first_seen": "2026-09-14T17:06:16",
   "last_seen": "2026-09-20T10:57:37",
   "dhcp_signature": null,
@@ -224,6 +229,34 @@ The backend never stores or exposes full query names or per-flow data.
 - Raw evidence needles also appear at top level: `dhcp_signature`, `vendor_class`,
   `upnp_location`.
 - `class_source` is duplicated at top level for backward compatibility.
+
+---
+
+## PUT /devices/{mac}/name
+Set or clear a user-chosen display name for one existing device. `mac` accepts
+`:`/`-`/bare-12-hex forms and is matched after normalization. Requires a paired
+token like the other write endpoints.
+
+Body:
+```json
+{"name": "Living Room TV"}
+```
+- The name is trimmed. `null`, `""`, or a whitespace-only value clears it (stored
+  as `null`).
+- Maximum length is **40 characters, measured after trimming**: `<= 40` is accepted
+  (`200`); a longer value is rejected with `422` before any write.
+- The `name` field must be present: a body without it (e.g. `{}`) is `422`, and a
+  non-string value is `422`.
+
+Responses:
+- `200` → `{"mac": "...", "user_name": "Living Room TV"}` (or `"user_name": null`
+  when cleared). The `mac` is echoed in normalized form.
+- `404` → no device with that MAC (nothing is created).
+- `422` → missing/non-string `name`, or a trimmed value longer than 40 characters.
+- `503` → the database is not available yet.
+
+This touches only the `user_name` column of the one existing row; it never affects
+discovery, classification, monitoring, status, or trust.
 
 ---
 

@@ -16,7 +16,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, StrictBool
+from pydantic import BaseModel, StrictBool, field_validator
 
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 
@@ -70,6 +70,30 @@ def ensure_trusted_column() -> None:
         conn.close()
 
 
+def ensure_user_name_column() -> None:
+    """Deployment safety: guarantee devices.user_name exists before any endpoint
+    reads it, without waiting for discovery.py to be restarted.
+
+    The API owns this column (set via PUT /devices/{mac}/name); discovery.py does
+    not know about it and never writes it, exactly like `trusted`. Mirrors ONLY
+    this single column; all other schema evolution stays owned by discovery.py.
+    Idempotent and a no-op if the DB or devices table does not exist yet.
+    """
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError:
+        return  # DB not created yet; discovery.init_db() will build it fresh.
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+        # Empty cols => devices table absent; nothing to migrate (discovery owns
+        # table creation). Only add the column when the table exists without it.
+        if cols and "user_name" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN user_name TEXT")
+            conn.commit()
+    finally:
+        conn.close()
+
+
 # Kept textually identical to discovery.init_db()'s app_settings DDL so the two
 # processes never create diverging schemas for the same table.
 _APP_SETTINGS_DDL = (
@@ -106,6 +130,7 @@ async def lifespan(_app: "FastAPI"):
     # Runs once on startup (uvicorn drives the ASGI lifespan protocol) before any
     # request is served, so the trusted column and settings table are present.
     ensure_trusted_column()
+    ensure_user_name_column()
     ensure_settings_table()
     yield
 
@@ -235,6 +260,9 @@ class DeviceSummary(BaseModel):
     # User recognition state, independent of classification/monitoring. Stored
     # as 0/1; surfaced here as a real JSON boolean. Old rows default to false.
     trusted: bool = False
+    # User-chosen display label. API-owned: set via PUT /devices/{mac}/name,
+    # never written by discovery. Null when unset.
+    user_name: Optional[str] = None
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
 
@@ -249,6 +277,34 @@ class TrustUpdate(BaseModel):
     # or coercible value (1, 0, "true") yields 422 before any DB access, so a
     # malformed body can never change stored state.
     trusted: StrictBool
+
+
+class NameState(BaseModel):
+    mac: str
+    user_name: Optional[str] = None
+
+
+MAX_USER_NAME_LENGTH = 40
+
+
+class NameUpdate(BaseModel):
+    # The user-chosen label. The field must be present (missing -> 422, like
+    # TrustUpdate) so a malformed body can never silently clear a name; an
+    # explicit null, or a value empty after trimming, clears it. The 40-char cap
+    # is measured on the trimmed value (<=40 ok, >40 -> 422) before any DB write.
+    name: Optional[str]
+
+    @field_validator("name")
+    @classmethod
+    def _trim_and_limit(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > MAX_USER_NAME_LENGTH:
+            raise ValueError(f"name must be at most {MAX_USER_NAME_LENGTH} characters")
+        return v
 
 
 class SettingsState(BaseModel):
@@ -321,7 +377,7 @@ class SummaryStats(BaseModel):
 
 SUMMARY_COLUMNS = (
     "mac, ip, hostname, device_type, model, vendor, vendor_source, "
-    "status, COALESCE(is_monitored, 0) AS monitored, trusted, first_seen, last_seen")
+    "status, COALESCE(is_monitored, 0) AS monitored, trusted, user_name, first_seen, last_seen")
 
 DETAIL_COLUMNS = SUMMARY_COLUMNS + (
     ", class_score, model_source, model_score, "
@@ -485,6 +541,36 @@ def set_device_trust(mac: str, body: TrustUpdate):
     finally:
         conn.close()
     return TrustState(mac=mac, trusted=body.trusted)
+
+
+@app.put("/devices/{mac}/name", response_model=NameState)
+def set_device_name(mac: str, body: NameUpdate):
+    """Set (or clear) the user-chosen display name for one existing device.
+
+    Like /trust, this touches a single column (`user_name`) of a single existing
+    row and creates nothing: an unknown MAC returns 404. The name is trimmed;
+    null or empty-after-trim clears it (stores NULL); a value longer than 40
+    characters is rejected (422) before any write. It never affects discovery,
+    classification, traffic capture, monitoring, status, or trust.
+    """
+    mac = normalize_mac(mac)
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        cur = conn.execute(
+            "UPDATE devices SET user_name = ? WHERE mac = ?", (body.name, mac)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"No device with mac {mac}")
+        conn.commit()
+    finally:
+        conn.close()
+    return NameState(mac=mac, user_name=body.name)
 
 
 @app.get("/summary", response_model=SummaryStats)
