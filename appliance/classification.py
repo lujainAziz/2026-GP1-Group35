@@ -346,6 +346,14 @@ OS_HINTS = [
 # produced it (e.g. an Android OS connectivity domain in DOMAIN_HINTS).
 OS_LEVEL_TYPES = frozenset(dtype for _, dtype in OS_HINTS)
 
+# The Android form-factor family. The startup stale-classification correction
+# (reevaluate_stale_classifications) will only ever change one of these into
+# another of these -- it never crosses out of the family, so a TV/Router/Apple/
+# camera/etc. verdict can never be downgraded by that pass.
+ANDROID_FAMILY_TYPES = frozenset({
+    "Mobile (Android)", "Tablet (Android)", "Android Device",
+})
+
 # Vendor-only classification is intentionally conservative.  OUI lookup still
 # identifies the manufacturer for thousands of vendors, but type is assigned
 # only when the manufacturer is strongly associated with one device class.

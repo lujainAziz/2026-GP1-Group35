@@ -225,6 +225,7 @@ from classification import (
     type_from_hostname,
     type_from_os_hint,
     OS_LEVEL_TYPES,
+    ANDROID_FAMILY_TYPES,
     type_from_vendor,
     type_from_payload,
     weak_type_from_payload,
@@ -3684,6 +3685,159 @@ def rescore_stored_evidence(verbose=True):
     return changed
 
 
+# class_source values that were derived from a PERSISTED evidence column
+# (hostname / model / vendor / vendor_class / dhcp_signature), i.e. ones the
+# current rules can reproduce from the stored row. Everything else is a
+# live-only source (mDNS/SSDP/UPnP/ONVIF advertisements, DNS/mDNS queries, SYN
+# fingerprint, LLDP, STP, default gateway, nmap probe, deployment overrides) and
+# must never be downgraded by a stored-evidence recompute.
+_REDERIVABLE_CLASS_SOURCES = frozenset({
+    "hostname", "stored hostname", "DHCP hostname",
+    "mDNS A-record hostname", "mDNS service-instance name", "mDNS friendly name",
+    "SSDP friendly name", "WS-Discovery friendly name",
+    "NBNS name", "LLMNR name",
+    "android OS hostname", "android OS (DHCP vendor class)",
+    "Huawei DHCP vendor class", "DHCP fingerprint",
+    "device model identifier", "WS-Discovery model identifier",
+    "MAC vendor",
+})
+
+
+def _is_rederivable_source(source):
+    """True if a stored class_source came from a persisted evidence column, so
+    the current rules can reproduce it. The unicast-probe name path appends
+    " (probe)" to a name source, and the vendor-class source carries a
+    "(needle)" suffix -- both are normalised before the lookup."""
+    if not source:
+        return False
+    normalized = source
+    if normalized.endswith(" (probe)"):
+        normalized = normalized[:-len(" (probe)")]
+    if normalized in _REDERIVABLE_CLASS_SOURCES:
+        return True
+    if normalized.startswith("DHCP vendor class ("):
+        return True
+    return False
+
+
+def reevaluate_stale_classifications(verbose=True):
+    """Correct stale verdicts the upgrade-only rescore_stored_evidence() cannot.
+
+    Companion pass run once at startup, right after rescore_stored_evidence()
+    (which is left exactly as its author wrote it). rescore only ever RAISES the
+    score, so a row whose stored evidence now maps to a DIFFERENT type at an
+    equal-or-lower score stays stuck (e.g. a Huawei tablet left "Mobile
+    (Android)" by the old "android"-as-phone rule). This pass fixes exactly that
+    case, under four independent guards so it can only touch the Android-family
+    leftovers of the old rules:
+
+      1. the recompute from stored columns must yield a type (never clears one);
+      2. the recomputed type must differ from the stored type;
+      3. the recomputed score must be <= the stored score (a strictly-higher
+         score is an upgrade, already applied by rescore which runs first);
+      4. BOTH the stored and recomputed types must be in ANDROID_FAMILY_TYPES
+         (no cross-family change -- a TV/Router/Apple/camera is never touched);
+      5. the stored class_source must be re-derivable from a persisted column
+         (so a live-only Android verdict -- e.g. from a DNS query -- is never
+         downgraded on the strength of a generic stored hostname).
+
+    update_device() is intentionally NOT changed: new devices are already
+    classified by the current rules, so only the pre-existing stored rows need
+    this one-time correction.
+    """
+    with db_lock:
+        conn = connect_db()
+        rows = conn.execute(
+            "SELECT mac, dhcp_signature, vendor_class, hostname, vendor, model, "
+            "device_type, COALESCE(class_score, 0), class_source FROM devices"
+        ).fetchall()
+
+        changed = 0
+        for (mac, dhcp_sig, vendor_class, hostname, vendor, model,
+             old_type, old_score, old_source) in rows:
+            # Recompute from stored evidence with the current rules. This mirrors
+            # rescore_stored_evidence()'s recompute on purpose -- duplicated so
+            # that function stays untouched (the accepted second-pass cost).
+            candidate = merge_candidate(
+                None, type_from_hostname(hostname), SCORES["hostname"],
+                "stored hostname",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(hostname), SCORES["os_hint"],
+                "android OS hostname",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_model(model), SCORES["model"],
+                "device model identifier",
+            )
+            if dhcp_sig:
+                try:
+                    sig = tuple(int(x) for x in dhcp_sig.split(","))
+                    dtype = type_from_dhcp_signature(sig)
+                    dhcp_score = (
+                        SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                        else SCORES["dhcp"]
+                    )
+                    candidate = merge_candidate(
+                        candidate, dtype, dhcp_score, "DHCP fingerprint",
+                    )
+                except (TypeError, ValueError):
+                    pass
+            vc_dtype, vc_needle = type_from_vendor_class(vendor_class)
+            if vc_dtype:
+                candidate = merge_candidate(
+                    candidate, vc_dtype, SCORES["dhcp_vendor"],
+                    f"DHCP vendor class ({vc_needle})",
+                )
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(vendor_class), SCORES["os_hint"],
+                "android OS (DHCP vendor class)",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_huawei_vendor_class(vendor_class),
+                SCORES["dhcp_vendor"], "Huawei DHCP vendor class",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor",
+            )
+
+            if candidate is None:
+                continue                                    # guard 1
+            new_type, new_score, new_source = candidate
+            if new_type == old_type:
+                continue                                    # guard 2
+            if new_score > old_score:
+                continue                                    # guard 3 (rescore's job)
+            if (old_type not in ANDROID_FAMILY_TYPES
+                    or new_type not in ANDROID_FAMILY_TYPES):
+                continue                                    # guard 4
+            if not _is_rederivable_source(old_source):
+                continue                                    # guard 5
+
+            conn.execute(
+                "UPDATE devices SET device_type=?, class_score=?, "
+                "class_source=? WHERE mac=?",
+                (new_type, new_score, new_source, mac),
+            )
+            changed += 1
+            if verbose:
+                print(
+                    f"[RECLASSIFY] {mac}  "
+                    f"{old_type} (score {old_score}) "
+                    f"-> {new_type} ({new_source}, score {new_score})  "
+                    "[stale Android-family evidence]"
+                )
+        conn.commit()
+        conn.close()
+
+    if verbose:
+        print(
+            f"[*] Re-evaluated stale classifications: {changed} device(s) "
+            "corrected against current Android-family rules"
+        )
+    return changed
+
+
 def main():
     args = parse_args()
     init_db()
@@ -3706,6 +3860,7 @@ def main():
     purge_self_records()
     cleanup_stale_mdns_query_classifications()
     rescore_stored_evidence()
+    reevaluate_stale_classifications()
 
     # DB is authoritative from here on: apply the persisted active_probes value
     # over the env-seeded defaults before the banners/gates below read them.

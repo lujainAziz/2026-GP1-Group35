@@ -704,6 +704,190 @@ def _nbns_nodestatus_reply(entries, rr_name="HOST"):
     return NBNSHeader(bytes(pkt))  # round-trip so fields dissect like the wire
 
 
+class ReevaluateStaleClassificationTests(unittest.TestCase):
+    """A1: the startup companion pass corrects stale Android-family verdicts
+    that rescore_stored_evidence() (upgrade-only) cannot, under both guards
+    (Android-family-both-ends AND a re-derivable class_source)."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+
+    def tearDown(self):
+        discovery.DB_PATH = self._orig
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert(self, mac, **cols):
+        keys = ["mac", "first_seen", "last_seen", "status"] + list(cols)
+        vals = [mac, "x", "x", "online"] + list(cols.values())
+        ph = ",".join("?" * len(keys))
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(f"INSERT INTO devices ({','.join(keys)}) VALUES ({ph})", vals)
+        conn.commit()
+        conn.close()
+
+    def _get(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT device_type, COALESCE(class_score,0), class_source "
+            "FROM devices WHERE mac=?", (mac,)
+        ).fetchone()
+        conn.close()
+        return row
+
+    def _run(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            n = discovery.reevaluate_stale_classifications(verbose=True)
+        return n, buf.getvalue()
+
+    # -- corrections (both guards satisfied) --------------------------------
+
+    def test_huawei_tablet_corrected_from_stale_mobile(self):
+        # Real row e2:e1:1e:62:d5:a5: stored Mobile (Android)@90 from the old
+        # "android" rule; stored hostname is the DHCP name, vendor_class carries
+        # the known Huawei tablet code.
+        self._insert("e2:e1:1e:62:d5:a5", hostname="DBY-W09",
+                     vendor_class="HUAWEI:android:DBY",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n, out = self._run()
+        dtype, score, _ = self._get("e2:e1:1e:62:d5:a5")
+        self.assertEqual(dtype, "Tablet (Android)")
+        self.assertEqual(score, discovery.SCORES["dhcp_vendor"])
+        self.assertEqual(n, 1)
+        self.assertIn("[RECLASSIFY]", out)
+
+    def test_android_hostname_corrected_to_android_device(self):
+        self._insert("aa:00:00:00:c0:01", hostname="Android-5",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        self._run()
+        dtype, score, _ = self._get("aa:00:00:00:c0:01")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    # -- guard 5: live-only Android verdict must NOT be downgraded ----------
+
+    def test_live_only_dns_query_android_not_downgraded(self):
+        # Mobile (Android) came from a live DNS query (not stored); a generic
+        # "android-abc" hostname must not downgrade it to Android Device.
+        self._insert("aa:00:00:00:c0:02", hostname="android-abc",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="DNS query (connectivitycheck.gstatic.com)")
+        n, _ = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:02")[0], "Mobile (Android)")
+        self.assertEqual(n, 0)
+
+    # -- guard 4: cross-family change is out of scope -----------------------
+
+    def test_cross_family_tv_not_downgraded(self):
+        # Smart TV via a friendly name whose stored hostname is "android-123";
+        # must stay a TV (old type not in the Android family).
+        self._insert("aa:00:00:00:c0:03", hostname="android-123",
+                     device_type="Smart TV / Media Device", class_score=90,
+                     class_source="mDNS friendly name")
+        n, _ = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:03")[0],
+                         "Smart TV / Media Device")
+        self.assertEqual(n, 0)
+
+    def test_skyworth_tv_unchanged(self):
+        self._insert("be:6d:f7:31:38:48", hostname="SWTV-22AE",
+                     model="Skyworth Media Renderer",
+                     device_type="Smart TV / Media Device", class_score=85,
+                     class_source="SSDP advertisement")
+        self._run()
+        self.assertEqual(self._get("be:6d:f7:31:38:48")[0],
+                         "Smart TV / Media Device")
+
+    def test_gateway_router_unchanged(self):
+        self._insert("aa:00:00:00:c0:04", hostname="galaxy-router",
+                     device_type="Router", class_score=100,
+                     class_source="default gateway")
+        self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:04")[0], "Router")
+
+    def test_apple_unchanged(self):
+        self._insert("aa:00:00:00:c0:05", hostname="iPhone",
+                     device_type="Mobile (Apple)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:05")[0], "Mobile (Apple)")
+
+    # -- guards 1/2: no-op cases --------------------------------------------
+
+    def test_consistent_row_is_noop(self):
+        self._insert("aa:00:00:00:c0:06", hostname="Galaxy-S21",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n, out = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:06")[0], "Mobile (Android)")
+        self.assertEqual(n, 0)
+        self.assertNotIn("[RECLASSIFY]", out)
+
+    def test_no_stored_evidence_not_cleared(self):
+        # Android verdict with no re-derivable stored evidence -> never cleared.
+        self._insert("aa:00:00:00:c0:07",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n, _ = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:07")[0], "Mobile (Android)")
+        self.assertEqual(n, 0)
+
+    # -- guard 3: upgrades are rescore's job, not the companion's -----------
+
+    def test_upgrade_is_left_to_rescore(self):
+        # MiTV model -> Smart TV@95 is a strictly-higher score: the companion
+        # alone must NOT change it; rescore (run first at startup) does.
+        self._insert("aa:00:00:00:c0:08", model="MiTV-AESP0",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="device model identifier")
+        self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:08")[0], "Mobile (Android)")
+        # Real startup order: rescore upgrades it, companion leaves it.
+        discovery.rescore_stored_evidence(verbose=False)
+        discovery.reevaluate_stale_classifications(verbose=False)
+        self.assertEqual(self._get("aa:00:00:00:c0:08")[0],
+                         "Smart TV / Media Device")
+
+    def test_idempotent(self):
+        self._insert("aa:00:00:00:c0:09", hostname="DBY-W09",
+                     vendor_class="HUAWEI:android:DBY",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n1, _ = self._run()
+        n2, out2 = self._run()
+        self.assertEqual(n1, 1)
+        self.assertEqual(n2, 0)
+        self.assertNotIn("[RECLASSIFY]", out2)
+        self.assertEqual(self._get("aa:00:00:00:c0:09")[0], "Tablet (Android)")
+
+
+class RederivableSourceHelperTests(unittest.TestCase):
+    def test_rederivable_sources(self):
+        for s in ("mDNS A-record hostname", "stored hostname", "DHCP hostname",
+                  "android OS hostname", "android OS (DHCP vendor class)",
+                  "Huawei DHCP vendor class", "DHCP fingerprint",
+                  "device model identifier", "MAC vendor",
+                  "DHCP vendor class (xbox)", "mDNS A-record hostname (probe)"):
+            self.assertTrue(discovery._is_rederivable_source(s), s)
+
+    def test_live_only_sources(self):
+        for s in ("mDNS advertisement", "SSDP advertisement",
+                  "UPnP device description", "WS-Discovery / ONVIF advertisement",
+                  "DNS query (connectivitycheck.gstatic.com)",
+                  "mDNS query (_rdlink._tcp)", "TCP SYN fingerprint (Apple)",
+                  "LLDP system capabilities", "STP/BPDU", "default gateway",
+                  "nmap active probe port 9100", "", None):
+            self.assertFalse(discovery._is_rederivable_source(s), s)
+
+
 class NbnsProbeTests(unittest.TestCase):
     def test_disabled_probe_is_noop(self):
         orig = discovery.ENABLE_NBNS_PROBE
