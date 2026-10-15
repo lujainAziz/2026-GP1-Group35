@@ -10,13 +10,15 @@ import hashlib
 import secrets
 import threading
 import sqlite3
+import uuid
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, StrictBool
+from pydantic import BaseModel, StrictBool, field_validator
 
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 
@@ -70,6 +72,30 @@ def ensure_trusted_column() -> None:
         conn.close()
 
 
+def ensure_user_name_column() -> None:
+    """Deployment safety: guarantee devices.user_name exists before any endpoint
+    reads it, without waiting for discovery.py to be restarted.
+
+    The API owns this column (set via PUT /devices/{mac}/name); discovery.py does
+    not know about it and never writes it, exactly like `trusted`. Mirrors ONLY
+    this single column; all other schema evolution stays owned by discovery.py.
+    Idempotent and a no-op if the DB or devices table does not exist yet.
+    """
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError:
+        return  # DB not created yet; discovery.init_db() will build it fresh.
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+        # Empty cols => devices table absent; nothing to migrate (discovery owns
+        # table creation). Only add the column when the table exists without it.
+        if cols and "user_name" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN user_name TEXT")
+            conn.commit()
+    finally:
+        conn.close()
+
+
 # Kept textually identical to discovery.init_db()'s app_settings DDL so the two
 # processes never create diverging schemas for the same table.
 _APP_SETTINGS_DDL = (
@@ -106,6 +132,7 @@ async def lifespan(_app: "FastAPI"):
     # Runs once on startup (uvicorn drives the ASGI lifespan protocol) before any
     # request is served, so the trusted column and settings table are present.
     ensure_trusted_column()
+    ensure_user_name_column()
     ensure_settings_table()
     yield
 
@@ -180,6 +207,19 @@ def get_connection():
         conn.close()
 
 
+def appliance_identity(source=None):
+    """Persistent public identifier; never a session credential."""
+    path = source.execute("PRAGMA database_list").fetchone()[2] if source is not None else DB_PATH
+    conn = sqlite3.connect(f"file:{path}?mode=rw", uri=True, timeout=5)
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS appliance_identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)")
+        conn.execute("INSERT OR IGNORE INTO appliance_identity VALUES (1, ?)", (str(uuid.uuid4()),))
+        conn.commit()
+        return conn.execute("SELECT value FROM appliance_identity WHERE id=1").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def normalize_mac(mac: str) -> str:
     mac = mac.strip().lower()
     if ":" not in mac and "-" not in mac and len(mac) == 12:
@@ -235,6 +275,9 @@ class DeviceSummary(BaseModel):
     # User recognition state, independent of classification/monitoring. Stored
     # as 0/1; surfaced here as a real JSON boolean. Old rows default to false.
     trusted: bool = False
+    # User-chosen display label. API-owned: set via PUT /devices/{mac}/name,
+    # never written by discovery. Null when unset.
+    user_name: Optional[str] = None
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
 
@@ -249,6 +292,34 @@ class TrustUpdate(BaseModel):
     # or coercible value (1, 0, "true") yields 422 before any DB access, so a
     # malformed body can never change stored state.
     trusted: StrictBool
+
+
+class NameState(BaseModel):
+    mac: str
+    user_name: Optional[str] = None
+
+
+MAX_USER_NAME_LENGTH = 40
+
+
+class NameUpdate(BaseModel):
+    # The user-chosen label. The field must be present (missing -> 422, like
+    # TrustUpdate) so a malformed body can never silently clear a name; an
+    # explicit null, or a value empty after trimming, clears it. The 40-char cap
+    # is measured on the trimmed value (<=40 ok, >40 -> 422) before any DB write.
+    name: Optional[str]
+
+    @field_validator("name")
+    @classmethod
+    def _trim_and_limit(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > MAX_USER_NAME_LENGTH:
+            raise ValueError(f"name must be at most {MAX_USER_NAME_LENGTH} characters")
+        return v
 
 
 class SettingsState(BaseModel):
@@ -321,7 +392,7 @@ class SummaryStats(BaseModel):
 
 SUMMARY_COLUMNS = (
     "mac, ip, hostname, device_type, model, vendor, vendor_source, "
-    "status, COALESCE(is_monitored, 0) AS monitored, trusted, first_seen, last_seen")
+    "status, COALESCE(is_monitored, 0) AS monitored, trusted, user_name, first_seen, last_seen")
 
 DETAIL_COLUMNS = SUMMARY_COLUMNS + (
     ", class_score, model_source, model_score, "
@@ -337,11 +408,20 @@ DETAIL_COLUMNS = SUMMARY_COLUMNS + (
 )
 
 
-def _presence_from_status(status) -> str:
-    """User-facing presence from the stored status column. Only 'online' is
-    Online; observed/candidate/offline all map to 'offline'. Derived, never
-    recomputed -- the stored status stays the single source of truth."""
-    return "online" if status == "online" else "offline"
+def _presence_from_status(status, last_seen=None, now=None) -> str:
+    """Recent passive observations count as online; expire at 120 seconds."""
+    if status not in ("online", "observed"):
+        return "offline"
+    if last_seen:
+        try:
+            seen = datetime.fromisoformat(last_seen).astimezone()
+            current = now or datetime.now().astimezone()
+            if (current - seen).total_seconds() > 120:
+                return "offline"
+        except ValueError:
+            return "offline"
+    # Legacy records without a timestamp retain their stored presence.
+    return "online"
 
 
 def row_to_summary(row) -> DeviceSummary:
@@ -352,7 +432,13 @@ def row_to_summary(row) -> DeviceSummary:
     )
     data["monitored"] = bool(data["monitored"])
     data["trusted"] = bool(data["trusted"])
-    data["presence"] = _presence_from_status(data.get("status"))
+    data["presence"] = _presence_from_status(data.get("status"), data.get("last_seen"))
+    for key in ("first_seen", "last_seen"):
+        if data.get(key):
+            try:
+                data[key] = datetime.fromisoformat(data[key]).astimezone().isoformat(timespec="seconds")
+            except ValueError:
+                data[key] = None
     return DeviceSummary(**data)
 
 
@@ -376,7 +462,13 @@ def row_to_detail(row) -> DeviceDetail:
         vendor=data.get("vendor"),
         vendor_source=data.get("vendor_source"),
     )
-    data["presence"] = _presence_from_status(data.get("status"))
+    data["presence"] = _presence_from_status(data.get("status"), data.get("last_seen"))
+    for key in ("first_seen", "last_seen"):
+        if data.get(key):
+            try:
+                data[key] = datetime.fromisoformat(data[key]).astimezone().isoformat(timespec="seconds")
+            except ValueError:
+                data[key] = None
     return DeviceDetail(**data)
 
 
@@ -400,11 +492,16 @@ def healthz(conn: sqlite3.Connection = Depends(get_connection)):
         except ValueError:
             last_write = None
 
-    daemon_stale = (
-        seconds_since_write is None or seconds_since_write > HEARTBEAT_STALE_SECONDS
-    )
+    # A running capture service writes this even when no devices send traffic.
+    try:
+        beat = conn.execute("SELECT updated_at FROM daemon_heartbeat WHERE id=1").fetchone()
+    except sqlite3.OperationalError:
+        beat = None  # Compatibility with an older discovery service.
+    heartbeat_age = max(0, time.time() - beat[0]) if beat else seconds_since_write
+    daemon_stale = heartbeat_age is None or heartbeat_age > HEARTBEAT_STALE_SECONDS
     return {
         "status": "ok",
+        "appliance_id": appliance_identity(conn),
         "db_available": True,
         "last_write": last_write,
         "seconds_since_write": seconds_since_write,
@@ -447,6 +544,12 @@ def list_devices(
     return [row_to_summary(r) for r in rows]
 
 
+@app.get('/activity')
+def activity(conn: sqlite3.Connection = Depends(get_connection)):
+    from live_activity import read_activity
+    return read_activity(conn)
+
+
 @app.get("/devices/{mac}", response_model=DeviceDetail)
 def get_device(mac: str, conn: sqlite3.Connection = Depends(get_connection)):
     mac = normalize_mac(mac)
@@ -485,6 +588,36 @@ def set_device_trust(mac: str, body: TrustUpdate):
     finally:
         conn.close()
     return TrustState(mac=mac, trusted=body.trusted)
+
+
+@app.put("/devices/{mac}/name", response_model=NameState)
+def set_device_name(mac: str, body: NameUpdate):
+    """Set (or clear) the user-chosen display name for one existing device.
+
+    Like /trust, this touches a single column (`user_name`) of a single existing
+    row and creates nothing: an unknown MAC returns 404. The name is trimmed;
+    null or empty-after-trim clears it (stores NULL); a value longer than 40
+    characters is rejected (422) before any write. It never affects discovery,
+    classification, traffic capture, monitoring, status, or trust.
+    """
+    mac = normalize_mac(mac)
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Device database is not available yet: {exc}",
+        )
+    try:
+        cur = conn.execute(
+            "UPDATE devices SET user_name = ? WHERE mac = ?", (body.name, mac)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"No device with mac {mac}")
+        conn.commit()
+    finally:
+        conn.close()
+    return NameState(mac=mac, user_name=body.name)
 
 
 @app.get("/summary", response_model=SummaryStats)
@@ -641,7 +774,7 @@ def get_pairing_code(request: Request):
         )
     code, expires_at = current_pairing_code()
     return PairingCodeOut(
-        code=code, expires_at=expires_at.isoformat(timespec="seconds")
+        code=code, expires_at=expires_at.astimezone().isoformat(timespec="seconds")
     )
 
 # ---------------------------------------------------------------------------
@@ -657,7 +790,8 @@ _SESSIONS_DDL = (
     "CREATE TABLE IF NOT EXISTS paired_sessions ("
     " id INTEGER PRIMARY KEY AUTOINCREMENT,"
     " token_hash TEXT NOT NULL UNIQUE,"
-    " created_at TEXT NOT NULL"
+    " created_at TEXT NOT NULL,"
+    " device_name TEXT NOT NULL DEFAULT 'Unnamed phone'"
     ")"
 )
 
@@ -688,10 +822,43 @@ def _check_pairing_code(code: str) -> bool:
 
 class PairRequest(BaseModel):
     code: str
+    device_name: Optional[str] = None
+
+    @field_validator("device_name")
+    @classmethod
+    def _clean_device_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if len(value) > 40:
+            raise ValueError("Phone name must be at most 40 characters.")
+        return value or None
 
 
 class PairResponse(BaseModel):
     token: str
+    appliance_id: str
+
+
+class PairedPhone(BaseModel):
+    id: int
+    device_name: str
+    created_at: str
+
+
+@app.get("/sessions", response_model=list[PairedPhone])
+def list_sessions(request: Request, conn: sqlite3.Connection = Depends(get_connection)):
+    """Appliance display only; never return token hashes to a caller."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Available only on the Assas device.")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(paired_sessions)")}
+    if not columns:
+        return []
+    name = "device_name" if "device_name" in columns else "'Unnamed phone'"
+    rows = conn.execute(
+        f"SELECT id, {name} AS device_name, created_at FROM paired_sessions ORDER BY id"
+    ).fetchall()
+    return [PairedPhone(**dict(row)) for row in rows]
 
 
 @app.post(
@@ -717,14 +884,17 @@ def pair(body: PairRequest):
         )
     try:
         conn.execute(_SESSIONS_DDL)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(paired_sessions)")}
+        if "device_name" not in columns:
+            conn.execute("ALTER TABLE paired_sessions ADD COLUMN device_name TEXT NOT NULL DEFAULT 'Unnamed phone'")
         conn.execute(
-            "INSERT INTO paired_sessions (token_hash, created_at) VALUES (?, ?)",
-            (_hash_token(token), datetime.now().isoformat(timespec="seconds")),
+            "INSERT INTO paired_sessions (token_hash, created_at, device_name) VALUES (?, ?, ?)",
+            (_hash_token(token), datetime.now().isoformat(timespec="seconds"), body.device_name or "Unnamed phone"),
         )
         conn.commit()
     finally:
         conn.close()
-    return PairResponse(token=token)
+    return PairResponse(token=token, appliance_id=appliance_identity())
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +957,7 @@ def unpair(request: Request) -> None:
             (_hash_token(token),),
         )
         conn.commit()
-    except sqlite3.OperationalError:
-        pass  # no sessions table -> nothing to delete
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(status_code=503, detail="Could not revoke session.") from exc
     finally:
         conn.close()

@@ -41,6 +41,7 @@ ISO-8601** to the second (e.g. `2026-09-20T10:57:37`).
 | `membership_source` | TEXT | How AP association was determined. |
 | `discovered_current` | INTEGER (0/1) | Currently present on the subnet (fresh ARP/discovery). |
 | `last_discovery_seen` | TEXT | Last time confirmed present on the subnet. |
+| `user_name` | TEXT | User-chosen display label. API-owned (set via `PUT /devices/{mac}/name`); never written by discovery. `NULL` when unset. |
 
 ### Notes
 - **Evidence needles**: `class_source`, `model_source`, `vendor_source`,

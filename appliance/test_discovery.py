@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import socket
 import sqlite3
@@ -11,7 +13,7 @@ from scapy.layers.netbios import (
 )
 from scapy.layers.llmnr import LLMNRQuery, LLMNRResponse
 from scapy.layers.dns import DNS, DNSRR, DNSQR
-from scapy.all import Ether, IP, TCP, UDP
+from scapy.all import Ether, IP, TCP, UDP, BOOTP, DHCP
 
 import discovery
 from discovery import (
@@ -36,6 +38,19 @@ from discovery import (
     DHCP_SIGNATURES,
     SCORES,
 )
+
+
+def _nmap_xml_from_table(table, target):
+    import re
+    import xml.etree.ElementTree as ET
+    root = ET.Element('nmaprun')
+    host = ET.SubElement(root, 'host')
+    ET.SubElement(host, 'address', addr=target, addrtype='ipv4')
+    ports = ET.SubElement(host, 'ports')
+    for number, state in re.findall(r'(?m)^([0-9]+)/tcp\s+(\S+)', table):
+        port = ET.SubElement(ports, 'port', protocol='tcp', portid=number)
+        ET.SubElement(port, 'state', state=state)
+    return ET.tostring(root, encoding='unicode')
 
 
 class NbnsLlmnrExtractionTests(unittest.TestCase):
@@ -173,6 +188,7 @@ class ArpScanVendorNormalizationTests(unittest.TestCase):
 
 class BackfillMigrationTests(unittest.TestCase):
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)  # let init_db() create it fresh
@@ -260,6 +276,7 @@ class BackfillMigrationTests(unittest.TestCase):
 
 class ObservedStatusAgingTests(unittest.TestCase):
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -422,6 +439,7 @@ class ProbeTriggerTests(unittest.TestCase):
     not only brand-new ones (the target unknowns are already in the DB)."""
 
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -467,17 +485,17 @@ class ProbeTriggerTests(unittest.TestCase):
         mac = "72:e4:6b:44:a6:f5"
         self._insert(mac, None)
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
-        self.assertIn(mac, discovery.mdns_probed)
-        self.assertIn(mac, discovery.active_probed)
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_ACTIVE_PROBE' for key in discovery.probe_attempts))
         # Seen again -> not re-scheduled (still just once in the set).
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
-        self.assertEqual(sum(1 for m in discovery.mdns_probed if m == mac), 1)
+        self.assertEqual(sum(1 for key in discovery.probe_attempts if key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE'), 1)
 
     def test_existing_generic_unknown_type_schedules(self):
         mac = "72:e4:6b:44:a6:00"
         self._insert(mac, "Generic / Unknown")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
-        self.assertIn(mac, discovery.mdns_probed)
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
 
     def test_existing_classified_and_named_device_not_scheduled(self):
         # Classified AND already has a usable hostname -> no enrichment at all.
@@ -487,13 +505,23 @@ class ProbeTriggerTests(unittest.TestCase):
         self.assertNotIn(mac, discovery.mdns_probed)
         self.assertNotIn(mac, discovery.active_probed)
 
-    def test_existing_classified_without_name_gets_mdns(self):
-        # Classified but NO hostname -> eligible for mDNS name enrichment,
-        # but NOT the active/Nmap probe (which stays unclassified-only).
+    def test_existing_general_type_gets_mdns_and_active(self):
+        # B2: a general OS verdict ("Apple Device") is still refinable, so it
+        # now gets BOTH mDNS name enrichment AND the active/Nmap probe.
         mac = "72:e4:6b:44:a6:22"
         self._insert(mac, "Apple Device")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
-        self.assertIn(mac, discovery.mdns_probed)
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_ACTIVE_PROBE' for key in discovery.probe_attempts))
+
+    def test_existing_specific_type_without_name_gets_mdns_only(self):
+        # A specific type with no hostname is still eligible for mDNS name
+        # enrichment, but NOT the active/Nmap probe (which is probe-eligible
+        # only for unclassified or general-OS types).
+        mac = "72:e4:6b:44:a6:33"
+        self._insert(mac, "Computer")
+        discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
         self.assertNotIn(mac, discovery.active_probed)
 
 
@@ -535,6 +563,7 @@ class DisplayDeviceTypeTests(unittest.TestCase):
 
 class RescoreStoredEvidenceTests(unittest.TestCase):
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -572,13 +601,91 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(self._get("aa:00:00:00:00:01")[0], "Computer")
         self.assertGreaterEqual(n, 1)
 
-    def test_vendor_class_upgrades_unknown(self):
+    def test_vendor_class_android_rescores_to_os_hint(self):
+        # "android-dhcp-..." is an OS token, not a phone: it now rescores to the
+        # neutral "Android Device" at the weak os_hint tier (was Mobile (Android)
+        # at dhcp_vendor -- that mapping was the bug).
         self._insert("aa:00:00:00:00:02", vendor_class="android-dhcp-15")
         discovery.rescore_stored_evidence(verbose=False)
         dtype, score, source = self._get("aa:00:00:00:00:02")
-        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    def test_xbox_vendor_class_still_upgrades_unknown(self):
+        # A specific (non-OS) vendor class is unaffected by the android change.
+        self._insert("aa:00:00:00:00:12", vendor_class="XBOX 1.0")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:12")
+        self.assertEqual(dtype, "Game Console")
         self.assertEqual(score, discovery.SCORES["dhcp_vendor"])
-        self.assertIn("android-dhcp-", source)
+
+    def test_mitv_model_beats_android_hostname(self):
+        # Real case 60:35:73:f2:4d:7b: an Android-TV A-record hostname (OS token)
+        # plus a TV model. The model (95) must win over the android OS hint (40),
+        # so the device is a Smart TV, not "Mobile (Android)".
+        self._insert("aa:00:00:00:00:13",
+                     hostname="android-aesp0", model="MiTV-AESP0", model_score=95)
+        discovery.rescore_stored_evidence(verbose=False)
+        self.assertEqual(self._get("aa:00:00:00:00:13")[0],
+                         "Smart TV / Media Device")
+
+    def test_android_only_hostname_rescores_to_os_hint(self):
+        # Real case Android-5: a bare "android" hostname with no form-factor
+        # evidence is the neutral OS label, not a phone.
+        self._insert("aa:00:00:00:00:14", hostname="Android-5")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:14")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    def test_zflip3_hostname_rescores_to_mobile(self):
+        # Real case d2:5a:1b:a1:48:de: the phone family in the hostname is
+        # form-factor evidence, so it stays Mobile (Android).
+        self._insert("aa:00:00:00:00:15", hostname="Z-Flip3-alkhas-b-noura")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:15")
+        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(score, discovery.SCORES["hostname"])
+
+    def test_android_signature_with_extra_options_rescores_to_os_hint(self):
+        # Fix 2 real case: Z-Flip3 PRL = base Android + 114 + 108 (RFC 8925).
+        # Exact-tuple lookup missed it; tolerant matching classifies it, and it
+        # is OS-only -> "Android Device" at os_hint (no hostname evidence here).
+        self._insert("aa:00:00:00:00:16",
+                     dhcp_signature="1,3,6,15,26,28,51,58,59,43,114,108")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:16")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    def test_zflip3_hostname_plus_signature_stays_mobile(self):
+        # With the phone-family hostname AND the Android signature, the
+        # form-factor hostname (90) wins over the OS signature (os_hint).
+        self._insert("aa:00:00:00:00:17", hostname="Z-Flip3-alkhas-b-noura",
+                     dhcp_signature="1,3,6,15,26,28,51,58,59,43,114,108")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:17")
+        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(score, discovery.SCORES["hostname"])
+
+    def test_huawei_known_code_rescores_to_form_factor(self):
+        # Fix A real cases: DBY = MatePad 11 (tablet), MNA = P60 Pro (phone).
+        self._insert("aa:00:00:00:00:18", vendor_class="HUAWEI:android:DBY")
+        self._insert("aa:00:00:00:00:19", vendor_class="HUAWEI:android:MNA")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype_tab, score_tab, _ = self._get("aa:00:00:00:00:18")
+        dtype_phone, _, _ = self._get("aa:00:00:00:00:19")
+        self.assertEqual(dtype_tab, "Tablet (Android)")
+        self.assertEqual(score_tab, discovery.SCORES["dhcp_vendor"])
+        self.assertEqual(dtype_phone, "Mobile (Android)")
+
+    def test_huawei_unknown_code_rescores_to_os_hint(self):
+        # Unknown Huawei model code stays OS-only ("Android Device").
+        self._insert("aa:00:00:00:00:1a", vendor_class="HUAWEI:android:XYZ")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:1a")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
 
     def test_no_downgrade_of_stronger_classification(self):
         # Strong existing type (gateway, 100) with only weak stored vendor
@@ -622,6 +729,191 @@ def _nbns_nodestatus_reply(entries, rr_name="HOST"):
         RR_NAME=rr_name, NUM_NAMES=len(svcs), NODE_NAME=svcs
     )
     return NBNSHeader(bytes(pkt))  # round-trip so fields dissect like the wire
+
+
+class ReevaluateStaleClassificationTests(unittest.TestCase):
+    """A1: the startup companion pass corrects stale Android-family verdicts
+    that rescore_stored_evidence() (upgrade-only) cannot, under both guards
+    (Android-family-both-ends AND a re-derivable class_source)."""
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+
+    def tearDown(self):
+        discovery.DB_PATH = self._orig
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert(self, mac, **cols):
+        keys = ["mac", "first_seen", "last_seen", "status"] + list(cols)
+        vals = [mac, "x", "x", "online"] + list(cols.values())
+        ph = ",".join("?" * len(keys))
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(f"INSERT INTO devices ({','.join(keys)}) VALUES ({ph})", vals)
+        conn.commit()
+        conn.close()
+
+    def _get(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT device_type, COALESCE(class_score,0), class_source "
+            "FROM devices WHERE mac=?", (mac,)
+        ).fetchone()
+        conn.close()
+        return row
+
+    def _run(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            n = discovery.reevaluate_stale_classifications(verbose=True)
+        return n, buf.getvalue()
+
+    # -- corrections (both guards satisfied) --------------------------------
+
+    def test_huawei_tablet_corrected_from_stale_mobile(self):
+        # Real row e2:e1:1e:62:d5:a5: stored Mobile (Android)@90 from the old
+        # "android" rule; stored hostname is the DHCP name, vendor_class carries
+        # the known Huawei tablet code.
+        self._insert("e2:e1:1e:62:d5:a5", hostname="DBY-W09",
+                     vendor_class="HUAWEI:android:DBY",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n, out = self._run()
+        dtype, score, _ = self._get("e2:e1:1e:62:d5:a5")
+        self.assertEqual(dtype, "Tablet (Android)")
+        self.assertEqual(score, discovery.SCORES["dhcp_vendor"])
+        self.assertEqual(n, 1)
+        self.assertIn("[RECLASSIFY]", out)
+
+    def test_android_hostname_corrected_to_android_device(self):
+        self._insert("aa:00:00:00:c0:01", hostname="Android-5",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        self._run()
+        dtype, score, _ = self._get("aa:00:00:00:c0:01")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    # -- guard 5: live-only Android verdict must NOT be downgraded ----------
+
+    def test_live_only_dns_query_android_not_downgraded(self):
+        # Mobile (Android) came from a live DNS query (not stored); a generic
+        # "android-abc" hostname must not downgrade it to Android Device.
+        self._insert("aa:00:00:00:c0:02", hostname="android-abc",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="DNS query (connectivitycheck.gstatic.com)")
+        n, _ = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:02")[0], "Mobile (Android)")
+        self.assertEqual(n, 0)
+
+    # -- guard 4: cross-family change is out of scope -----------------------
+
+    def test_cross_family_tv_not_downgraded(self):
+        # Smart TV via a friendly name whose stored hostname is "android-123";
+        # must stay a TV (old type not in the Android family).
+        self._insert("aa:00:00:00:c0:03", hostname="android-123",
+                     device_type="Smart TV / Media Device", class_score=90,
+                     class_source="mDNS friendly name")
+        n, _ = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:03")[0],
+                         "Smart TV / Media Device")
+        self.assertEqual(n, 0)
+
+    def test_skyworth_tv_unchanged(self):
+        self._insert("be:6d:f7:31:38:48", hostname="SWTV-22AE",
+                     model="Skyworth Media Renderer",
+                     device_type="Smart TV / Media Device", class_score=85,
+                     class_source="SSDP advertisement")
+        self._run()
+        self.assertEqual(self._get("be:6d:f7:31:38:48")[0],
+                         "Smart TV / Media Device")
+
+    def test_gateway_router_unchanged(self):
+        self._insert("aa:00:00:00:c0:04", hostname="galaxy-router",
+                     device_type="Router", class_score=100,
+                     class_source="default gateway")
+        self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:04")[0], "Router")
+
+    def test_apple_unchanged(self):
+        self._insert("aa:00:00:00:c0:05", hostname="iPhone",
+                     device_type="Mobile (Apple)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:05")[0], "Mobile (Apple)")
+
+    # -- guards 1/2: no-op cases --------------------------------------------
+
+    def test_consistent_row_is_noop(self):
+        self._insert("aa:00:00:00:c0:06", hostname="Galaxy-S21",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n, out = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:06")[0], "Mobile (Android)")
+        self.assertEqual(n, 0)
+        self.assertNotIn("[RECLASSIFY]", out)
+
+    def test_no_stored_evidence_not_cleared(self):
+        # Android verdict with no re-derivable stored evidence -> never cleared.
+        self._insert("aa:00:00:00:c0:07",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n, _ = self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:07")[0], "Mobile (Android)")
+        self.assertEqual(n, 0)
+
+    # -- guard 3: upgrades are rescore's job, not the companion's -----------
+
+    def test_upgrade_is_left_to_rescore(self):
+        # MiTV model -> Smart TV@95 is a strictly-higher score: the companion
+        # alone must NOT change it; rescore (run first at startup) does.
+        self._insert("aa:00:00:00:c0:08", model="MiTV-AESP0",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="device model identifier")
+        self._run()
+        self.assertEqual(self._get("aa:00:00:00:c0:08")[0], "Mobile (Android)")
+        # Real startup order: rescore upgrades it, companion leaves it.
+        discovery.rescore_stored_evidence(verbose=False)
+        discovery.reevaluate_stale_classifications(verbose=False)
+        self.assertEqual(self._get("aa:00:00:00:c0:08")[0],
+                         "Smart TV / Media Device")
+
+    def test_idempotent(self):
+        self._insert("aa:00:00:00:c0:09", hostname="DBY-W09",
+                     vendor_class="HUAWEI:android:DBY",
+                     device_type="Mobile (Android)", class_score=90,
+                     class_source="mDNS A-record hostname")
+        n1, _ = self._run()
+        n2, out2 = self._run()
+        self.assertEqual(n1, 1)
+        self.assertEqual(n2, 0)
+        self.assertNotIn("[RECLASSIFY]", out2)
+        self.assertEqual(self._get("aa:00:00:00:c0:09")[0], "Tablet (Android)")
+
+
+class RederivableSourceHelperTests(unittest.TestCase):
+    def test_rederivable_sources(self):
+        for s in ("mDNS A-record hostname", "stored hostname", "DHCP hostname",
+                  "android OS hostname", "android OS (DHCP vendor class)",
+                  "Huawei DHCP vendor class", "DHCP fingerprint",
+                  "device model identifier", "MAC vendor",
+                  "DHCP vendor class (xbox)", "mDNS A-record hostname (probe)"):
+            self.assertTrue(discovery._is_rederivable_source(s), s)
+
+    def test_live_only_sources(self):
+        for s in ("mDNS advertisement", "SSDP advertisement",
+                  "UPnP device description", "WS-Discovery / ONVIF advertisement",
+                  "DNS query (connectivitycheck.gstatic.com)",
+                  "mDNS query (_rdlink._tcp)", "TCP SYN fingerprint (Apple)",
+                  "LLDP system capabilities", "STP/BPDU", "default gateway",
+                  "nmap active probe port 9100", "", None):
+            self.assertFalse(discovery._is_rederivable_source(s), s)
 
 
 class NbnsProbeTests(unittest.TestCase):
@@ -702,6 +994,7 @@ class NbnsProbeTests(unittest.TestCase):
 
 class NbnsProbeTriggerTests(unittest.TestCase):
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -737,9 +1030,9 @@ class NbnsProbeTriggerTests(unittest.TestCase):
         mac = "72:e4:6b:44:a6:f5"
         self._insert(mac, None)
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
-        self.assertIn(mac, discovery.nbns_probed)
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_NBNS_PROBE' for key in discovery.probe_attempts))
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
-        self.assertEqual(sum(1 for m in discovery.nbns_probed if m == mac), 1)
+        self.assertEqual(sum(1 for key in discovery.probe_attempts if key[1] == mac and key[0] == 'ENABLE_NBNS_PROBE'), 1)
 
     def test_existing_classified_and_named_not_scheduled(self):
         # Classified AND already named -> no NBNS enrichment.
@@ -753,7 +1046,7 @@ class NbnsProbeTriggerTests(unittest.TestCase):
         mac = "72:e4:6b:44:a6:33"
         self._insert(mac, "Computer")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
-        self.assertIn(mac, discovery.nbns_probed)
+        self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_NBNS_PROBE' for key in discovery.probe_attempts))
 
 
 class SynFingerprintLocalOnlyTests(unittest.TestCase):
@@ -763,6 +1056,7 @@ class SynFingerprintLocalOnlyTests(unittest.TestCase):
                   ("NOP", None), ("Timestamp", (1, 0)), ("SAckOK", b""), ("EOL", None)]
 
     def setUp(self):
+        discovery.probe_attempts.clear()
         import ipaddress
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -815,6 +1109,7 @@ class MdnsQueryVendorInferenceTests(unittest.TestCase):
     Apple vendor only when the source MAC has no real OUI vendor."""
 
     def setUp(self):
+        discovery.probe_attempts.clear()
         import ipaddress
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -890,8 +1185,140 @@ class MdnsQueryVendorInferenceTests(unittest.TestCase):
         self.assertEqual(dtype, "Computer")
 
 
+class AndroidTvClassificationTests(unittest.TestCase):
+    """Full handle() path for the real Xiaomi Android-TV case: an mDNS response
+    whose A-record hostname carries the "android" OS token plus a TV model. The
+    model must win so the device is a Smart TV, not Mobile (Android)."""
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        import ipaddress
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        self._orig_nets = list(discovery.monitored_networks)
+        discovery.monitored_networks[:] = [ipaddress.ip_network("192.168.100.0/24")]
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.monitored_networks[:] = self._orig_nets
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _row(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute(
+            "SELECT device_type FROM devices WHERE mac=?", (mac.lower(),)
+        ).fetchone()
+        conn.close()
+        return r
+
+    def _mdns(self, mac, src_ip, answers):
+        return Ether(bytes(
+            Ether(src=mac) / IP(src=src_ip, dst="224.0.0.251") /
+            UDP(sport=5353, dport=5353) / DNS(qr=1, an=answers)
+        ))
+
+    def test_android_tv_model_beats_android_hostname(self):
+        mac = "60:35:73:f2:4d:7b"
+        pkt = self._mdns(mac, "192.168.100.50", [
+            DNSRR(rrname="android-aesp0.local", type="A", rdata="192.168.100.50"),
+            DNSRR(rrname="x._device-info._tcp.local", type="TXT",
+                  rdata=[b"model=MiTV-AESP0"]),
+        ])
+        discovery.handle(pkt)
+        self.assertEqual(self._row(mac)[0], "Smart TV / Media Device")
+
+    def test_android_only_hostname_is_android_device(self):
+        mac = "d2:9b:4b:ce:f7:84"
+        pkt = self._mdns(mac, "192.168.100.51", [
+            DNSRR(rrname="Android-5.local", type="A", rdata="192.168.100.51"),
+        ])
+        discovery.handle(pkt)
+        self.assertEqual(self._row(mac)[0], "Android Device")
+
+
+class HuaweiVendorClassHandleTests(unittest.TestCase):
+    """Full handle() path for the Huawei DHCP vendor class: a known model code
+    classifies the form factor and infers the Huawei vendor (only when the MAC
+    has no real OUI vendor)."""
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        import ipaddress
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        self._orig_nets = list(discovery.monitored_networks)
+        discovery.monitored_networks[:] = [ipaddress.ip_network("192.168.100.0/24")]
+        self._orig_oui = dict(discovery.oui_dict)
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.monitored_networks[:] = self._orig_nets
+        discovery.oui_dict.clear()
+        discovery.oui_dict.update(self._orig_oui)
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _get(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute(
+            "SELECT device_type, vendor, vendor_source FROM devices WHERE mac=?",
+            (mac.lower(),),
+        ).fetchone()
+        conn.close()
+        return r
+
+    def _dhcp(self, mac, src_ip, vendor_class):
+        # Explicit broadcast L2 dst so scapy does not try to resolve a MAC.
+        return Ether(bytes(
+            Ether(src=mac, dst="ff:ff:ff:ff:ff:ff") /
+            IP(src=src_ip, dst="255.255.255.255") /
+            UDP(sport=68, dport=67) / BOOTP(chaddr=b"\x00" * 16) /
+            DHCP(options=[("vendor_class_id", vendor_class.encode()), "end"])
+        ))
+
+    def test_huawei_tablet_randomized_mac(self):
+        mac = "02:11:22:33:44:55"  # locally administered -> no OUI vendor
+        discovery.handle(self._dhcp(mac, "192.168.100.60", "HUAWEI:android:DBY"))
+        dtype, vendor, vsrc = self._get(mac)
+        self.assertEqual(dtype, "Tablet (Android)")
+        self.assertEqual(vendor, "Huawei")
+        self.assertEqual(vsrc, "inferred: DHCP vendor class")
+
+    def test_huawei_phone_randomized_mac(self):
+        mac = "02:66:77:88:99:aa"
+        discovery.handle(self._dhcp(mac, "192.168.100.61", "HUAWEI:android:MNA"))
+        dtype, vendor, vsrc = self._get(mac)
+        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(vendor, "Huawei")
+        self.assertEqual(vsrc, "inferred: DHCP vendor class")
+
+    def test_real_oui_vendor_not_overwritten(self):
+        # A real OUI vendor must survive: the gate stops the inferred "Huawei".
+        mac = "e0:28:6d:01:02:03"
+        discovery.oui_dict["e0286d"] = "Huawei Technologies Co.,Ltd"
+        discovery.handle(self._dhcp(mac, "192.168.100.62", "HUAWEI:android:DBY"))
+        dtype, vendor, vsrc = self._get(mac)
+        self.assertEqual(dtype, "Tablet (Android)")       # form factor still set
+        self.assertEqual(vendor, "Huawei Technologies Co.,Ltd")
+        self.assertIsNone(vsrc)                           # real OUI, not inferred
+
+
 class CleanupStaleMdnsQueryTests(unittest.TestCase):
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -956,12 +1383,26 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
     Security Camera) for RTSP-bearing devices."""
 
     def setUp(self):
+        discovery.probe_attempts.clear()
+        from unittest.mock import patch
+        scheduling = patch.object(discovery, "schedule_active_probe")
+        scheduling.start()
+        self.addCleanup(scheduling.stop)
+        gate = patch.object(discovery, 'ENABLE_ACTIVE_PROBE', True)
+        gate.start()
+        self.addCleanup(gate.stop)
+        network = patch.object(discovery, 'monitored_networks', [])
+        network.start()
+        self.addCleanup(network.stop)
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
         self._orig_db_path = discovery.DB_PATH
         discovery.DB_PATH = self.db_path
         discovery.init_db()
+        with sqlite3.connect(self.db_path) as settings_conn:
+            settings_conn.execute('UPDATE app_settings SET active_probes=1 WHERE id=1')
+        settings_conn.close()
         # Neutralize the pre-probe wait and the real nmap invocation.
         self._orig_delay = discovery.ACTIVE_PROBE_DELAY_SECONDS
         self._orig_check_output = discovery.subprocess.check_output
@@ -987,7 +1428,7 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
 
     def _fake_nmap(self, table_text):
         def _check_output(cmd, **kwargs):
-            return table_text
+            return _nmap_xml_from_table(table_text, cmd[-1])
         discovery.subprocess.check_output = _check_output
 
     def _row(self, mac):
@@ -1032,11 +1473,152 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
         self.assertIn("554", source)
 
 
+class ActiveProbeLoggingTests(unittest.TestCase):
+    """Fix B: probe_device_ports() logs one line for every branch. Logging only
+    -- behaviour (classification / control flow) is unchanged."""
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        from unittest.mock import patch
+        scheduling = patch.object(discovery, "schedule_active_probe")
+        scheduling.start()
+        self.addCleanup(scheduling.stop)
+        gate = patch.object(discovery, 'ENABLE_ACTIVE_PROBE', True)
+        gate.start()
+        self.addCleanup(gate.stop)
+        network = patch.object(discovery, 'monitored_networks', [])
+        network.start()
+        self.addCleanup(network.stop)
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db_path = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        with sqlite3.connect(self.db_path) as settings_conn:
+            settings_conn.execute('UPDATE app_settings SET active_probes=1 WHERE id=1')
+        settings_conn.close()
+        self._orig_delay = discovery.ACTIVE_PROBE_DELAY_SECONDS
+        self._orig_check_output = discovery.subprocess.check_output
+        discovery.ACTIVE_PROBE_DELAY_SECONDS = 0
+
+    def tearDown(self):
+        discovery.ACTIVE_PROBE_DELAY_SECONDS = self._orig_delay
+        discovery.subprocess.check_output = self._orig_check_output
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db_path
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert(self, mac, ip, device_type):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO devices (mac, ip, device_type, first_seen, last_seen, status) "
+            "VALUES (?, ?, ?, 'x', 'x', 'online')",
+            (mac, ip, device_type),
+        )
+        if device_type:
+            conn.execute("UPDATE devices SET class_score=85 WHERE mac=?", (mac,))
+        conn.commit()
+        conn.close()
+
+    def _nmap(self, table_text):
+        def _check_output(cmd, **kwargs):
+            return _nmap_xml_from_table(table_text, cmd[-1])
+        discovery.subprocess.check_output = _check_output
+
+    def _nmap_raises(self, exc):
+        def _check_output(cmd, **kwargs):
+            raise exc
+        discovery.subprocess.check_output = _check_output
+
+    def _run(self, mac, ip):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            discovery.probe_device_ports(mac, ip)
+        return buf.getvalue()
+
+    def _dtype(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT device_type FROM devices WHERE mac=?", (mac,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else "<no row>"
+
+    def test_skip_already_classified(self):
+        mac, ip = "aa:00:00:00:b0:01", "192.168.1.10"
+        self._insert(mac, ip, "Computer")
+        # nmap must never be invoked for an already-classified device.
+        self._nmap_raises(AssertionError("nmap should not run"))
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-SKIP]", out)
+        self.assertIn("already classified as Computer", out)
+        self.assertEqual(self._dtype(mac), "Computer")  # unchanged
+
+    def test_skip_no_db_row(self):
+        out = self._run("aa:00:00:00:b0:02", "192.168.1.11")
+        self.assertIn("[PROBE-SKIP]", out)
+        self.assertIn("disabled or changed target", out)
+
+    def test_nmap_not_installed(self):
+        mac, ip = "aa:00:00:00:b0:03", "192.168.1.12"
+        self._insert(mac, ip, None)
+        self._nmap_raises(FileNotFoundError())
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-ERR]", out)
+        self.assertIn("nmap not installed", out)
+        self.assertEqual(self._dtype(mac), None)  # still unclassified
+
+    def test_nmap_timeout(self):
+        mac, ip = "aa:00:00:00:b0:04", "192.168.1.13"
+        self._insert(mac, ip, None)
+        self._nmap_raises(discovery.subprocess.TimeoutExpired(cmd="nmap", timeout=60))
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-TIMEOUT]", out)
+
+    def test_nmap_generic_error(self):
+        mac, ip = "aa:00:00:00:b0:05", "192.168.1.14"
+        self._insert(mac, ip, None)
+        self._nmap_raises(RuntimeError("boom"))
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-ERR]", out)
+        self.assertIn("nmap failed", out)
+
+    def test_no_open_ports(self):
+        mac, ip = "aa:00:00:00:b0:06", "192.168.1.15"
+        self._insert(mac, ip, None)
+        self._nmap("PORT   STATE  SERVICE\n(all closed)\n")
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-NORESULT]", out)
+        self.assertIn("no open ports", out)
+        self.assertEqual(self._dtype(mac), None)  # unchanged
+
+    def test_open_ports_but_no_hint(self):
+        mac, ip = "aa:00:00:00:b0:07", "192.168.1.16"
+        self._insert(mac, ip, None)
+        self._nmap("PORT      STATE  SERVICE\n1234/tcp  open   unknown\n")
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-NORESULT]", out)
+        self.assertIn("1234", out)
+        self.assertIn("no type hint", out)
+        self.assertEqual(self._dtype(mac), None)  # unchanged
+
+    def test_success_still_logs_probed(self):
+        mac, ip = "aa:00:00:00:b0:08", "192.168.1.17"
+        self._insert(mac, ip, None)
+        self._nmap("PORT     STATE  SERVICE\n9100/tcp open   jetdirect\n")
+        out = self._run(mac, ip)
+        self.assertIn("[PROBED]", out)
+        self.assertEqual(self._dtype(mac), "Printer")  # behaviour preserved
+
+
 class OnvifRefinementTests(unittest.TestCase):
     """Generic ONVIF is stored broad (weak_service) and MUST be refinable by
     later explicit NVT/NVS evidence (service), via update_device's real merge."""
 
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -1198,6 +1780,7 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
     The Nmap/active probe must stay unclassified-only (not broadened)."""
 
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -1252,8 +1835,8 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
         self.assertEqual(self.calls["nbns"], [])
         self.assertEqual(self.calls["active"], [])
 
-    # 2. classified + hostname missing -> eligible for mDNS/NBNS (not Nmap)
-    def test_classified_without_hostname_gets_name_enrichment(self):
+    # 2. general OS type -> eligible for mDNS/NBNS AND Nmap (B2 broadening)
+    def test_general_type_gets_name_enrichment_and_active(self):
         mac = "aa:00:00:00:22:02"
         discovery.update_device(
             mac, ip="192.168.1.71", seen_on_span=True, hostname=None,
@@ -1261,7 +1844,18 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
         )
         self.assertEqual(self.calls["mdns"], [mac])
         self.assertEqual(self.calls["nbns"], [mac])
-        self.assertEqual(self.calls["active"], [])  # active probe NOT broadened
+        self.assertEqual(self.calls["active"], [mac])  # now broadened to general types
+
+    # 2b. a SPECIFIC type with no hostname -> mDNS/NBNS only, never Nmap
+    def test_specific_type_without_hostname_gets_name_enrichment_only(self):
+        mac = "aa:00:00:00:22:0b"
+        discovery.update_device(
+            mac, ip="192.168.1.78", seen_on_span=True, hostname=None,
+            candidate=("Computer", discovery.SCORES["service"], "test"),
+        )
+        self.assertEqual(self.calls["mdns"], [mac])
+        self.assertEqual(self.calls["nbns"], [mac])
+        self.assertEqual(self.calls["active"], [])  # specific type not probe-eligible
 
     # 3. unclassified -> still eligible as before (incl. active probe)
     def test_unclassified_still_eligible(self):
@@ -1288,10 +1882,14 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
         self.assertTrue(discovery._name_enrichment_eligible("Apple Device", "   "))
         self.assertTrue(discovery._name_enrichment_eligible(None, None))
         self.assertTrue(discovery._name_enrichment_eligible("Generic / Unknown", "x"))
+        # B2: a general OS type is eligible even WITH a usable hostname, so the
+        # name probes get a chance to refine it into a specific type.
+        self.assertTrue(discovery._name_enrichment_eligible("Android Device", "somehost"))
 
 
 class MdnsNamePersistenceTests(unittest.TestCase):
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)
@@ -1334,6 +1932,7 @@ class TrustedColumnTests(unittest.TestCase):
     create it (default 0) but never write or reset it."""
 
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)  # let init_db() create it fresh
@@ -1439,6 +2038,7 @@ class ActiveProbesSettingTests(unittest.TestCase):
     authoritative; the ASSAS_*_PROBE env flags only seed the initial value."""
 
     def setUp(self):
+        discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.remove(self.db_path)  # let init_db() create it fresh
@@ -1495,12 +2095,12 @@ class ActiveProbesSettingTests(unittest.TestCase):
         self.assertFalse(discovery.ENABLE_NBNS_PROBE)
         self.assertFalse(discovery.ENABLE_ACTIVE_PROBE)
 
-    def test_env_flag_seeds_true_once(self):
+    def test_env_flag_does_not_enable_new_installation(self):
         # An operator who enabled nmap via env before this setting existed keeps
         # it on as the seeded initial value.
         discovery.ENABLE_ACTIVE_PROBE = True
         discovery.init_db()
-        self.assertEqual(self._row()[0], 1)
+        self.assertEqual(self._row()[0], 0)
 
     def test_db_value_is_authoritative_over_env(self):
         discovery.init_db()  # seeds 0 (all off)
@@ -1513,16 +2113,18 @@ class ActiveProbesSettingTests(unittest.TestCase):
         self.assertFalse(discovery.ENABLE_NBNS_PROBE)
         self.assertFalse(discovery.ENABLE_ACTIVE_PROBE)
 
-    def test_periodic_reload_updates_three_flags_only(self):
+    def test_periodic_reload_updates_all_identification_flags(self):
         discovery.init_db()
         self._set_active_probes(True)
-        before_upnp = discovery.ENABLE_UPNP_ENRICHMENT
         self.assertIs(discovery.reload_runtime_settings(), True)
         self.assertTrue(discovery.ENABLE_MDNS_PROBE)
         self.assertTrue(discovery.ENABLE_NBNS_PROBE)
         self.assertTrue(discovery.ENABLE_ACTIVE_PROBE)
-        # SSDP/UPnP M-SEARCH is out of scope and must not be touched.
-        self.assertEqual(discovery.ENABLE_UPNP_ENRICHMENT, before_upnp)
+        # SSDP/UPnP follows the same switch, in both directions.
+        self.assertTrue(discovery.ENABLE_UPNP_ENRICHMENT)
+        self._set_active_probes(False)
+        discovery.reload_runtime_settings()
+        self.assertFalse(discovery.ENABLE_UPNP_ENRICHMENT)
 
     def test_setting_persists_across_reopen_and_reinit(self):
         discovery.init_db()
@@ -1547,6 +2149,159 @@ class ActiveProbesSettingTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(n, 1)
+
+
+class ProbeGuardTests(unittest.TestCase):
+    """B2 guard: weak probe evidence must not flip a general OS verdict into a
+    wrong specific type (threshold = SCORES["port"]=75). Strong evidence and
+    truly-unknown rows are unaffected, and name enrichment still applies."""
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        from unittest.mock import patch
+        for name in ('schedule_nbns_probe', 'schedule_mdns_probe', 'schedule_active_probe'):
+            scheduler = patch.object(discovery, name)
+            scheduler.start()
+            self.addCleanup(scheduler.stop)
+        gate = patch.object(discovery, 'ENABLE_NBNS_PROBE', True)
+        gate.start()
+        self.addCleanup(gate.stop)
+        network = patch.object(discovery, 'monitored_networks', [])
+        network.start()
+        self.addCleanup(network.stop)
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        with sqlite3.connect(self.db_path) as settings_conn:
+            settings_conn.execute('UPDATE app_settings SET active_probes=1 WHERE id=1')
+        settings_conn.close()
+
+    def tearDown(self):
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert(self, mac, device_type, class_score):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO devices (mac, ip, device_type, class_score, "
+            "first_seen, last_seen, status) "
+            "VALUES (?, '192.168.100.60', ?, ?, 'x', 'x', 'online')",
+            (mac, device_type, class_score),
+        )
+        conn.commit()
+        conn.close()
+
+    def _row(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            return conn.execute(
+                "SELECT device_type, hostname FROM devices WHERE mac=?", (mac,)
+            ).fetchone()
+        finally:
+            conn.close()
+
+    # --- the guard decision itself ---
+    def test_candidate_allowed_pure(self):
+        weak = ("Computer", discovery.SCORES["weak_service"], "NetBIOS responder")
+        port = ("Printer", discovery.SCORES["port"], "nmap")
+        # general + weak -> suppressed
+        self.assertIsNone(discovery._probe_type_candidate_allowed("Apple Device", weak))
+        self.assertIsNone(discovery._probe_type_candidate_allowed("Android Device", weak))
+        # general + port-tier (75) -> allowed (the threshold is inclusive)
+        self.assertEqual(discovery._probe_type_candidate_allowed("Apple Device", port), port)
+        # non-general stored type -> unchanged even for weak evidence
+        self.assertEqual(discovery._probe_type_candidate_allowed("Computer", weak), weak)
+        self.assertEqual(discovery._probe_type_candidate_allowed(None, weak), weak)
+        # no candidate -> None
+        self.assertIsNone(discovery._probe_type_candidate_allowed("Apple Device", None))
+
+    # --- mDNS worker path through _apply_mdns_reply ---
+    def _patch_mdns(self, service=None, weak=None, model=None, model_type=None):
+        self._mdns_orig = (
+            discovery.type_from_payload, discovery.weak_type_from_payload,
+            discovery.extract_mdns_metadata, discovery.mdns_name_candidate,
+        )
+        discovery.type_from_payload = lambda raw: service
+        discovery.weak_type_from_payload = lambda raw: weak
+        discovery.extract_mdns_metadata = lambda pkt: (
+            model, model_type,
+            discovery.SCORES["model"] if model else 0,
+            "probe model" if model else None, None, None,
+        )
+        discovery.mdns_name_candidate = lambda pkt, friendly: (None, None)
+
+    def _unpatch_mdns(self):
+        (discovery.type_from_payload, discovery.weak_type_from_payload,
+         discovery.extract_mdns_metadata, discovery.mdns_name_candidate) = self._mdns_orig
+
+    def test_mdns_weak_suppressed_on_general(self):
+        mac = "aa:11:00:00:00:01"
+        self._insert(mac, "Apple Device", discovery.SCORES["os_hint"])
+        self._patch_mdns(weak="Computer / Server")  # weak_service tier (45)
+        try:
+            discovery._apply_mdns_reply(mac, "192.168.100.60", b"",
+                                        stored_type="Apple Device")
+        finally:
+            self._unpatch_mdns()
+        self.assertEqual(self._row(mac)["device_type"], "Apple Device")  # not flipped
+
+    def test_mdns_strong_refines_general(self):
+        mac = "aa:11:00:00:00:02"
+        self._insert(mac, "Apple Device", discovery.SCORES["os_hint"])
+        self._patch_mdns(model="Chromecast", model_type="Smart TV / Media Device")
+        try:
+            discovery._apply_mdns_reply(mac, "192.168.100.60", b"",
+                                        stored_type="Apple Device")
+        finally:
+            self._unpatch_mdns()
+        self.assertEqual(self._row(mac)["device_type"], "Smart TV / Media Device")
+
+    def test_mdns_weak_applied_on_unknown(self):
+        # Guard engages only for general types; a truly-unknown row keeps today's
+        # behavior (weak evidence classifies it).
+        mac = "aa:11:00:00:00:03"
+        self._insert(mac, None, 0)
+        self._patch_mdns(weak="Computer / Server")
+        try:
+            discovery._apply_mdns_reply(mac, "192.168.100.60", b"", stored_type=None)
+        finally:
+            self._unpatch_mdns()
+        self.assertEqual(self._row(mac)["device_type"], "Computer / Server")
+
+    # --- NBNS worker path ---
+    def _run_nbns(self, mac, name):
+        orig_delay = discovery.NBNS_PROBE_DELAY_SECONDS
+        orig_query = discovery._nbns_nodestatus_query
+        orig_name = discovery.extract_nbns_nodestatus_name
+        discovery.NBNS_PROBE_DELAY_SECONDS = 0
+        discovery._nbns_nodestatus_query = lambda ip, timeout=2.0: object()
+        discovery.extract_nbns_nodestatus_name = lambda reply: name
+        try:
+            discovery.nbns_probe_device(mac, "192.168.100.60")
+        finally:
+            discovery.NBNS_PROBE_DELAY_SECONDS = orig_delay
+            discovery._nbns_nodestatus_query = orig_query
+            discovery.extract_nbns_nodestatus_name = orig_name
+
+    def test_nbns_computer_suppressed_on_general_but_name_kept(self):
+        mac = "aa:22:00:00:00:01"
+        self._insert(mac, "Android Device", discovery.SCORES["os_hint"])
+        self._run_nbns(mac, "WINPC")
+        row = self._row(mac)
+        self.assertEqual(row["device_type"], "Android Device")  # not flipped to Computer
+        self.assertEqual(row["hostname"], "WINPC")              # name still enriched
+
+    def test_nbns_computer_applied_on_unknown(self):
+        mac = "aa:22:00:00:00:02"
+        self._insert(mac, None, 0)
+        self._run_nbns(mac, "WINPC")
+        self.assertEqual(self._row(mac)["device_type"], "Computer")
 
 
 if __name__ == "__main__":

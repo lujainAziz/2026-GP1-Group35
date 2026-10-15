@@ -6,14 +6,21 @@ from classification import (
     DHCP_SIGNATURES,
     PORT_HINTS,
     SCORES,
+    _is_ordered_subsequence,
     fingerprint_tcp_syn,
     is_unclassified,
+    is_general_type,
+    needs_type_probe,
     merge_candidate,
     surveillance_type_from_ports,
     type_from_dns_query,
     type_from_hostname,
+    type_from_dhcp_signature,
+    type_from_huawei_vendor_class,
     type_from_mdns_query,
     type_from_model,
+    type_from_os_hint,
+    vendor_from_vendor_class,
     type_from_payload,
     type_from_vendor,
     type_from_vendor_class,
@@ -39,9 +46,13 @@ class DhcpFingerprintTests(unittest.TestCase):
             "Computer",
         )
 
-    def test_vendor_class_android(self):
-        self.assertEqual(type_from_vendor_class("android-dhcp-14"), ("Mobile (Android)", "android-dhcp-"))
-        self.assertEqual(type_from_vendor_class("android-dhcp-15"), ("Mobile (Android)", "android-dhcp-"))
+    def test_vendor_class_android_is_os_hint_not_phone(self):
+        # "android-dhcp-..." is sent by Android phones, tablets, TVs and boxes
+        # alike, so it must NOT resolve to the phone form factor. It is no
+        # longer a VENDOR_CLASS_HINTS entry; it is an OS token (os_hint tier).
+        self.assertEqual(type_from_vendor_class("android-dhcp-14"), (None, None))
+        self.assertEqual(type_from_vendor_class("android-dhcp-15"), (None, None))
+        self.assertEqual(type_from_os_hint("android-dhcp-14"), "Android Device")
 
     def test_vendor_class_windows(self):
         self.assertEqual(type_from_vendor_class("MSFT 5.0"), ("Computer", "msft 5.0"))
@@ -56,17 +67,124 @@ class DhcpFingerprintTests(unittest.TestCase):
             self.assertEqual(type_from_vendor_class(vc), (None, None))
 
     def test_vendor_class_needle_not_full_string(self):
-        _, needle = type_from_vendor_class("android-dhcp-15")
-        self.assertEqual(needle, "android-dhcp-")
-        self.assertNotIn("15", needle)
+        # Only the matched needle is ever returned/logged, never the full
+        # vendor-class string (which can carry a version). (Repointed from the
+        # removed android-dhcp entry to xbox, which still demonstrates this.)
+        _, needle = type_from_vendor_class("XBOX 1.0")
+        self.assertEqual(needle, "xbox")
+        self.assertNotIn("1.0", needle)
 
     def test_android_vendor_class_does_not_override_tv_evidence(self):
         # android-dhcp is also sent by Android TV boxes; a real TV service
-        # advertisement (SCORES["service"]=85) must win over it (dhcp_vendor=65).
+        # advertisement (SCORES["service"]=85) must win over the OS token, now
+        # scored at the weak os_hint tier (40).
         tv = ("Smart TV / Media Device", SCORES["service"], "mDNS advertisement")
-        vc_dtype, _ = type_from_vendor_class("android-dhcp-14")
-        result = merge_candidate(tv, vc_dtype, SCORES["dhcp_vendor"], "DHCP vendor class")
+        os_dtype = type_from_os_hint("android-dhcp-14")
+        self.assertEqual(os_dtype, "Android Device")
+        result = merge_candidate(tv, os_dtype, SCORES["os_hint"], "android OS")
         self.assertEqual(result, tv)
+
+
+class DhcpSignatureMatchTests(unittest.TestCase):
+    """Fix 2: tolerant option-55 matching (ordered subsequence + 75% coverage)."""
+
+    APPLE = (1, 121, 3, 6, 15, 119, 252)
+    ANDROID = (1, 3, 6, 15, 26, 28, 51, 58, 59, 43)
+    WINDOWS = (1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252)
+    ZFLIP3 = (1, 3, 6, 15, 26, 28, 51, 58, 59, 43, 114, 108)  # real device PRL
+
+    def test_exact_signatures_preserved(self):
+        for sig, dtype in DHCP_SIGNATURES.items():
+            self.assertEqual(type_from_dhcp_signature(sig), dtype, sig)
+
+    def test_zflip3_android_signature_is_android_device(self):
+        # Real case d2:5a:1b:a1:48:de: base Android PRL + 114 + 108 (RFC 8925).
+        # Android option-55 is OS-only -> "Android Device", never a phone.
+        self.assertEqual(type_from_dhcp_signature(self.ZFLIP3), "Android Device")
+
+    def test_apple_and_windows_types_unchanged(self):
+        self.assertEqual(type_from_dhcp_signature(self.APPLE), "Apple Device")
+        self.assertEqual(type_from_dhcp_signature(self.WINDOWS), "Computer")
+
+    def test_tolerates_appended_option(self):
+        self.assertEqual(type_from_dhcp_signature(self.APPLE + (108,)),
+                         "Apple Device")
+
+    def test_tolerates_interspersed_option(self):
+        # 114 inserted just before the final option; order of ANDROID preserved.
+        prl = (1, 3, 6, 15, 26, 28, 51, 58, 59, 114, 43)
+        self.assertTrue(_is_ordered_subsequence(self.ANDROID, prl))
+        self.assertEqual(type_from_dhcp_signature(prl), "Android Device")
+
+    def test_coverage_floor_rejects_short_sig_in_long_list(self):
+        # The short Apple sig IS an ordered subsequence here, but covers only
+        # 7/10 = 0.70 (< 0.75), so the coverage floor rejects it.
+        long_prl = self.APPLE + (200, 201, 202)
+        self.assertTrue(_is_ordered_subsequence(self.APPLE, long_prl))
+        self.assertIsNone(type_from_dhcp_signature(long_prl))
+
+    def test_unrelated_prl_returns_none(self):
+        self.assertIsNone(type_from_dhcp_signature((50, 51, 52, 53)))
+
+    def test_too_short_prefix_returns_none(self):
+        self.assertIsNone(type_from_dhcp_signature((1, 3, 6, 15)))
+
+    def test_empty_prl_returns_none(self):
+        self.assertIsNone(type_from_dhcp_signature(()))
+
+    def test_no_cross_type_subsumption_among_known_signatures(self):
+        # Invariant: no known signature is an ordered subsequence of another of
+        # a DIFFERENT type -- keeps tolerant matching from ever cross-matching.
+        sigs = list(DHCP_SIGNATURES.items())
+        for a, ta in sigs:
+            for b, tb in sigs:
+                if a is not b and ta != tb:
+                    self.assertFalse(_is_ordered_subsequence(a, b),
+                                     f"{a} ({ta}) subsumed by {b} ({tb})")
+
+    def test_longest_match_wins_over_shorter(self):
+        # ZFLIP3 matches both the 10- and 11-length Android signatures; the
+        # longest wins. (Both agree, so the result is Android Device.)
+        self.assertEqual(type_from_dhcp_signature(self.ZFLIP3), "Android Device")
+
+    def test_ambiguous_equal_length_conflict_returns_none(self):
+        # Directly exercise the ambiguity branch: two equal-length signatures of
+        # different types both matching -> None (never guess).
+        import classification as C
+        saved = C.DHCP_SIGNATURES
+        C.DHCP_SIGNATURES = {(1, 2, 3): "Type A", (1, 2, 4): "Type B"}
+        try:
+            self.assertIsNone(C.type_from_dhcp_signature((1, 2, 3, 4)))
+        finally:
+            C.DHCP_SIGNATURES = saved
+
+
+class HuaweiVendorClassTests(unittest.TestCase):
+    """Fix A: HUAWEI:android:<CODE> vendor class -> vendor + known form factors."""
+
+    def test_vendor_inferred_from_huawei_prefix(self):
+        self.assertEqual(vendor_from_vendor_class("HUAWEI:android:DBY"), "Huawei")
+        self.assertEqual(vendor_from_vendor_class("HUAWEI:android:MNA"), "Huawei")
+        self.assertEqual(vendor_from_vendor_class("huawei:android:dby"), "Huawei")
+
+    def test_vendor_not_inferred_from_non_huawei(self):
+        for vc in ("android-dhcp-13", "MSFT 5.0", "", None):
+            self.assertIsNone(vendor_from_vendor_class(vc))
+
+    def test_known_model_codes_are_form_factor(self):
+        # Real cases: DBY-W09 = MatePad 11 (tablet); MNA-LX9 = P60 Pro (phone).
+        self.assertEqual(type_from_huawei_vendor_class("HUAWEI:android:DBY"),
+                         "Tablet (Android)")
+        self.assertEqual(type_from_huawei_vendor_class("HUAWEI:android:MNA"),
+                         "Mobile (Android)")
+
+    def test_unknown_code_stays_os_only(self):
+        # Unknown model code -> None, so it falls back to the OS-only path.
+        self.assertIsNone(type_from_huawei_vendor_class("HUAWEI:android:XYZ"))
+
+    def test_non_huawei_vendor_class_returns_none(self):
+        for vc in ("android-dhcp-13", "MSFT 5.0", "", None):
+            self.assertIsNone(type_from_huawei_vendor_class(vc))
 
 
 class VendorHintsTests(unittest.TestCase):
@@ -87,39 +205,110 @@ class VendorHintsTests(unittest.TestCase):
 
 
 class DomainHintsTests(unittest.TestCase):
-    def test_android_domain(self):
-        self.assertEqual(
-            type_from_dns_query("android.clients.google.com"),
-            ("Mobile (Android)", "android.clients.google.com"),
-        )
+    def test_dns_cannot_identify_client(self):
+        for name in ("apple.com", "captive.apple.com", "mesu.apple.com",
+                     "ring.com", "android.clients.google.com", "www.msftconnecttest.com",
+                     "roku.evil.test", "CAPTIVE.APPLE.COM.", None):
+            self.assertEqual(type_from_dns_query(name), (None, None), name)
+            self.assertIsNone(vendor_from_domain_needle(name))
 
-    def test_apple_domain_broad_match(self):
-        self.assertEqual(
-            type_from_dns_query("gsp10-ssl.ls.apple.com"),
-            ("Apple Device", "apple.com"),
-        )
 
-    def test_windows_ncsi_domain(self):
-        self.assertEqual(
-            type_from_dns_query("www.msftconnecttest.com"),
-            ("Computer", "msftconnecttest.com"),
-        )
+class ConflictTests(unittest.TestCase):
+    def test_equal_conflicts_are_order_independent_and_sticky(self):
+        for a, b in (("Printer", "Computer"), ("Computer", "Printer")):
+            result = merge_candidate((a, 85, "first"), b, 85, "second")
+            self.assertEqual(result, ("Generic / Unknown", 85, "conflicting evidence"))
+            self.assertEqual(merge_candidate(result, a, 85, "repeat"), result)
+            self.assertEqual(merge_candidate(result, a, 70, "weak"), result)
+            self.assertEqual(merge_candidate(result, a, 95, "model")[0], a)
 
-    def test_captive_apple_needle_not_shadowed_by_apple_com(self):
-        # Regression: captive.apple.com/mesu.apple.com must be listed before
-        # the general "apple.com" entry, or the returned needle would be the
-        # shorter "apple.com" and item 6's domain-vendor inference would never
-        # see the exact needle it depends on.
-        self.assertEqual(type_from_dns_query("captive.apple.com")[1], "captive.apple.com")
+    def test_agreement_preserves_classification(self):
+        original = ("Printer", 85, "service")
+        self.assertEqual(merge_candidate(original, "Printer", 85, "other"), original)
 
-    def test_mesu_apple_needle_not_shadowed_by_apple_com(self):
-        self.assertEqual(type_from_dns_query("mesu.apple.com")[1], "mesu.apple.com")
 
-    def test_needle_is_never_the_full_qname(self):
-        qname = "gsp10-ssl.ls.apple.com"
-        _, needle = type_from_dns_query(qname)
-        self.assertNotEqual(needle, qname)
-        self.assertLess(len(needle), len(qname))
+class AndroidOsTokenTests(unittest.TestCase):
+    def test_pixel_tablet_is_not_phone(self):
+        for classify in (type_from_model, type_from_hostname):
+            self.assertEqual(classify("Pixel Tablet"), "Tablet (Android)")
+
+    def test_phone_brand_accessories_are_not_phones(self):
+        for name in ("Galaxy Watch", "Galaxy Buds", "Galaxy Book", "Pixel Watch"):
+            for classify in (type_from_model, type_from_hostname):
+                self.assertIsNone(classify(name), name)
+
+    """Fix 1: "android" identifies the OS, not the form factor."""
+
+    def test_android_hostname_is_not_a_form_factor(self):
+        # Bare "android" no longer resolves to a phone via the hostname table.
+        self.assertIsNone(type_from_hostname("android-12ab"))
+        self.assertEqual(type_from_os_hint("android-12ab"), "Android Device")
+
+    def test_mitv_model_is_smart_tv(self):
+        # Real case: Xiaomi Android TV 60:35:73:f2:4d:7b, model MiTV-AESP0.
+        self.assertEqual(type_from_model("MiTV-AESP0"), "Smart TV / Media Device")
+
+    def test_other_android_tv_box_models_are_smart_tv(self):
+        for m in ("Mi Box S", "NVIDIA SHIELD Android TV", "Fire TV Stick",
+                  "Chromecast", "AndroidTV-1234"):
+            self.assertEqual(type_from_model(m), "Smart TV / Media Device", m)
+
+    def test_samsung_phone_families_are_mobile(self):
+        for m in ("SM-S901B", "SM-A546E", "SM-G991B", "SM-F711B", "SM-N970F",
+                  "Galaxy Z Flip3", "Redmi Note 12"):
+            self.assertEqual(type_from_model(m), "Mobile (Android)", m)
+
+    def test_samsung_tablet_families_are_not_mobile(self):
+        # SM-T/X/P and "tab" must never be classified as phones.
+        for m in ("SM-T870", "SM-X200", "SM-P610", "Galaxy Tab S8"):
+            self.assertNotEqual(type_from_model(m), "Mobile (Android)", m)
+
+    def test_phone_family_with_pad_tab_tv_token_is_not_mobile(self):
+        # "galaxy"/"redmi" also ship tablets (Galaxy Tab, Redmi Pad) and TVs
+        # (Redmi TV). A pad/tab/tv token must override the phone family, even
+        # with hyphen separators that the "galaxy tab" needle alone misses.
+        cases = {
+            "Redmi-Pad-SE": "Tablet (Android)",
+            "Galaxy-Tab-S8": "Tablet (Android)",
+            "Redmi-TV-X50": "Smart TV / Media Device",
+        }
+        for name, expected in cases.items():
+            self.assertEqual(type_from_model(name), expected, name)
+            self.assertEqual(type_from_hostname(name), expected, name)
+            self.assertNotEqual(type_from_model(name), "Mobile (Android)", name)
+            self.assertNotEqual(type_from_hostname(name), "Mobile (Android)", name)
+
+    def test_phone_family_without_form_factor_token_stays_mobile(self):
+        # The guard must not steal legitimate phones: no pad/tab/tv token here.
+        for name in ("Redmi-Note-12", "Galaxy-S23", "Johns-Pixel-7"):
+            self.assertEqual(type_from_model(name), "Mobile (Android)", name)
+            self.assertEqual(type_from_hostname(name), "Mobile (Android)", name)
+
+    def test_form_factor_guard_uses_whole_tokens_not_substrings(self):
+        # "database" contains "tab" as a substring but not as a token, so a
+        # phone family here must still read as a phone.
+        self.assertEqual(type_from_hostname("Galaxy-database-node"),
+                         "Mobile (Android)")
+
+    def test_zflip3_hostname_stays_mobile(self):
+        # Real case: d2:5a:1b:a1:48:de hostname "Z-Flip3-alkhas-b-noura".
+        self.assertEqual(type_from_hostname("Z-Flip3-alkhas-b-noura"),
+                         "Mobile (Android)")
+
+    def test_os_hint_is_overridden_by_form_factor_evidence(self):
+        os_hint = ("Android Device", SCORES["os_hint"], "android OS")
+        tv_model = merge_candidate(os_hint, "Smart TV / Media Device",
+                                   SCORES["model"], "model")
+        self.assertEqual(tv_model[0], "Smart TV / Media Device")
+        tv_service = merge_candidate(os_hint, "Smart TV / Media Device",
+                                     SCORES["service"], "mDNS advertisement")
+        self.assertEqual(tv_service[0], "Smart TV / Media Device")
+
+    def test_os_hint_tier_below_dhcp_so_phone_fingerprint_wins(self):
+        # The option-55 Android phone fingerprint (dhcp=60) must beat the bare
+        # "android" OS token (os_hint=40) so phones stay phones.
+        self.assertLess(SCORES["os_hint"], SCORES["dhcp"])
+        self.assertLess(SCORES["os_hint"], SCORES["weak_service"])
 
 
 class VendorInferenceTests(unittest.TestCase):
@@ -139,8 +328,8 @@ class VendorInferenceTests(unittest.TestCase):
         self.assertIsNone(vendor_from_model_in_hostname("random-device-name"))
 
     def test_domain_vendor_apple_os_endpoint(self):
-        self.assertEqual(vendor_from_domain_needle("captive.apple.com"), "Apple Inc.")
-        self.assertEqual(vendor_from_domain_needle("mesu.apple.com"), "Apple Inc.")
+        self.assertIsNone(vendor_from_domain_needle("captive.apple.com"))
+        self.assertIsNone(vendor_from_domain_needle("mesu.apple.com"))
 
     def test_domain_vendor_excludes_broad_apple_domain(self):
         # apple.com/icloud.com are also hit by non-Apple devices (Windows
@@ -167,7 +356,37 @@ class IsUnclassifiedTests(unittest.TestCase):
             self.assertFalse(is_unclassified(v))
 
 
+class GeneralTypeTests(unittest.TestCase):
+    def test_is_general_type_true(self):
+        for v in ("Android Device", "Apple Device"):
+            self.assertTrue(is_general_type(v))
+
+    def test_is_general_type_false(self):
+        # Specific/terminal types (form-factor and functional) are not general.
+        for v in ("Computer", "Smart TV / Media Device", "Mobile (Android)",
+                  "Tablet (Apple)", "IoT Device", "Network Device",
+                  "Video Surveillance Device", "Printer", "Router",
+                  "Generic / Unknown", None, ""):
+            self.assertFalse(is_general_type(v))
+
+    def test_needs_type_probe_true(self):
+        # Truly unclassified OR only an OS-family verdict.
+        for v in (None, "", "Generic / Unknown", "Android Device", "Apple Device"):
+            self.assertTrue(needs_type_probe(v))
+
+    def test_needs_type_probe_false(self):
+        for v in ("Computer", "Smart TV / Media Device", "Mobile (Android)",
+                  "Tablet (Apple)", "IoT Device", "Network Device",
+                  "Video Surveillance Device", "Printer", "Router"):
+            self.assertFalse(needs_type_probe(v))
+
+
 class MdnsQueryHintTests(unittest.TestCase):
+    def test_service_boundaries_reject_lookalikes(self):
+        for name in ("not_companion-link._tcp.local", "_rdlink._tcp.local.evil",
+                     "_rdlink._tcpfake.local"):
+            self.assertEqual(type_from_mdns_query(name), (None, None), name)
+
     def test_apple_continuity_queries(self):
         # Only the Apple peer-to-peer Continuity services (querier is Apple).
         for svc in ("_companion-link._tcp.local", "_rdlink._tcp.local"):

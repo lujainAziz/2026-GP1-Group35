@@ -14,7 +14,7 @@ from scapy.all import IP, TCP
 SCORES = {
     "gateway": 100,
     "model": 95,
-    "hostname": 90,
+    "hostname": 70,  # User-chosen names must not outweigh service/model evidence.
     "service": 85,
     "lldp": 90,
     "port": 75,
@@ -22,6 +22,12 @@ SCORES = {
     "dhcp": 60,
     "broadcast_name": 50,
     "weak_service": 45,
+    # An OS-only signal (e.g. the "android" token in a hostname, DHCP vendor
+    # class, or OS connectivity-check domain). It identifies the operating
+    # system but NOT the form factor, so it sits below every form-factor signal
+    # and, crucially, below "dhcp" (60) so a genuine phone/stack fingerprint
+    # still wins. Always overridden by real evidence.
+    "os_hint": 40,
     # An mDNS *query* for a service the device wants is a weak OS signal
     # (below weak_service): it only nudges an otherwise-unknown device and is
     # always overridden by real evidence.
@@ -158,15 +164,22 @@ def surveillance_type_from_ports(open_ports):
     return None
 
 # DHCP Parameter Request List (option 55) signatures are supporting evidence only.
-# Exact-tuple match, merged at SCORES["dhcp"] (below hostname/mDNS/model) so any
-# stronger signal always wins. New entries below the original set were derived
-# empirically from param-request-lists observed on devices already identified at
-# high confidence on this network (not guessed from memory).
+# Matched tolerantly (see type_from_dhcp_signature): a signature matches when it
+# is an ordered subsequence of the observed PRL and covers >= 75% of it, so OS
+# updates that add options (e.g. 114, or 108 / RFC 8925 IPv6-Only Preferred)
+# still match. New entries below the original set were derived empirically from
+# param-request-lists observed on devices already identified at high confidence
+# on this network (not guessed from memory).
+#
+# The Android option-55 list is sent identically by Android phones, tablets, TVs
+# and set-top boxes, so it identifies only the OS -> "Android Device", merged at
+# SCORES["os_hint"] (not a form factor). Apple/Windows fingerprints keep their
+# type and are merged at SCORES["dhcp"].
 DHCP_SIGNATURES = {
     (1, 121, 3, 6, 15, 119, 252): "Apple Device",
     (1, 121, 3, 6, 15, 119, 252, 95, 44, 46): "Apple Device",
-    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43): "Mobile (Android)",
-    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43, 114): "Mobile (Android)",
+    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43): "Android Device",
+    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43, 114): "Android Device",
     (1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252): "Computer",
     (1, 15, 3, 6, 44, 46, 47, 31, 33, 121, 249, 43): "Computer",
     (1, 28, 2, 3, 15, 6, 119, 12, 44, 47, 26, 121, 42): "Computer",
@@ -185,9 +198,11 @@ DHCP_SIGNATURES = {
 # Android TV boxes).
 VENDOR_CLASS_HINTS = [
     ("xbox", "Game Console"),            # specific -- must precede "msft 5.0"
-    ("android-dhcp-", "Mobile (Android)"),
     ("msft 5.0", "Computer"),            # Windows DHCP client (generic, last)
 ]
+# "android-dhcp-..." is sent by Android phones, tablets, TVs and set-top boxes
+# alike, so it only identifies the OS, never the form factor. It is handled as
+# an OS token (see OS_HINTS / type_from_os_hint) at SCORES["os_hint"], NOT here.
 
 # mDNS *query* service-types -> weak OS hint. A device multicasts queries for
 # services it wants to USE, visible even when only its broadcasts reach us. Only
@@ -216,54 +231,15 @@ MDNS_QUERY_VENDOR_HINTS = {
     "_rdlink._tcp": "Apple Inc.",
 }
 
-# DNS query substrings are weak, easily-spoofed evidence -- only the matched
-# needle (never the full query name) is ever stored or logged; see
-# type_from_dns_query() and its call site in handle().
-DOMAIN_HINTS = [
-    # Apple -- more specific OS-level endpoints must come before the general
-    # "apple.com"/"icloud.com" entries, since _first_match() returns the first
-    # substring hit and captive.apple.com/mesu.apple.com contain "apple.com".
-    ("captive.apple.com", "Apple Device"),
-    ("mesu.apple.com", "Apple Device"),
-    ("apple.com", "Apple Device"),
-    ("icloud.com", "Apple Device"),
-    ("aaplimg.com", "Apple Device"),
-    ("mzstatic.com", "Apple Device"),
-    ("apple-dns.net", "Apple Device"),
-
-    # Android connectivity-check / Play Services infrastructure
-    ("connectivitycheck.gstatic.com", "Mobile (Android)"),
-    ("android.clients.google.com", "Mobile (Android)"),
-    ("play.googleapis.com", "Mobile (Android)"),
-
-    # Windows Network Connectivity Status Indicator
-    ("msftconnecttest.com", "Computer"),
-    ("msftncsi.com", "Computer"),
-
-    ("samsungcloudsolution", "Smart TV / Media Device"),
-    ("samsungotn", "Smart TV / Media Device"),
-    ("samsungtvpaid", "Smart TV / Media Device"),
-    ("roku", "Smart TV / Media Device"),
-    ("nest.com", "Security Camera"),
-    ("ring.com", "Security Camera"),
-    ("wyze", "Security Camera"),
-    ("tuya", "IoT Device"),
-    ("smartthings", "IoT Device"),
-    ("xiaomi", "IoT Device"),
-    ("hpeprint", "Printer"),
-    ("brother.com", "Printer"),
-    ("epson", "Printer"),
-    ("windowsupdate", "Computer"),
-    ("playstation", "Game Console"),
-    ("xboxlive", "Game Console"),
-    ("nintendo", "Game Console"),
-]
-
 HOSTNAME_HINTS = [
     ("iphone", "Mobile (Apple)"),
     ("ipad", "Tablet (Apple)"),
-    ("android", "Mobile (Android)"),
+    # Bare "android" is an OS token, not a form factor -- handled weakly via
+    # OS_HINTS. Only phone-specific families are a form-factor signal here.
     ("galaxy", "Mobile (Android)"),
+    ("z-flip", "Mobile (Android)"),
+    ("z-fold", "Mobile (Android)"),
+    ("redmi", "Mobile (Android)"),
     ("pixel", "Mobile (Android)"),
     ("macbook", "Computer"),
     ("imac", "Computer"),
@@ -307,6 +283,36 @@ HOSTNAME_HINTS = [
     ("router", "Router"),
     ("gateway", "Router"),
 ]
+
+# OS-level tokens that identify only the operating system, never the form
+# factor. "android" appears in the hostnames, DHCP vendor classes
+# ("android-dhcp-...") and OS connectivity domains of Android phones, tablets,
+# TVs and set-top boxes alike. Classified at SCORES["os_hint"] (weak) so that
+# any real form-factor evidence -- a TV service, a TV/box model, or a
+# phone/tablet model/hostname family -- overrides it. Match is substring,
+# lowercased (see type_from_os_hint()).
+OS_HINTS = [
+    ("android", "Android Device"),
+]
+
+# The set of verdicts that are OS-only. A caller that resolves one of these
+# from any table must enter it at SCORES["os_hint"], regardless of which table
+# produced it (e.g. an Android OS connectivity domain in DOMAIN_HINTS).
+OS_LEVEL_TYPES = frozenset(dtype for _, dtype in OS_HINTS)
+
+# General OS-family verdicts: classified enough to display, but still worth an
+# active probe (nmap/mDNS/NBNS) that could refine them into a specific form
+# factor (Mobile/Tablet/Smart TV/Computer). Kept explicit rather than reusing
+# OS_LEVEL_TYPES, which is token-derived and holds only "Android Device".
+GENERAL_TYPES = frozenset({"Android Device", "Apple Device"})
+
+# The Android form-factor family. The startup stale-classification correction
+# (reevaluate_stale_classifications) will only ever change one of these into
+# another of these -- it never crosses out of the family, so a TV/Router/Apple/
+# camera/etc. verdict can never be downgraded by that pass.
+ANDROID_FAMILY_TYPES = frozenset({
+    "Mobile (Android)", "Tablet (Android)", "Android Device",
+})
 
 # Vendor-only classification is intentionally conservative.  OUI lookup still
 # identifies the manufacturer for thousands of vendors, but type is assigned
@@ -358,8 +364,19 @@ MODEL_TYPE_HINTS = [
     ("ipad", "Tablet (Apple)"),
     ("apple tv", "Smart TV / Media Device"),
     ("appletv", "Smart TV / Media Device"),
-    ("galaxy tab", "Tablet (Android)"),
+    ("galaxy tab", "Tablet (Android)"),  # tablet -- must precede "galaxy"
     ("galaxy", "Mobile (Android)"),
+    ("z-flip", "Mobile (Android)"),
+    ("z-fold", "Mobile (Android)"),
+    ("redmi", "Mobile (Android)"),
+    # Samsung Galaxy PHONE model-code prefixes only (SM-S/A/G/F/N). Tablet
+    # prefixes (SM-T/X/P) are deliberately excluded so tablets are never
+    # classified as phones.
+    ("sm-s", "Mobile (Android)"),
+    ("sm-a", "Mobile (Android)"),
+    ("sm-g", "Mobile (Android)"),
+    ("sm-f", "Mobile (Android)"),
+    ("sm-n", "Mobile (Android)"),
     ("pixel", "Mobile (Android)"),
     ("chromecast", "Smart TV / Media Device"),
     ("roku", "Smart TV / Media Device"),
@@ -367,6 +384,17 @@ MODEL_TYPE_HINTS = [
     ("webos", "Smart TV / Media Device"),
     ("oled", "Smart TV / Media Device"),
     ("qled", "Smart TV / Media Device"),
+    # Android-based TVs / set-top boxes. These are form-factor evidence (a TV),
+    # unlike the bare "android" OS token.
+    ("android tv", "Smart TV / Media Device"),
+    ("androidtv", "Smart TV / Media Device"),
+    ("mitv", "Smart TV / Media Device"),
+    ("mi tv", "Smart TV / Media Device"),
+    ("mibox", "Smart TV / Media Device"),
+    ("mi box", "Smart TV / Media Device"),
+    ("shield", "Smart TV / Media Device"),
+    ("fire tv", "Smart TV / Media Device"),
+    ("firetv", "Smart TV / Media Device"),
     ("laserjet", "Printer"),
     ("officejet", "Printer"),
     ("deskjet", "Printer"),
@@ -593,32 +621,36 @@ def vendor_from_model_in_hostname(hostname):
     return None
 
 
-# Domain-based vendor inference is intentionally restricted to Apple
-# OS-level endpoints (the captive-portal check and software-update
-# service) -- these are only ever queried by Apple's own OS software.
-# The broader Apple domains in DOMAIN_HINTS (apple.com, icloud.com, etc.)
-# are deliberately excluded here: they're also hit by non-Apple devices
-# (e.g. a Windows PC running iTunes/iCloud for Windows, or any browser
-# visiting apple.com), so they stay device-type-only evidence.
-DOMAIN_VENDOR_HINTS = [
-    ("captive.apple.com", "Apple Inc."),
-    ("mesu.apple.com", "Apple Inc."),
-]
-
-
 def vendor_from_domain_needle(needle):
-    """Infer manufacturer only from the small Apple-exclusive needle set.
-
-    Must be called with the exact `needle` returned by type_from_dns_query()
-    (never the full qname) -- this both preserves the DNS-privacy contract
-    and keeps vendor inference restricted to a fixed, auditable list.
-    """
-    if not needle:
-        return None
-    for domain_needle, vendor in DOMAIN_VENDOR_HINTS:
-        if domain_needle == needle:
-            return vendor
+    """DNS destinations do not establish the client manufacturer."""
     return None
+
+
+# Phone-family brands such as "galaxy" and "redmi" also ship tablets (Galaxy
+# Tab, Redmi Pad) and TVs (Redmi TV). A bare family name means a phone, but when
+# the name ALSO carries a non-phone form-factor word it is not a phone. Matched
+# as whole tokens (split on -, _, ., space) so an incidental substring like the
+# "tab" inside "database" never triggers a false veto.
+_NON_PHONE_FORM_FACTOR_TOKENS = frozenset(("pad", "tab", "tv"))
+
+
+def _android_phone_family_form_factor(dtype, text):
+    """Correct a phone-family verdict when the name also names a non-phone form
+    factor. Only ever adjusts "Mobile (Android)"; every other dtype passes
+    through unchanged.
+    """
+    if dtype != "Mobile (Android)":
+        return dtype
+    tokens = set(re.split(r"[-_.\s]+", (text or "").lower()))
+    if "tv" in tokens:
+        return "Smart TV / Media Device"
+    if tokens & {"pad", "tab", "tablet"}:
+        return "Tablet (Android)"
+    # These families also sell accessories. Do not invent a phone form factor
+    # when the available taxonomy has no supported accessory classification.
+    if tokens & {"watch", "buds", "book", "chromebook"}:
+        return None
+    return dtype
 
 
 def type_from_model(model):
@@ -630,7 +662,7 @@ def type_from_model(model):
     text = model.lower()
     for needle, dtype in MODEL_TYPE_HINTS:
         if needle in text:
-            return dtype
+            return _android_phone_family_form_factor(dtype, text)
     return None
 
 
@@ -660,7 +692,17 @@ def _first_match(text, table):
 
 
 def type_from_hostname(hostname):
-    return _first_match(hostname, HOSTNAME_HINTS)
+    return _android_phone_family_form_factor(
+        _first_match(hostname, HOSTNAME_HINTS), hostname
+    )
+
+
+def type_from_os_hint(text):
+    """Return an OS-only verdict ("Android Device") from a hostname or DHCP
+    vendor-class string, or None. The caller must merge this at
+    SCORES["os_hint"] so any form-factor evidence overrides it.
+    """
+    return _first_match(text, OS_HINTS)
 
 
 def type_from_vendor(vendor):
@@ -678,19 +720,55 @@ def weak_type_from_payload(payload):
 
 
 def type_from_dns_query(qname):
-    """Match a DNS query name against DOMAIN_HINTS.
+    """DNS destinations identify services, not client hardware or OS.
 
-    Returns (dtype, needle) -- callers must only ever store/log `needle`
-    (a short fixed keyword), never the full qname, to avoid persisting
-    a device's browsing/service history.
+    Retained as a compatibility entry point; no query history is persisted.
     """
-    if not qname:
-        return None, None
-    lowered = qname.lower()
-    for needle, dtype in DOMAIN_HINTS:
-        if needle in lowered:
-            return dtype, needle
     return None, None
+
+
+# A known signature must cover at least this fraction of the observed PRL, so a
+# short signature cannot match a much longer unrelated list by chance.
+_DHCP_SIG_MIN_COVERAGE = 0.75
+
+
+def _is_ordered_subsequence(needle, haystack):
+    """True if every element of `needle` appears in `haystack` in the same
+    relative order (extra elements between/around them are allowed)."""
+    it = iter(haystack)
+    return all(element in it for element in needle)
+
+
+def type_from_dhcp_signature(prl):
+    """Tolerantly classify a DHCP option-55 Parameter Request List.
+
+    A known signature matches when it is an ordered subsequence of the observed
+    `prl` AND covers at least _DHCP_SIG_MIN_COVERAGE of it. This lets OS updates
+    that insert/append options (e.g. 114, or 108 = RFC 8925 IPv6-Only Preferred)
+    still match, while the coverage floor stops a short signature matching a long
+    unrelated list. The longest matching signature wins (most specific); a tie
+    between equally long matches that disagree on type is ambiguous -> None.
+    Exact matches still work (a tuple is an ordered subsequence of itself).
+    """
+    observed = tuple(prl)
+    if not observed:
+        return None
+    min_len = _DHCP_SIG_MIN_COVERAGE * len(observed)
+    best_len = 0
+    best_type = None
+    ambiguous = False
+    for sig, dtype in DHCP_SIGNATURES.items():
+        if len(sig) < min_len:
+            continue
+        if not _is_ordered_subsequence(sig, observed):
+            continue
+        if len(sig) > best_len:
+            best_len, best_type, ambiguous = len(sig), dtype, False
+        elif len(sig) == best_len and dtype != best_type:
+            ambiguous = True
+    if ambiguous:
+        return None
+    return best_type
 
 
 def type_from_vendor_class(vendor_class):
@@ -709,6 +787,50 @@ def type_from_vendor_class(vendor_class):
     return None, None
 
 
+# Huawei devices send a DHCP option-60 vendor class of the form
+# "HUAWEI:android:<CODE>", where <CODE> is the model-line prefix (e.g. DBY-W09 ->
+# "DBY"). The "android" token alone is OS-only, but a KNOWN model-code prefix is
+# form-factor evidence. Unknown codes are deliberately left to the existing
+# OS-only path (type_from_os_hint -> "Android Device").
+HUAWEI_VENDOR_CLASS_PREFIX = "huawei:"
+HUAWEI_MODEL_CODE_HINTS = {
+    "dby": "Tablet (Android)",   # MatePad 11 (DBY-W09)
+    "mna": "Mobile (Android)",   # P60 Pro (MNA-LX9)
+}
+
+
+def vendor_from_vendor_class(vendor_class):
+    """Infer the manufacturer from a DHCP option-60 vendor class.
+
+    Only the unambiguous Huawei "HUAWEI:..." prefix is recognised. The caller
+    must gate this on the MAC having no real OUI vendor (as with the other
+    inferred-vendor paths), so a genuine OUI vendor is never overwritten.
+    """
+    if not vendor_class:
+        return None
+    if vendor_class.lower().startswith(HUAWEI_VENDOR_CLASS_PREFIX):
+        return "Huawei"
+    return None
+
+
+def type_from_huawei_vendor_class(vendor_class):
+    """Return a form factor from a known Huawei model-code prefix, or None.
+
+    Returns None for a non-Huawei vendor class and for an unknown Huawei code,
+    so unknown codes fall back to the OS-only "Android Device" classification.
+    """
+    if not vendor_class:
+        return None
+    lowered = vendor_class.lower()
+    if not lowered.startswith(HUAWEI_VENDOR_CLASS_PREFIX):
+        return None
+    code = lowered.rsplit(":", 1)[-1].strip()
+    for prefix, dtype in HUAWEI_MODEL_CODE_HINTS.items():
+        if code.startswith(prefix):
+            return dtype
+    return None
+
+
 def type_from_mdns_query(qname):
     """Match an mDNS *query* service-type against MDNS_QUERY_HINTS.
 
@@ -717,9 +839,10 @@ def type_from_mdns_query(qname):
     """
     if not qname:
         return None, None
-    lowered = qname.lower()
+    lowered = qname.lower().rstrip(".")
     for needle, dtype in MDNS_QUERY_HINTS:
-        if needle in lowered:
+        service = needle + ".local"
+        if lowered == service or lowered.endswith("." + service):
             return dtype, needle
     return None, None
 
@@ -783,10 +906,35 @@ def is_unclassified(dtype):
     return not dtype or dtype == "Generic / Unknown"
 
 
+def is_general_type(dtype):
+    """Whether a stored device_type is a general OS-family verdict (e.g.
+    "Android Device", "Apple Device") -- specific enough to show, but still a
+    candidate for refinement into a form factor by an active probe."""
+    return dtype in GENERAL_TYPES
+
+
+def needs_type_probe(dtype):
+    """Whether a device is still worth an active type probe: either truly
+    unclassified OR only classified to a general OS family. Specific types
+    (Mobile, Tablet, Smart TV, Computer, ...) return False and are skipped."""
+    return is_unclassified(dtype) or is_general_type(dtype)
+
+
+def needs_service_probe(dtype, score=None):
+    """Allow service fingerprints to refine weak vendor/name/port guesses.
+
+    Legacy rows without a score retain the previous eligibility behavior.
+    Strong service/model/infrastructure evidence does not trigger a rescan.
+    """
+    return needs_type_probe(dtype) or (score is not None and score < SCORES["service"])
+
+
 def merge_candidate(current, dtype, score, source):
     """Keep the strongest classification candidate for this packet/event."""
     if not dtype:
         return current
     if current is None or score > current[1]:
         return (dtype, score, source)
+    if score == current[1] and dtype != current[0]:
+        return ("Generic / Unknown", score, "conflicting evidence")
     return current

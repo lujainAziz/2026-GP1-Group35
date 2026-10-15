@@ -26,6 +26,7 @@ _DEVICES_SCHEMA = (
     "vendor_class TEXT, is_ap_client INTEGER, ap_associated INTEGER, last_ap_seen TEXT, "
     "membership_source TEXT, discovered_current INTEGER, last_discovery_seen TEXT, "
     "traffic_seen INTEGER, last_traffic_seen TEXT, vendor_source TEXT, "
+    "user_name TEXT, "
     "trusted INTEGER NOT NULL DEFAULT 0"
 )
 
@@ -165,10 +166,10 @@ class PresenceStateTests(_SeededDBTest):
         self.assertEqual(devices[0].presence, "online")
         self.assertEqual(devices[0].status, "online")
 
-    def test_observed_is_offline_in_device_list(self):
+    def test_observed_is_online_in_device_list(self):
         self.insert(mac="aa:bb:cc:dd:ee:12", status="observed")
         devices = api.list_devices(conn=self.conn, limit=100, offset=0)
-        self.assertEqual(devices[0].presence, "offline")
+        self.assertEqual(devices[0].presence, "online")
         self.assertEqual(devices[0].status, "observed")
 
     def test_offline_is_offline_in_device_list(self):
@@ -183,10 +184,10 @@ class PresenceStateTests(_SeededDBTest):
         self.assertEqual(device.presence, "online")
         self.assertEqual(device.status, "online")
 
-    def test_observed_is_offline_in_device_detail(self):
+    def test_observed_is_online_in_device_detail(self):
         self.insert(mac="aa:bb:cc:dd:ee:15", status="observed")
         device = api.get_device("aa:bb:cc:dd:ee:15", self.conn)
-        self.assertEqual(device.presence, "offline")
+        self.assertEqual(device.presence, "online")
         self.assertEqual(device.status, "observed")
 
 
@@ -209,14 +210,14 @@ class PresenceJSONResponseTests(_SeededDBTest):
             self.assertEqual(by_mac["aa:bb:cc:dd:ee:16"]["status"], "online")
             self.assertIs(by_mac["aa:bb:cc:dd:ee:16"]["trusted"], True)
             self.assertIs(by_mac["aa:bb:cc:dd:ee:16"]["monitored"], True)
-            self.assertEqual(by_mac["aa:bb:cc:dd:ee:17"]["presence"], "offline")
+            self.assertEqual(by_mac["aa:bb:cc:dd:ee:17"]["presence"], "online")
             self.assertEqual(by_mac["aa:bb:cc:dd:ee:17"]["status"], "observed")
 
             detail_response = _asgi_request(
                 "GET", "/devices/aa:bb:cc:dd:ee:17", {})
             self.assertEqual(detail_response.status, 200)
             detail = json.loads(detail_response.body)
-            self.assertEqual(detail["presence"], "offline")
+            self.assertEqual(detail["presence"], "online")
             self.assertEqual(detail["status"], "observed")
             self.assertIs(detail["trusted"], False)
             self.assertIs(detail["monitored"], False)
@@ -594,6 +595,206 @@ class TrustSchemaCompatTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path + ".nonexistent"))
 
 
+class DeviceNameTests(unittest.TestCase):
+    """PUT /devices/{mac}/name and the user_name field on GET. Like the trust
+    tests, uses a seeded temp DB with api.DB_PATH pointed at it, since the write
+    opens its own writable connection rather than taking an injected one."""
+
+    JSON = {"content-type": "application/json"}
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({_DEVICES_SCHEMA})")
+        con.execute(
+            "INSERT INTO devices (mac, ip, status, last_seen) VALUES "
+            "('aa:bb:cc:dd:ee:ff', '192.168.1.9', 'online', '2026-09-20T10:00:00')"
+        )
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _stored_name(self, mac):
+        con = sqlite3.connect(self.path)
+        try:
+            return con.execute(
+                "SELECT user_name FROM devices WHERE mac=?", (mac,)
+            ).fetchone()[0]
+        finally:
+            con.close()
+
+    def _put(self, body, mac="aa:bb:cc:dd:ee:ff"):
+        return _asgi_request("PUT", f"/devices/{mac}/name", self.JSON, body=body)
+
+    def test_new_row_defaults_null(self):
+        self.assertIsNone(self._stored_name("aa:bb:cc:dd:ee:ff"))
+        r = _asgi_request("GET", "/devices/aa:bb:cc:dd:ee:ff", {})
+        self.assertEqual(r.status, 200)
+        self.assertIsNone(json.loads(r.body)["user_name"])
+
+    def test_put_sets_name_and_is_idempotent(self):
+        for _ in range(2):
+            r = self._put('{"name": "Living Room TV"}')
+            self.assertEqual(r.status, 200)
+            self.assertEqual(
+                json.loads(r.body),
+                {"mac": "aa:bb:cc:dd:ee:ff", "user_name": "Living Room TV"},
+            )
+            self.assertEqual(self._stored_name("aa:bb:cc:dd:ee:ff"), "Living Room TV")
+
+    def test_put_trims_surrounding_whitespace(self):
+        r = self._put('{"name": "  Kitchen Hub  "}')
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(r.body)["user_name"], "Kitchen Hub")
+        self.assertEqual(self._stored_name("aa:bb:cc:dd:ee:ff"), "Kitchen Hub")
+
+    def test_null_clears_name(self):
+        self._put('{"name": "Temp"}')
+        r = self._put('{"name": null}')
+        self.assertEqual(r.status, 200)
+        self.assertIsNone(json.loads(r.body)["user_name"])
+        self.assertIsNone(self._stored_name("aa:bb:cc:dd:ee:ff"))
+
+    def test_empty_and_whitespace_clear_name(self):
+        for raw in ('""', '"   "'):
+            with self.subTest(raw=raw):
+                self._put('{"name": "Temp"}')
+                r = self._put('{"name": %s}' % raw)
+                self.assertEqual(r.status, 200)
+                self.assertIsNone(json.loads(r.body)["user_name"])
+                self.assertIsNone(self._stored_name("aa:bb:cc:dd:ee:ff"))
+
+    def test_exactly_40_chars_after_trim_is_accepted(self):
+        name = "x" * 40
+        r = self._put('{"name": "  %s  "}' % name)
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(r.body)["user_name"], name)
+        self.assertEqual(self._stored_name("aa:bb:cc:dd:ee:ff"), name)
+
+    def test_41_chars_is_422_and_stores_nothing(self):
+        r = self._put('{"name": "%s"}' % ("x" * 41))
+        self.assertEqual(r.status, 422)
+        self.assertIsNone(self._stored_name("aa:bb:cc:dd:ee:ff"))
+
+    def test_missing_field_is_422(self):
+        r = self._put("{}")
+        self.assertEqual(r.status, 422)
+        self.assertIsNone(self._stored_name("aa:bb:cc:dd:ee:ff"))
+
+    def test_non_string_is_422(self):
+        for raw in ("5", "true", "[]"):
+            with self.subTest(raw=raw):
+                r = self._put('{"name": %s}' % raw)
+                self.assertEqual(r.status, 422)
+                self.assertIsNone(self._stored_name("aa:bb:cc:dd:ee:ff"))
+
+    def test_nonexistent_mac_404_creates_nothing(self):
+        r = self._put('{"name": "Nope"}', mac="00:00:00:00:00:01")
+        self.assertEqual(r.status, 404)
+        con = sqlite3.connect(self.path)
+        try:
+            n = con.execute(
+                "SELECT COUNT(*) FROM devices WHERE mac='00:00:00:00:00:01'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+        self.assertEqual(n, 0)
+
+    def test_put_normalizes_mac_and_echoes_normalized(self):
+        r = self._put('{"name": "Hub"}', mac="AA-BB-CC-DD-EE-FF")
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(r.body)["mac"], "aa:bb:cc:dd:ee:ff")
+
+    def _full_row(self):
+        con = sqlite3.connect(self.path)
+        con.row_factory = sqlite3.Row
+        try:
+            return dict(con.execute(
+                "SELECT * FROM devices WHERE mac='aa:bb:cc:dd:ee:ff'"
+            ).fetchone())
+        finally:
+            con.close()
+
+    def test_put_only_touches_user_name_column(self):
+        before = self._full_row()
+        self._put('{"name": "Hub"}')
+        after = self._full_row()
+        changed = {k for k in before if before[k] != after[k]}
+        self.assertEqual(changed, {"user_name"})
+
+    def test_get_list_exposes_user_name(self):
+        self._put('{"name": "Hub"}')
+        r = _asgi_request("GET", "/devices", {})
+        self.assertEqual(r.status, 200)
+        dev = next(d for d in json.loads(r.body) if d["mac"] == "aa:bb:cc:dd:ee:ff")
+        self.assertEqual(dev["user_name"], "Hub")
+
+
+class UserNameSchemaCompatTests(unittest.TestCase):
+    """Deployment safety: the API must not break when it boots against a DB that
+    predates the user_name column, before discovery.py is restarted."""
+
+    JSON = {"content-type": "application/json"}
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        # Pre-migration schema: the full current schema minus user_name.
+        pre = _DEVICES_SCHEMA.replace("user_name TEXT, ", "", 1)
+        self.assertNotIn("user_name", pre)
+        con = sqlite3.connect(self.path)
+        con.execute(f"CREATE TABLE devices ({pre})")
+        con.execute(
+            "INSERT INTO devices (mac, status, last_seen) VALUES "
+            "('aa:bb:cc:dd:ee:ff', 'online', '2026-09-20T10:00:00')"
+        )
+        con.commit()
+        con.close()
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+
+    def tearDown(self):
+        api.DB_PATH = self._orig_db_path
+        os.remove(self.path)
+
+    def _cols(self):
+        con = sqlite3.connect(self.path)
+        try:
+            return {r[1] for r in con.execute("PRAGMA table_info(devices)")}
+        finally:
+            con.close()
+
+    def test_startup_adds_column_and_get_does_not_break(self):
+        self.assertNotIn("user_name", self._cols())
+        _run_lifespan_startup()  # the wired startup path runs ensure_user_name_column
+        self.assertIn("user_name", self._cols())
+        r = _asgi_request("GET", "/devices", {})
+        self.assertEqual(r.status, 200)
+        dev = next(d for d in json.loads(r.body) if d["mac"] == "aa:bb:cc:dd:ee:ff")
+        self.assertIsNone(dev["user_name"])  # backfilled NULL
+
+    def test_put_name_after_backfill(self):
+        _run_lifespan_startup()
+        r = _asgi_request(
+            "PUT", "/devices/aa:bb:cc:dd:ee:ff/name", self.JSON, body='{"name": "Hub"}'
+        )
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(r.body)["user_name"], "Hub")
+
+    def test_ensure_is_idempotent_and_safe_when_db_absent(self):
+        _run_lifespan_startup()
+        _run_lifespan_startup()  # second run must be a harmless no-op
+        api.DB_PATH = self.path + ".nonexistent"
+        api.ensure_user_name_column()  # missing DB must not raise or create a file
+        self.assertFalse(os.path.exists(self.path + ".nonexistent"))
+
+
 class SettingsStateTests(unittest.TestCase):
     """GET/PUT /settings. Seeds a temp DB with the app_settings table (no row)
     and points api.DB_PATH at it, since the write opens its own connection."""
@@ -753,7 +954,7 @@ class PairingCodeTests(unittest.TestCase):
         self.assertEqual(len(data["code"]), api.PAIRING_CODE_LENGTH)
         self.assertTrue(all(c in api.PAIRING_CODE_ALPHABET for c in data["code"]))
         expires = datetime.fromisoformat(data["expires_at"])
-        seconds_left = (expires - datetime.now()).total_seconds()
+        seconds_left = (expires - datetime.now().astimezone()).total_seconds()
         self.assertGreater(seconds_left, 0)
         self.assertLessEqual(seconds_left, api.PAIRING_CODE_TTL_SECONDS)
 
@@ -773,7 +974,7 @@ class PairingCodeTests(unittest.TestCase):
         finally:
             api._new_pairing_code = original
         self.assertEqual(data["code"], "ABC234")
-        self.assertGreater(datetime.fromisoformat(data["expires_at"]), datetime.now())
+        self.assertGreater(datetime.fromisoformat(data["expires_at"]), datetime.now().astimezone())
 
     def test_lan_request_is_forbidden(self):
         r = _asgi_request("GET", "/pairing/code", {}, client=self.LAN_CLIENT)

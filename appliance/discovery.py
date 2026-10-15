@@ -55,7 +55,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
-from scapy.all import sniff, Ether, IP, ARP, UDP, TCP, DHCP, DNS, DNSQR
+from service_fingerprints import parse_nmap_identity
+
+from scapy.all import sniff, Ether, IP, IPv6, ARP, UDP, TCP, DHCP, DNS, DNSQR
 from scapy.layers.netbios import (
     NBNSHeader, NBNSQueryResponse, NBNSRegistrationRequest,
     NBNSNodeStatusRequest, NBNSNodeStatusResponse,
@@ -75,6 +77,8 @@ DISCOVERY_INTERFACE = os.getenv("ASSAS_DISCOVERY_IFACE")
 CAPTURE_INTERFACE = os.getenv("ASSAS_CAPTURE_IFACE", "eth1")
 
 OUI_FILE = "/usr/share/arp-scan/ieee-oui.txt"
+OUI_FALLBACK_FILES = ("/usr/share/nmap/nmap-mac-prefixes",
+                      "/usr/local/share/nmap/nmap-mac-prefixes")
 
 # Optional local metadata enrichment.
 # Disabled by default because the formal ASSAS design emphasizes passive monitoring.
@@ -139,7 +143,8 @@ ENABLE_ACTIVE_PROBE = os.getenv("ASSAS_ACTIVE_PROBE", "0").lower() in {
     "1", "true", "yes", "on"
 }
 ACTIVE_PROBE_DELAY_SECONDS = max(0, int(os.getenv("ASSAS_ACTIVE_PROBE_DELAY_SECONDS", "120")))
-ACTIVE_PROBE_PORTS = "80,443,554,631,1883,3389,5900,8001,8008,9100"
+ACTIVE_PROBE_PORTS = "22,80,443,445,515,554,631,1883,3389,5900,8000,8001,8008,8009,8080,8443,8554,9100,32400"
+NMAP_PROBE_SLOTS = threading.BoundedSemaphore(2)
 
 # Optional one-time light-active unicast mDNS (DNS-SD) probe for devices that
 # stay unclassified after ASSAS_MDNS_PROBE_DELAY_SECONDS. Disabled by default.
@@ -201,7 +206,6 @@ from classification import (
     VENDOR_CLASS_HINTS,
     MDNS_QUERY_HINTS,
     MDNS_QUERY_VENDOR_HINTS,
-    DOMAIN_HINTS,
     HOSTNAME_HINTS,
     VENDOR_HINTS,
     MODEL_ALIASES,
@@ -212,7 +216,6 @@ from classification import (
     SSDP_LOCATION_RE,
     ONVIF_SCOPE_RE,
     MODEL_VENDOR_HINTS,
-    DOMAIN_VENDOR_HINTS,
     clean_observed_text,
     normalize_model,
     _best_model_candidate,
@@ -223,15 +226,24 @@ from classification import (
     is_locally_administered_mac,
     _first_match,
     type_from_hostname,
+    type_from_os_hint,
+    OS_LEVEL_TYPES,
+    ANDROID_FAMILY_TYPES,
     type_from_vendor,
     type_from_payload,
     weak_type_from_payload,
     type_from_dns_query,
     type_from_vendor_class,
+    type_from_dhcp_signature,
+    vendor_from_vendor_class,
+    type_from_huawei_vendor_class,
     type_from_mdns_query,
     vendor_from_mdns_query_needle,
     fingerprint_tcp_syn,
     is_unclassified,
+    is_general_type,
+    needs_type_probe,
+    needs_service_probe,
     surveillance_type_from_ports,
     CAMERA_PORTS,
     SURVEILLANCE_MGMT_PORTS,
@@ -862,12 +874,8 @@ def init_db():
             active_probes INTEGER NOT NULL DEFAULT 0
         )
     """)
-    # Seed the row exactly once. The legacy ASSAS_*_PROBE env flags SEED the
-    # initial value only -- preserving an operator who enabled any active probe
-    # before this setting existed. INSERT OR IGNORE never overwrites an existing
-    # row, so once seeded the DB value is authoritative and the env flags are
-    # ignored at runtime (see reload_runtime_settings): one live config source.
-    env_seed = 1 if (ENABLE_MDNS_PROBE or ENABLE_NBNS_PROBE or ENABLE_ACTIVE_PROBE) else 0
+    # New installations default to OFF. A persisted user choice survives restart.
+    env_seed = 0  # PBI-25: new installations require explicit user opt-in.
     conn.execute(
         "INSERT OR IGNORE INTO app_settings (id, active_probes) VALUES (1, ?)",
         (env_seed,),
@@ -898,49 +906,50 @@ def read_active_probes_setting():
 
 
 def reload_runtime_settings():
-    """Apply the persisted active_probes flag to the three active-probe gates.
+    """Apply the persisted active_probes flag to all optional identification probes.
 
     active_probes is the single user switch exposed by api.py (GET/PUT /settings)
-    and the Flutter app. It gates the three active identification probes together
-    -- unicast mDNS, NBNS name query, and the limited nmap probe -- and nothing
+    and the Flutter app. It gates the optional active identification probes together
+    -- unicast mDNS, NBNS, SSDP/UPnP, and the limited nmap probe -- and nothing
     else: passive sniffing, ARP discovery, inventory, Suricata, and passive-
-    evidence classification are untouched (SSDP/UPnP M-SEARCH is deliberately out
-    of scope and keeps its own ENABLE_UPNP_ENRICHMENT flag). Called at startup
+    evidence classification are untouched. SSDP/UPnP shares this same switch. Called at startup
     and periodically (housekeeping), so a change saved in the app applies without
     a manual restart. On a transient read failure the gates are left as-is.
     """
-    global ENABLE_MDNS_PROBE, ENABLE_NBNS_PROBE, ENABLE_ACTIVE_PROBE
+    global ENABLE_MDNS_PROBE, ENABLE_NBNS_PROBE, ENABLE_ACTIVE_PROBE, ENABLE_UPNP_ENRICHMENT
     active = read_active_probes_setting()
     if active is None:
         return None
     ENABLE_MDNS_PROBE = active
     ENABLE_NBNS_PROBE = active
     ENABLE_ACTIVE_PROBE = active
+    ENABLE_UPNP_ENRICHMENT = active
     return active
 
 
 def load_oui():
-    if not os.path.exists(OUI_FILE):
-        print(f"[!] OUI file not found: {OUI_FILE}")
-        return
-
-    with open(OUI_FILE, encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            parts = line.split("\t", 1)
-            if len(parts) != 2:
-                parts = line.split(None, 1)
-            if len(parts) != 2:
-                continue
-
-            prefix = re.sub(r"[^0-9A-Fa-f]", "", parts[0]).lower()
-            vendor = parts[1].strip()
-            if prefix and vendor:
-                oui_dict[prefix] = vendor
-
+    """Use arp-scan's registry first, filling gaps from installed Nmap data."""
+    loaded = {}
+    for path in (OUI_FILE, *OUI_FALLBACK_FILES):
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split(None, 1)
+                    if len(parts) != 2:
+                        continue
+                    prefix = parts[0].replace(":", "").replace("-", "").lower()
+                    if not re.fullmatch(r"(?:[0-9a-f]{6}|[0-9a-f]{7}|[0-9a-f]{9})", prefix):
+                        continue
+                    vendor = parts[1].strip()
+                    if vendor:
+                        loaded.setdefault(prefix, vendor)
+        except OSError:
+            continue
+    oui_dict.clear()
+    oui_dict.update(loaded)
     print(f"[*] Loaded {len(oui_dict)} OUI/vendor prefixes")
 
 
@@ -1031,6 +1040,21 @@ def load_network_context():
                 )
         except Exception as exc:
             print(f"[!] Could not determine discovery subnet: {exc}")
+
+
+def load_ipv6_context():
+    if not DISCOVERY_INTERFACE:
+        return
+    try:
+        out = subprocess.check_output(
+            ["ip", "-6", "-o", "addr", "show", "dev", DISCOVERY_INTERFACE],
+            text=True, timeout=5)
+        for cidr in re.findall(r"\binet6\s+([0-9a-fA-F:]+/\d+)", out):
+            interface = ipaddress.ip_interface(cidr)
+            local_ips.add(str(interface.ip))
+            monitored_networks.append(interface.network)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        print(f"[!] Could not read local IPv6 context: {exc}")
 
 
 def purge_self_records():
@@ -1408,7 +1432,8 @@ def probe_ssdp_for_targets(targets):
         return
 
     # targets is {ip: mac}; only those replies are accepted.
-    targets = {ip: mac.lower() for ip, mac in targets.items() if ip and mac}
+    targets = {ip: mac.lower() for ip, mac in targets.items()
+               if ip and mac and probe_target_current(mac.lower(), ip, "ENABLE_UPNP_ENRICHMENT")}
     if not targets:
         return
 
@@ -1464,21 +1489,59 @@ def probe_ssdp_for_targets(targets):
 
 
 def schedule_ssdp_probe(mac, ip):
-    """Probe once per runtime for optional local metadata enrichment."""
-    if not ENABLE_UPNP_ENRICHMENT or not ip or not discovery_ipv4:
+    def ssdp_worker(target_mac, target_ip):
+        if probe_target_current(target_mac, target_ip, "ENABLE_UPNP_ENRICHMENT"):
+            probe_ssdp_for_targets({target_ip: target_mac})
+    schedule_bounded_probe(mac, ip, "ENABLE_UPNP_ENRICHMENT",
+                           ssdp_targets_probed, ssdp_probe_lock, ssdp_worker)
+
+
+
+def probe_target_current(mac, ip, flag):
+    """Do not probe an old address or apply its reply to a moved device."""
+    if not globals()[flag] or not ip or not local_monitored_ip(ip):
+        return False
+    # Read the persisted switch before sending; do not wait for periodic reload.
+    if read_active_probes_setting() is not True:
+        return False
+    # Current light-active transports use IPv4 sockets/nmap invocation.
+    if ipaddress.ip_address(ip).version != 4:
+        return False
+    with db_lock:
+        conn = connect_db()
+        try:
+            row = conn.execute("SELECT ip FROM devices WHERE mac=?", (mac,)).fetchone()
+            return row is not None and row[0] == ip
+        finally:
+            conn.close()
+
+
+PROBE_RETRY_SECONDS = 60
+PROBE_MAX_ATTEMPTS = 3
+probe_attempts = {}
+
+
+def schedule_bounded_probe(mac, ip, flag, pending, lock, worker):
+    if not globals()[flag] or not ip:
         return
     mac = mac.lower()
-    with ssdp_probe_lock:
-        if mac in ssdp_targets_probed:
+    key = (flag, mac, ip, worker.__name__)
+    with lock:
+        count, last = probe_attempts.get(key, (0, float('-inf')))
+        if mac in pending or count >= PROBE_MAX_ATTEMPTS or time.monotonic()-last < PROBE_RETRY_SECONDS:
             return
-        ssdp_targets_probed.add(mac)
-    threading.Thread(
-        target=probe_ssdp_for_targets,
-        args=({ip: mac},),
-        daemon=True,
-    ).start()
-
-
+        pending.add(mac)
+        probe_attempts[key] = (count+1, time.monotonic())
+    def run():
+        try:
+            worker(mac, ip)
+        except (sqlite3.Error, OSError) as exc:
+            print(f"[PROBE-ERR] {mac}: {exc}")
+        finally:
+            with lock:
+                pending.discard(mac)
+                probe_attempts[key] = (count+1, time.monotonic())
+    threading.Thread(target=run, daemon=True).start()
 
 
 def probe_device_ports(mac, ip):
@@ -1490,58 +1553,54 @@ def probe_device_ports(mac, ip):
     to classify the device first, so the probe is a last resort.
     """
     time.sleep(ACTIVE_PROBE_DELAY_SECONDS)
+    if not probe_target_current(mac, ip, "ENABLE_ACTIVE_PROBE"):
+        print(f"[PROBE-SKIP] {mac} ({ip}) disabled or changed target")
+        return
 
     with db_lock:
         conn = connect_db()
         row = conn.execute(
-            "SELECT device_type FROM devices WHERE mac=?", (mac,)
+            "SELECT device_type, class_score FROM devices WHERE mac=?", (mac,)
         ).fetchone()
         conn.close()
-    if row is None or not is_unclassified(row[0]):
+    if row is None or not needs_service_probe(row[0], row[1]):
+        reason = "no DB row" if row is None else f"already classified as {row[0]}"
+        print(f"[PROBE-SKIP] {mac} ({ip}) {reason}")
         return
 
     try:
-        out = subprocess.check_output(
-            ["nmap", "-Pn", "--host-timeout", "30s", "-T4",
-             "-p", ACTIVE_PROBE_PORTS, ip],
-            text=True, stderr=subprocess.DEVNULL, timeout=60,
-        )
-    except Exception:
-        return
-
-    open_ports = []
-    for line in out.splitlines():
-        if "/tcp" in line and "open" in line:
-            try:
-                open_ports.append(int(line.split("/")[0]))
-            except ValueError:
-                continue
-
-    # RTSP (with or without a corroborating mgmt port like 8000) -> the broad
-    # surveillance category only. Never Security Camera / NVR from ports alone.
-    surveillance = surveillance_type_from_ports(open_ports)
-    if surveillance:
-        rtsp = next((p for p in open_ports if p in CAMERA_PORTS), 554)
-        mgmt = sorted(set(open_ports) & SURVEILLANCE_MGMT_PORTS)
-        label = f"{rtsp}+{mgmt[0]}" if mgmt else str(rtsp)
-        print(f"[PROBED] {mac} ({ip}) -> {surveillance} via ports {label}")
-        update_device(
-            mac, ip=ip,
-            candidate=(surveillance, SCORES["port"],
-                       f"nmap active probe ports {label}"),
-        )
-        return
-
-    # Otherwise fall back to the first single-port hint (printer/computer/etc).
-    for port in open_ports:
-        hint = PORT_HINTS.get(port)
-        if hint:
-            print(f"[PROBED] {mac} ({ip}) -> {hint} via port {port}")
-            update_device(
-                mac, ip=ip,
-                candidate=(hint, SCORES["port"], f"nmap active probe port {port}"),
+        with NMAP_PROBE_SLOTS:
+            if not probe_target_current(mac, ip, "ENABLE_ACTIVE_PROBE"):
+                return
+            out = subprocess.check_output(
+                ["nmap", "-n", "-Pn", "-sT", "-sV", "--version-light",
+                 "--host-timeout", "30s", "--max-retries", "1", "-T3",
+                 "-oX", "-", "-p", ACTIVE_PROBE_PORTS, ip],
+                text=True, stderr=subprocess.DEVNULL, timeout=60,
             )
-            return
+    except Exception as exc:
+        if isinstance(exc, FileNotFoundError):
+            print(f"[PROBE-ERR] {mac} ({ip}) nmap not installed")
+        elif isinstance(exc, subprocess.TimeoutExpired):
+            print(f"[PROBE-TIMEOUT] {mac} ({ip}) nmap timed out")
+        else:
+            print(f"[PROBE-ERR] {mac} ({ip}) nmap failed: {exc}")
+        return
+
+    if not probe_target_current(mac, ip, "ENABLE_ACTIVE_PROBE"):
+        return
+    try:
+        candidate, open_ports = parse_nmap_identity(out, ip)
+    except ValueError:
+        print(f"[PROBE-ERR] {mac} ({ip}) invalid nmap output")
+        return
+    if candidate:
+        print(f"[PROBED] {mac} ({ip}) -> {candidate[0]} via {candidate[2]}")
+        update_device(mac, ip=ip, candidate=candidate)
+    elif open_ports:
+        print(f"[PROBE-NORESULT] {mac} ({ip}) open ports {open_ports} but no type hint")
+    else:
+        print(f"[PROBE-NORESULT] {mac} ({ip}) no open ports")
 
 
 def _name_enrichment_eligible(device_type, hostname):
@@ -1554,23 +1613,28 @@ def _name_enrichment_eligible(device_type, hostname):
     and the probe workers' own re-checks keep this from probing repeatedly or
     probing a device that already has a usable hostname.
     """
-    return is_unclassified(device_type) or not (hostname or "").strip()
+    return needs_type_probe(device_type) or not (hostname or "").strip()
+
+
+def _probe_type_candidate_allowed(stored_type, candidate):
+    """Keep a general OS verdict sticky against weak probe evidence.
+
+    A probe may refine a general type (e.g. "Android Device") only with
+    port-tier evidence or stronger; a weak-tier type hint -- an NBNS responder,
+    an AirPlay/RAOP/SMB/SSH/ONVIF mDNS service -- must not flip it to a wrong
+    specific type. Returns the candidate unchanged for non-general stored types
+    (the normal score-based merge in update_device applies), and None when a
+    weak candidate is suppressed. The device's name/model enrichment is passed
+    to update_device separately and is unaffected.
+    """
+    if candidate and is_general_type(stored_type) and candidate[1] < SCORES["port"]:
+        return None
+    return candidate
 
 
 def schedule_active_probe(mac, ip):
-    """One-time-per-runtime gate around probe_device_ports()."""
-    if not ENABLE_ACTIVE_PROBE or not ip:
-        return
-    mac = mac.lower()
-    with active_probe_lock:
-        if mac in active_probed:
-            return
-        active_probed.add(mac)
-    threading.Thread(
-        target=probe_device_ports,
-        args=(mac, ip),
-        daemon=True,
-    ).start()
+    schedule_bounded_probe(mac, ip, "ENABLE_ACTIVE_PROBE", active_probed, active_probe_lock, probe_device_ports)
+
 
 
 def _mdns_query_packet(names, qtype="PTR"):
@@ -1646,11 +1710,14 @@ def _mdns_needs_followup_txt(pkt):
     return _mdns_device_info_instance(pkt) is not None
 
 
-def _apply_mdns_reply(mac, ip, pkt):
+def _apply_mdns_reply(mac, ip, pkt, stored_type=None):
     """Route one probe mDNS reply through the same pipeline as passive mDNS.
 
     Returns True if the reply yielded a usable model (so no follow-up TXT
-    query is needed).
+    query is needed). When stored_type is a general OS verdict, a weak-tier
+    type hint from this reply is suppressed (see _probe_type_candidate_allowed)
+    while name/model enrichment still applies; the passive caller passes no
+    stored_type, so its behavior is unchanged.
     """
     raw = bytes(pkt)
     candidate = None
@@ -1675,6 +1742,7 @@ def _apply_mdns_reply(mac, ip, pkt):
             candidate, type_from_hostname(mdns_name), SCORES["hostname"],
             f"{mdns_name_src} (probe)",
         )
+    candidate = _probe_type_candidate_allowed(stored_type, candidate)
     if candidate or model or hostname or vendor:
         update_device(
             mac, ip=ip, vendor=vendor, hostname=hostname,
@@ -1694,6 +1762,8 @@ def mdns_probe_device(mac, ip):
     model). All network I/O is best-effort and never affects capture.
     """
     time.sleep(MDNS_PROBE_DELAY_SECONDS)
+    if not probe_target_current(mac, ip, "ENABLE_MDNS_PROBE"):
+        return
 
     with db_lock:
         conn = connect_db()
@@ -1703,6 +1773,7 @@ def mdns_probe_device(mac, ip):
         conn.close()
     if row is None or not _name_enrichment_eligible(row[0], row[1]):
         return
+    stored_type = row[0]
 
     # Diagnostic start line so the journal can distinguish "probe ran but got
     # no usable reply" (common for randomized-MAC Android phones, which do not
@@ -1716,7 +1787,9 @@ def mdns_probe_device(mac, ip):
         model_found = False
         instance = None
         for pkt in replies:
-            if _apply_mdns_reply(mac, ip, pkt):
+            if not probe_target_current(mac, ip, "ENABLE_MDNS_PROBE"):
+                return
+            if _apply_mdns_reply(mac, ip, pkt, stored_type=stored_type):
                 model_found = True
                 print(f"[MDNS-PROBE] {mac} ({ip}) -> model via DNS-SD reply")
             if instance is None and _mdns_needs_followup_txt(pkt):
@@ -1724,9 +1797,11 @@ def mdns_probe_device(mac, ip):
 
         # Follow-up: the model= key lives in the instance's TXT record, which
         # may not have been included as an additional record above.
-        if not model_found and instance:
+        if not model_found and instance and probe_target_current(mac, ip, "ENABLE_MDNS_PROBE"):
             for pkt in _mdns_unicast_query(ip, [instance], qtype="TXT"):
-                if _apply_mdns_reply(mac, ip, pkt):
+                if not probe_target_current(mac, ip, "ENABLE_MDNS_PROBE"):
+                    return
+                if _apply_mdns_reply(mac, ip, pkt, stored_type=stored_type):
                     model_found = True
                     print(f"[MDNS-PROBE] {mac} ({ip}) -> model via _device-info TXT")
 
@@ -1743,19 +1818,8 @@ def mdns_probe_device(mac, ip):
 
 
 def schedule_mdns_probe(mac, ip):
-    """One-time-per-runtime gate around mdns_probe_device()."""
-    if not ENABLE_MDNS_PROBE or not ip:
-        return
-    mac = mac.lower()
-    with mdns_probe_lock:
-        if mac in mdns_probed:
-            return
-        mdns_probed.add(mac)
-    threading.Thread(
-        target=mdns_probe_device,
-        args=(mac, ip),
-        daemon=True,
-    ).start()
+    schedule_bounded_probe(mac, ip, "ENABLE_MDNS_PROBE", mdns_probed, mdns_probe_lock, mdns_probe_device)
+
 
 
 def _nbns_nodestatus_request_packet():
@@ -1805,6 +1869,8 @@ def nbns_probe_device(mac, ip):
     the reply becomes the hostname. Best-effort; never disturbs capture.
     """
     time.sleep(NBNS_PROBE_DELAY_SECONDS)
+    if not probe_target_current(mac, ip, "ENABLE_NBNS_PROBE"):
+        return
 
     with db_lock:
         conn = connect_db()
@@ -1814,10 +1880,13 @@ def nbns_probe_device(mac, ip):
         conn.close()
     if row is None or not _name_enrichment_eligible(row[0], row[1]):
         return
+    stored_type = row[0]
 
     print(f"[NBNS-PROBE] {mac} ({ip}) querying NBSTAT node status")
     try:
         reply = _nbns_nodestatus_query(ip)
+        if not probe_target_current(mac, ip, "ENABLE_NBNS_PROBE"):
+            return
         if reply is None:
             print(f"[NBNS-PROBE] {mac} ({ip}) no reply (no NetBIOS responder)")
             return
@@ -1836,6 +1905,7 @@ def nbns_probe_device(mac, ip):
                 candidate, type_from_hostname(name), SCORES["broadcast_name"],
                 "NBNS name",
             )
+        candidate = _probe_type_candidate_allowed(stored_type, candidate)
         update_device(
             mac, ip=ip, hostname=hostname, candidate=candidate,
             seen_on_span=False,
@@ -1851,19 +1921,8 @@ def nbns_probe_device(mac, ip):
 
 
 def schedule_nbns_probe(mac, ip):
-    """One-time-per-runtime gate around nbns_probe_device()."""
-    if not ENABLE_NBNS_PROBE or not ip:
-        return
-    mac = mac.lower()
-    with nbns_probe_lock:
-        if mac in nbns_probed:
-            return
-        nbns_probed.add(mac)
-    threading.Thread(
-        target=nbns_probe_device,
-        args=(mac, ip),
-        daemon=True,
-    ).start()
+    schedule_bounded_probe(mac, ip, "ENABLE_NBNS_PROBE", nbns_probed, nbns_probe_lock, nbns_probe_device)
+
 
 
 def warm_start_upnp_enrichment():
@@ -1930,8 +1989,10 @@ def local_monitored_ip(ip):
     except ValueError:
         return None
 
+    if addr.version == 6 and addr.is_link_local:
+        return ip
     if monitored_networks and not any(
-        addr in network for network in monitored_networks
+        addr.version == network.version and addr in network for network in monitored_networks
     ):
         return None
 
@@ -2163,6 +2224,8 @@ def deployment_model_override(hostname, model):
 
 def enrich_upnp_metadata(mac, ip, url, span_confirmed=False):
     """Optional local-only UPnP description lookup for richer model metadata."""
+    if not probe_target_current(mac, ip, "ENABLE_UPNP_ENRICHMENT"):
+        return
     try:
         request = urllib.request.Request(
             url,
@@ -2174,6 +2237,8 @@ def enrich_upnp_metadata(mac, ip, url, span_confirmed=False):
         if len(data) > UPNP_MAX_BYTES:
             return
 
+        if not probe_target_current(mac, ip, "ENABLE_UPNP_ENRICHMENT"):
+            return
         root = ET.fromstring(data)
         friendly = xml_text(root, "friendlyName")
         manufacturer = xml_text(root, "manufacturer")
@@ -2202,6 +2267,7 @@ def enrich_upnp_metadata(mac, ip, url, span_confirmed=False):
             mac,
             ip=ip,
             vendor=manufacturer,
+            vendor_source="inferred: UPnP manufacturer" if manufacturer else None,
             hostname=friendly,
             model=model,
             model_score=100 if model else 0,
@@ -2217,23 +2283,28 @@ def enrich_upnp_metadata(mac, ip, url, span_confirmed=False):
 
 
 def schedule_upnp_enrichment(mac, ip, url, span_confirmed=False):
-    if not ENABLE_UPNP_ENRICHMENT or not url or not ip:
+    if not url or not is_local_metadata_url(url):
         return
-    if not is_local_metadata_url(url):
-        return
-
-    with metadata_lock:
-        if url in metadata_urls_seen:
-            return
-        metadata_urls_seen.add(url)
-
-    threading.Thread(
-        target=enrich_upnp_metadata,
-        args=(mac, ip, url, span_confirmed),
-        daemon=True,
-    ).start()
+    def upnp_worker(target_mac, target_ip):
+        enrich_upnp_metadata(target_mac, target_ip, url, span_confirmed)
+    schedule_bounded_probe(mac, ip, "ENABLE_UPNP_ENRICHMENT",
+                           metadata_urls_seen, metadata_lock, upnp_worker)
 
 
+
+def vendor_evidence_rank(mac, source):
+    source = (source or '').lower()
+    if not source:
+        return 20 if is_locally_administered_mac(mac) else 100
+    if 'upnp' in source or 'manufacturer' in source:
+        return 90
+    if 'model' in source:
+        return 80
+    if 'dhcp' in source:
+        return 65
+    if 'hostname' in source:
+        return 50
+    return 30
 
 
 def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
@@ -2284,6 +2355,10 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
         candidate, type_from_hostname(hostname), SCORES["hostname"], "hostname"
     )
     candidate = merge_candidate(
+        candidate, type_from_os_hint(hostname), SCORES["os_hint"],
+        "android OS hostname"
+    )
+    candidate = merge_candidate(
         candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor"
     )
 
@@ -2308,7 +2383,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
         row = cur.execute(
             "SELECT device_type, class_score, hostname, model, vendor, "
             "COALESCE(is_monitored, 0), COALESCE(model_score, 0), "
-            "COALESCE(session_seen, 0) "
+            "COALESCE(session_seen, 0), vendor_source, class_source "
             "FROM devices WHERE mac=?",
             (mac,),
         ).fetchone()
@@ -2361,7 +2436,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 f"type={dtype or 'Generic / Unknown'}  "
                 f"vendor={display_vendor(mac, vendor, vendor_source)}"
             )
-            if ip and is_unclassified(dtype):
+            if ip and needs_service_probe(dtype, score):
                 schedule_active_probe(mac, ip)
             if ip and _name_enrichment_eligible(dtype, hostname):
                 schedule_mdns_probe(mac, ip)
@@ -2370,8 +2445,11 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
             (
                 old_type, old_score, old_hostname, old_model,
                 old_vendor, old_monitored, old_model_score, old_session_seen,
+                old_vendor_source, old_class_source,
             ) = row
             old_score = old_score or 0
+            if old_class_source and 'hostname' in old_class_source.lower():
+                old_score = min(old_score, SCORES['hostname'])
             old_model_score = old_model_score or 0
 
             # Re-evaluate documented infrastructure using both newly observed
@@ -2418,24 +2496,32 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 SCORES["hostname"],
                 "stored hostname",
             )
+            candidate = merge_candidate(
+                candidate,
+                type_from_os_hint(hostname or old_hostname),
+                SCORES["os_hint"],
+                "android OS hostname",
+            )
 
             new_type = None
             new_score = old_score
             new_source = None
-            if candidate and candidate[1] > old_score:
-                new_type, new_score, new_source = candidate
-            elif candidate and not old_type:
-                new_type, new_score, new_source = candidate
+            previous = (old_type, old_score, old_class_source) if old_type else None
+            resolved = merge_candidate(previous, *candidate) if candidate else previous
+            if resolved and resolved != previous:
+                new_type, new_score, new_source = resolved
 
+            replace_vendor = bool(vendor) and (not old_vendor or
+                vendor_evidence_rank(mac, vendor_source) > vendor_evidence_rank(mac, old_vendor_source))
             cur.execute("""
                 UPDATE devices SET
                     ip = COALESCE(?, ip),
                     vendor = CASE
-                        WHEN ? IS NOT NULL AND (vendor IS NULL OR vendor = '')
+                        WHEN ?
                         THEN ? ELSE vendor
                     END,
                     vendor_source = CASE
-                        WHEN ? IS NOT NULL AND (vendor IS NULL OR vendor = '')
+                        WHEN ?
                         THEN ? ELSE vendor_source
                     END,
                     hostname = COALESCE(?, hostname),
@@ -2458,9 +2544,9 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                     vendor_class = COALESCE(?, vendor_class),
                     upnp_location = COALESCE(?, upnp_location),
                     device_type = COALESCE(?, device_type),
-                    class_score = CASE WHEN ? > COALESCE(class_score, 0)
+                    class_score = CASE WHEN ? IS NOT NULL
                                        THEN ? ELSE class_score END,
-                    class_source = CASE WHEN ? > COALESCE(class_score, 0)
+                    class_source = CASE WHEN ? IS NOT NULL
                                         THEN ? ELSE class_source END,
                     is_monitored = CASE WHEN ? THEN 1 ELSE is_monitored END,
                     last_span_seen = CASE WHEN ? THEN ? ELSE last_span_seen END,
@@ -2478,16 +2564,16 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 WHERE mac = ?
             """, (
                 ip,
-                vendor, vendor,
-                vendor, vendor_source,
+                replace_vendor, vendor,
+                replace_vendor, vendor_source,
                 hostname,
                 model, model_score, model,
                 model, model_score, model_score,
                 model, model_score, model_source,
                 dhcp_sig, vendor_class, upnp_location,
                 new_type,
-                new_score, new_score,
-                new_score, new_source,
+                new_type, new_score,
+                new_type, new_source,
                 1 if seen_on_span else 0,
                 1 if seen_on_span else 0, now_str,
                 1 if seen_on_span else 0,
@@ -2526,7 +2612,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
             # make this once-per-runtime; the workers self-gate on ENABLE_*.
             effective_type = new_type or old_type
             effective_name = hostname or old_hostname
-            if ip and is_unclassified(effective_type):
+            if ip and needs_service_probe(effective_type, new_score):
                 schedule_active_probe(mac, ip)
             if ip and _name_enrichment_eligible(effective_type, effective_name):
                 schedule_mdns_probe(mac, ip)
@@ -2842,7 +2928,7 @@ def discovery_arp_observer_loop():
 
 def housekeeping():
     while True:
-        time.sleep(60)
+        time.sleep(5)
         # Pick up an active_probes change saved via the API without a restart.
         # This loop always runs (unlike the optional refresh loop), so it is the
         # reliable place to reconcile runtime gates with the persisted setting.
@@ -2907,14 +2993,26 @@ def handle_dhcp(packet):
                     candidate, vc_dtype, SCORES["dhcp_vendor"],
                     f"DHCP vendor class ({vc_needle})"
                 )
+            # "android-dhcp-..." identifies only the OS (phones, tablets, TVs,
+            # boxes all send it), so it is a weak os_hint, never a form factor.
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(vendor_class), SCORES["os_hint"],
+                "android OS (DHCP vendor class)"
+            )
 
         elif key == "param_req_list":
             try:
                 sig = tuple(int(x) for x in value)
                 dhcp_sig = ",".join(str(x) for x in sig)
-                dtype = DHCP_SIGNATURES.get(sig)
+                dtype = type_from_dhcp_signature(sig)
+                # The Android option-55 list is OS-only (phones/tablets/TVs all
+                # send it) -> os_hint; Apple/Windows fingerprints stay at dhcp.
+                dhcp_score = (
+                    SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                    else SCORES["dhcp"]
+                )
                 candidate = merge_candidate(
-                    candidate, dtype, SCORES["dhcp"], "DHCP fingerprint"
+                    candidate, dtype, dhcp_score, "DHCP fingerprint"
                 )
             except (TypeError, ValueError):
                 pass
@@ -2946,8 +3044,13 @@ def handle(packet):
         observed_ip = packet[ARP].psrc
     elif IP in packet:
         observed_ip = packet[IP].src
+    elif IPv6 in packet:
+        observed_ip = packet[IPv6].src
 
     ip = local_monitored_ip(observed_ip)
+    # Routed internet traffic carries a local router MAC, not the sender MAC.
+    if observed_ip and observed_ip != '0.0.0.0' and ip is None:
+        return
 
     ether_dst = packet[Ether].dst.lower()
     ether_type = int(packet[Ether].type)
@@ -2971,6 +3074,22 @@ def handle(packet):
         hostname, dhcp_sig, vendor_class, dhcp_candidate = handle_dhcp(packet)
         if dhcp_candidate:
             candidate = merge_candidate(candidate, *dhcp_candidate)
+
+        # Huawei's "HUAWEI:android:<CODE>" vendor class: a KNOWN model-code
+        # prefix is form-factor evidence (above the generic android os_hint),
+        # and the "HUAWEI:" prefix infers the manufacturer when the MAC has no
+        # real OUI vendor (same gate as the mDNS-query inference below).
+        if vendor_class:
+            candidate = merge_candidate(
+                candidate, type_from_huawei_vendor_class(vendor_class),
+                SCORES["dhcp_vendor"], "Huawei DHCP vendor class"
+            )
+            vc_vendor = vendor_from_vendor_class(vendor_class)
+            if vc_vendor and (
+                is_locally_administered_mac(mac) or get_vendor(mac) is None
+            ):
+                observed_vendor = vc_vendor
+                observed_vendor_source = "inferred: DHCP vendor class"
 
     if UDP in packet:
         sport = int(packet[UDP].sport)
@@ -3171,8 +3290,15 @@ def handle(packet):
                 # avoid persisting a device's browsing/service history.
                 dtype, needle = type_from_dns_query(qname)
                 if dtype:
+                    # An OS-only verdict (e.g. an Android connectivity domain,
+                    # also hit by Android TVs) enters at the weak os_hint tier;
+                    # every other domain stays at weak_service.
+                    dns_score = (
+                        SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                        else SCORES["weak_service"]
+                    )
                     candidate = merge_candidate(
-                        candidate, dtype, SCORES["weak_service"],
+                        candidate, dtype, dns_score,
                         f"DNS query (matched: {needle})"
                     )
                 domain_vendor = vendor_from_domain_needle(needle)
@@ -3225,19 +3351,15 @@ def handle(packet):
                 if last is None or (now_mono - last) >= SYN_FP_INTERVAL_SECONDS:
                     syn_fp_last[mac] = now_mono
                     do_fp = True
-            # Rate-limited SYNs are dropped here WITHOUT touching update_device()
-            # (a bare SYN carries no other identity), bounding CPU: only the
-            # first SYN per MAC per interval reaches the DB write path.
-            if not do_fp:
-                return
-            os_family, dtype = fingerprint_tcp_syn(packet)
-            if not dtype:
-                return
-            candidate = merge_candidate(
-                candidate, dtype, SCORES["syn_fp"],
-                f"TCP SYN fingerprint ({os_family})",
-            )
-            print(f"[SYN-FP] {mac} os={os_family} tier=syn_fp")
+            # Limit fingerprint work, never the observation of device presence.
+            if do_fp:
+                os_family, dtype = fingerprint_tcp_syn(packet)
+                if dtype:
+                    candidate = merge_candidate(
+                        candidate, dtype, SCORES["syn_fp"],
+                        f"TCP SYN fingerprint ({os_family})",
+                    )
+                    print(f"[SYN-FP] {mac} os={os_family} tier=syn_fp")
 
     update_device(
         mac,
@@ -3527,6 +3649,27 @@ def cleanup_stale_mdns_query_classifications(verbose=True):
     return n
 
 
+def migrate_classification_rules():
+    """Discard obsolete inferred identity, retaining inventory and raw evidence.
+
+    Only reproducible classifications and retired DNS evidence are reset.
+    Live service/port/model-independent evidence and conflict barriers survive.
+    Re-running is safe; rescore rebuilds using the current rules.
+    """
+    with db_lock:
+        conn = connect_db()
+        try:
+            with conn:
+                rows = conn.execute("SELECT mac, class_source FROM devices").fetchall()
+                for mac, source in rows:
+                    if _is_rederivable_source(source) or (source or '').startswith('DNS query'):
+                        conn.execute("UPDATE devices SET device_type=NULL, class_score=0, class_source=NULL WHERE mac=?", (mac,))
+                conn.execute("UPDATE devices SET vendor=NULL, vendor_source=NULL WHERE vendor_source LIKE 'inferred: domain (%'")
+        finally:
+            conn.close()
+    rescore_stored_evidence(verbose=False)
+
+
 def rescore_stored_evidence(verbose=True):
     """Re-evaluate every device's type from its STORED evidence against the
     current hint tables, upgrading only when the recomputed score strictly
@@ -3557,15 +3700,23 @@ def rescore_stored_evidence(verbose=True):
                 "stored hostname",
             )
             candidate = merge_candidate(
+                candidate, type_from_os_hint(hostname), SCORES["os_hint"],
+                "android OS hostname",
+            )
+            candidate = merge_candidate(
                 candidate, type_from_model(model), SCORES["model"],
                 "device model identifier",
             )
             if dhcp_sig:
                 try:
                     sig = tuple(int(x) for x in dhcp_sig.split(","))
+                    dtype = type_from_dhcp_signature(sig)
+                    dhcp_score = (
+                        SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                        else SCORES["dhcp"]
+                    )
                     candidate = merge_candidate(
-                        candidate, DHCP_SIGNATURES.get(sig), SCORES["dhcp"],
-                        "DHCP fingerprint",
+                        candidate, dtype, dhcp_score, "DHCP fingerprint",
                     )
                 except (TypeError, ValueError):
                     pass
@@ -3575,6 +3726,14 @@ def rescore_stored_evidence(verbose=True):
                     candidate, vc_dtype, SCORES["dhcp_vendor"],
                     f"DHCP vendor class ({vc_needle})",
                 )
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(vendor_class), SCORES["os_hint"],
+                "android OS (DHCP vendor class)",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_huawei_vendor_class(vendor_class),
+                SCORES["dhcp_vendor"], "Huawei DHCP vendor class",
+            )
             candidate = merge_candidate(
                 candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor",
             )
@@ -3604,6 +3763,159 @@ def rescore_stored_evidence(verbose=True):
     return changed
 
 
+# class_source values that were derived from a PERSISTED evidence column
+# (hostname / model / vendor / vendor_class / dhcp_signature), i.e. ones the
+# current rules can reproduce from the stored row. Everything else is a
+# live-only source (mDNS/SSDP/UPnP/ONVIF advertisements, DNS/mDNS queries, SYN
+# fingerprint, LLDP, STP, default gateway, nmap probe, deployment overrides) and
+# must never be downgraded by a stored-evidence recompute.
+_REDERIVABLE_CLASS_SOURCES = frozenset({
+    "hostname", "stored hostname", "DHCP hostname",
+    "mDNS A-record hostname", "mDNS service-instance name", "mDNS friendly name",
+    "SSDP friendly name", "WS-Discovery friendly name",
+    "NBNS name", "LLMNR name",
+    "android OS hostname", "android OS (DHCP vendor class)",
+    "Huawei DHCP vendor class", "DHCP fingerprint",
+    "device model identifier", "WS-Discovery model identifier",
+    "MAC vendor",
+})
+
+
+def _is_rederivable_source(source):
+    """True if a stored class_source came from a persisted evidence column, so
+    the current rules can reproduce it. The unicast-probe name path appends
+    " (probe)" to a name source, and the vendor-class source carries a
+    "(needle)" suffix -- both are normalised before the lookup."""
+    if not source:
+        return False
+    normalized = source
+    if normalized.endswith(" (probe)"):
+        normalized = normalized[:-len(" (probe)")]
+    if normalized in _REDERIVABLE_CLASS_SOURCES:
+        return True
+    if normalized.startswith("DHCP vendor class ("):
+        return True
+    return False
+
+
+def reevaluate_stale_classifications(verbose=True):
+    """Correct stale verdicts the upgrade-only rescore_stored_evidence() cannot.
+
+    Companion pass run once at startup, right after rescore_stored_evidence()
+    (which is left exactly as its author wrote it). rescore only ever RAISES the
+    score, so a row whose stored evidence now maps to a DIFFERENT type at an
+    equal-or-lower score stays stuck (e.g. a Huawei tablet left "Mobile
+    (Android)" by the old "android"-as-phone rule). This pass fixes exactly that
+    case, under four independent guards so it can only touch the Android-family
+    leftovers of the old rules:
+
+      1. the recompute from stored columns must yield a type (never clears one);
+      2. the recomputed type must differ from the stored type;
+      3. the recomputed score must be <= the stored score (a strictly-higher
+         score is an upgrade, already applied by rescore which runs first);
+      4. BOTH the stored and recomputed types must be in ANDROID_FAMILY_TYPES
+         (no cross-family change -- a TV/Router/Apple/camera is never touched);
+      5. the stored class_source must be re-derivable from a persisted column
+         (so a live-only Android verdict -- e.g. from a DNS query -- is never
+         downgraded on the strength of a generic stored hostname).
+
+    update_device() is intentionally NOT changed: new devices are already
+    classified by the current rules, so only the pre-existing stored rows need
+    this one-time correction.
+    """
+    with db_lock:
+        conn = connect_db()
+        rows = conn.execute(
+            "SELECT mac, dhcp_signature, vendor_class, hostname, vendor, model, "
+            "device_type, COALESCE(class_score, 0), class_source FROM devices"
+        ).fetchall()
+
+        changed = 0
+        for (mac, dhcp_sig, vendor_class, hostname, vendor, model,
+             old_type, old_score, old_source) in rows:
+            # Recompute from stored evidence with the current rules. This mirrors
+            # rescore_stored_evidence()'s recompute on purpose -- duplicated so
+            # that function stays untouched (the accepted second-pass cost).
+            candidate = merge_candidate(
+                None, type_from_hostname(hostname), SCORES["hostname"],
+                "stored hostname",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(hostname), SCORES["os_hint"],
+                "android OS hostname",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_model(model), SCORES["model"],
+                "device model identifier",
+            )
+            if dhcp_sig:
+                try:
+                    sig = tuple(int(x) for x in dhcp_sig.split(","))
+                    dtype = type_from_dhcp_signature(sig)
+                    dhcp_score = (
+                        SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                        else SCORES["dhcp"]
+                    )
+                    candidate = merge_candidate(
+                        candidate, dtype, dhcp_score, "DHCP fingerprint",
+                    )
+                except (TypeError, ValueError):
+                    pass
+            vc_dtype, vc_needle = type_from_vendor_class(vendor_class)
+            if vc_dtype:
+                candidate = merge_candidate(
+                    candidate, vc_dtype, SCORES["dhcp_vendor"],
+                    f"DHCP vendor class ({vc_needle})",
+                )
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(vendor_class), SCORES["os_hint"],
+                "android OS (DHCP vendor class)",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_huawei_vendor_class(vendor_class),
+                SCORES["dhcp_vendor"], "Huawei DHCP vendor class",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor",
+            )
+
+            if candidate is None:
+                continue                                    # guard 1
+            new_type, new_score, new_source = candidate
+            if new_type == old_type:
+                continue                                    # guard 2
+            if new_score > old_score:
+                continue                                    # guard 3 (rescore's job)
+            if (old_type not in ANDROID_FAMILY_TYPES
+                    or new_type not in ANDROID_FAMILY_TYPES):
+                continue                                    # guard 4
+            if not _is_rederivable_source(old_source):
+                continue                                    # guard 5
+
+            conn.execute(
+                "UPDATE devices SET device_type=?, class_score=?, "
+                "class_source=? WHERE mac=?",
+                (new_type, new_score, new_source, mac),
+            )
+            changed += 1
+            if verbose:
+                print(
+                    f"[RECLASSIFY] {mac}  "
+                    f"{old_type} (score {old_score}) "
+                    f"-> {new_type} ({new_source}, score {new_score})  "
+                    "[stale Android-family evidence]"
+                )
+        conn.commit()
+        conn.close()
+
+    if verbose:
+        print(
+            f"[*] Re-evaluated stale classifications: {changed} device(s) "
+            "corrected against current Android-family rules"
+        )
+    return changed
+
+
 def main():
     args = parse_args()
     init_db()
@@ -3623,9 +3935,12 @@ def main():
     load_oui()
     load_gateway()
     load_network_context()
+    load_ipv6_context()
     purge_self_records()
     cleanup_stale_mdns_query_classifications()
+    migrate_classification_rules()
     rescore_stored_evidence()
+    reevaluate_stale_classifications()
 
     # DB is authoritative from here on: apply the persisted active_probes value
     # over the env-seeded defaults before the banners/gates below read them.
@@ -3720,6 +4035,26 @@ def main():
         + " or ".join(tcp_clauses)
     )
 
+    # Full IP capture is required for flow counters, not just fingerprint ports.
+    bpf = "arp or ip or ip6 or stp or ether proto 0x88cc"
+    from flows import FlowStore
+    flow_store = FlowStore(DB_PATH)
+    flow_stop = threading.Event()
+
+    def flush_flows():
+        while not flow_stop.wait(5):
+            try:
+                flow_store.flush()
+            except sqlite3.Error as exc:
+                print(f"[!] Flow persistence failed: {exc}")
+
+    def process_capture(packet):
+        flow_store.add(packet)
+        handle(packet)  # New source devices still enter the existing inventory.
+
+    flow_thread = threading.Thread(target=flush_flows, daemon=True)
+    flow_thread.start()
+
     print(f"[*] Passive fingerprinting on {CAPTURE_INTERFACE}")
     print(f"[*] BPF: {bpf}")
     print(
@@ -3731,7 +4066,7 @@ def main():
         sniff(
             iface=CAPTURE_INTERFACE,
             filter=bpf,
-            prn=handle,
+            prn=process_capture,
             store=False,
         )
     except KeyboardInterrupt:
@@ -3741,6 +4076,10 @@ def main():
         print("[!] Packet capture requires root/capture privileges")
     except OSError as exc:
         print(f"[!] Could not capture on {CAPTURE_INTERFACE}: {exc}")
+    finally:
+        flow_stop.set()
+        flow_thread.join()
+        flow_store.flush()
 
 
 if __name__ == "__main__":
