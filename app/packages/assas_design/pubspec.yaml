@@ -1,0 +1,14 @@
+name: assas_design
+description: Shared ASSAS visual components for mobile and the appliance display.
+publish_to: none
+version: 1.0.0
+environment:
+  sdk: ^3.5.0
+dependencies:
+  flutter:
+    sdk: flutter
+  assas_core:
+    path: ../assas_core
+flutter:
+  assets:
+    - assets/images/

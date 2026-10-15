@@ -10,6 +10,9 @@ enum BaselineStatus { insufficientData, established }
 class Device {
   final String mac;
   final String? ip;
+
+  /// Name the user gave the device in the app (null = use the detected name).
+  final String? userName;
   final String? hostname;
   final String? model;
   final String? vendor;
@@ -29,6 +32,7 @@ class Device {
   const Device({
     required this.mac,
     this.ip,
+    this.userName,
     this.hostname,
     this.model,
     this.vendor,
@@ -42,8 +46,13 @@ class Device {
 
   // ---------- Display values (one place, so every screen shows the same text) ----------
 
-  /// hostname -> model -> "Unknown device" (presentation fallback only).
-  String get displayName => _clean(hostname) ?? _clean(model) ?? 'Unknown device';
+  /// user's name -> hostname -> model -> "Unknown device".
+  String get displayName => _clean(userName) ?? detectedName;
+
+  /// The name Assas detected, ignoring the user's name.
+  String get detectedName => _clean(hostname) ?? _clean(model) ?? 'Unknown device';
+
+  bool get hasUserName => _clean(userName) != null;
   String get vendorLabel => _clean(vendor) ?? 'Unknown';
   String get typeLabel => _clean(deviceType) ?? 'Unknown';
   String get ipLabel => _clean(ip) ?? 'Unknown';
@@ -58,9 +67,11 @@ class Device {
   String get baselineLabel =>
       baseline == BaselineStatus.established ? 'Established' : 'Insufficient data';
 
-  Device copyWith({bool? trusted}) => Device(
+  /// [userName]: pass '' to clear the user's name.
+  Device copyWith({bool? trusted, String? userName}) => Device(
         mac: mac,
         ip: ip,
+        userName: userName == null ? this.userName : (userName.isEmpty ? null : userName),
         hostname: hostname,
         model: model,
         vendor: vendor,
@@ -87,6 +98,7 @@ class Device {
     return Device(
       mac: (j['mac'] ?? '').toString(),
       ip: j['ip']?.toString(),
+      userName: j['user_name']?.toString(),
       hostname: j['hostname']?.toString(),
       model: j['model']?.toString(),
       vendor: j['vendor']?.toString(),
@@ -109,7 +121,8 @@ class Device {
     }
     // Fallback until the backend adds "presence": only "online" counts as Online.
     // observed / candidate / offline are all shown as Offline (never shown by name).
-    return j['status']?.toString() == 'online' ? Presence.online : Presence.offline;
+    return const ['online', 'observed'].contains(j['status']?.toString())
+        ? Presence.online : Presence.offline;
   }
 }
 

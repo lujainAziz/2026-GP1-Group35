@@ -1,9 +1,11 @@
 import 'dart:math';
 
 import '../models/appliance_settings.dart';
+import '../models/live_activity.dart';
 import '../models/device.dart';
 import '../models/network_status.dart';
 import '../models/pairing_code.dart';
+import '../models/paired_phone.dart';
 import '../models/security_alert.dart';
 import 'assas_repository.dart';
 
@@ -13,6 +15,8 @@ import 'assas_repository.dart';
 //  Nothing here talks to the network.
 // =====================================================================
 class DemoRepository implements AssasRepository {
+  @override
+  Future<LiveActivity?> getActivity() async => null;
   DemoRepository() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -146,6 +150,15 @@ class DemoRepository implements AssasRepository {
   }
 
   @override
+  Future<void> renameDevice(String mac, String? name) async {
+    await _delay();
+    final clean = name?.trim() ?? '';
+    _devices = [
+      for (final d in _devices) d.mac == mac ? d.copyWith(userName: clean) : d,
+    ];
+  }
+
+  @override
   Future<List<SecurityAlert>?> getAlerts() async {
     await _delay();
     final list = List<SecurityAlert>.from(_alerts)
@@ -163,13 +176,35 @@ class DemoRepository implements AssasRepository {
 
   /// Demo: any 6-character code (letters/numbers) is accepted.
   @override
-  Future<String> pair(String code) async {
+  Future<String> pair(String code, {String? deviceName}) async {
     await Future.delayed(const Duration(milliseconds: 600));
     final c = code.trim().toUpperCase();
     if (!RegExp(r'^[A-Z0-9]{6}$').hasMatch(c)) {
-      throw const PairingException('Invalid or expired pairing code.');
+      throw const PairingException(PairingException.wrongCode);
     }
+    final name = deviceName?.trim() ?? '';
+    _phones.add(PairedPhone(
+      id: _phones.length + 1,
+      deviceName: name.isEmpty ? 'Unnamed phone' : name,
+      createdAt: DateTime.now(),
+    ));
     return 'demo-token';
+  }
+
+  /// Demo phones: one paired before, and a "new" one that appears about
+  /// 20 seconds after the display starts, so the new-phone banner can be seen.
+  final List<PairedPhone> _phones = [
+    PairedPhone(id: 1, deviceName: "Owner's phone", createdAt: DateTime(2026, 10, 1)),
+  ];
+  final DateTime _demoStart = DateTime.now();
+
+  @override
+  Future<List<PairedPhone>?> getPairedPhones() async {
+    await _delay();
+    if (_phones.length == 1 && DateTime.now().difference(_demoStart).inSeconds > 20) {
+      _phones.add(PairedPhone(id: 2, deviceName: "Maraheb's iPhone", createdAt: DateTime.now()));
+    }
+    return List.unmodifiable(_phones);
   }
 
   @override

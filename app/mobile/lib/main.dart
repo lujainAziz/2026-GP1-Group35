@@ -7,6 +7,10 @@ import 'screens/shell/main_shell.dart';
 import 'services/appliance_locator.dart';
 import 'services/session_store.dart';
 import 'state/app_settings.dart';
+import 'theme/assas_ui.dart';
+import 'widgets/assas_mobile_background.dart';
+import 'widgets/design_scale.dart';
+import 'widgets/splash_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,23 +73,36 @@ class _AssasAppState extends State<AssasApp> {
     return MaterialApp(
       title: 'Assas',
       debugShowCheckedModeBanner: false,
-      theme: AssasTheme.light,
-      darkTheme: AssasTheme.dark,
+      // No stretch / glow when a list hits its top or bottom (design scrolls flat).
+      scrollBehavior: const MaterialScrollBehavior().copyWith(overscroll: false),
+      theme: MobileTheme.light,
+      darkTheme: MobileTheme.dark,
       themeMode: _settings.darkMode ? ThemeMode.dark : ThemeMode.light,
+      // Same .4s as the background fade when switching Midnight / Pearl.
+      themeAnimationDuration: const Duration(milliseconds: 400),
       builder: (context, child) {
-        // Text size: user's choice x phone setting, kept in a safe range.
+        // Phone text setting, kept in a safe range. The user's Text size choice
+        // zooms the whole screen instead (DesignScale), like the design.
         final mq = MediaQuery.of(context);
-        final scale = (mq.textScaler.scale(1) * _settings.textScale).clamp(
+        final scale = mq.textScaler.scale(1).clamp(
           AppSettings.minTextScale,
           AppSettings.maxTextScale,
         ).toDouble();
-        return MediaQuery(
-          data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-          // Lavender (or dark plum) background with waves behind every screen.
-          child: AssasBackground(child: child ?? const SizedBox()),
+        // Keep the design's proportions on any screen width (design = 390).
+        return DesignScale(
+          zoom: _settings.textScale,
+          // Builder: read the scaled screen size from DesignScale.
+          child: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+              // Design background (bg + ambient glow + grid) behind every screen.
+              child: AssasMobileBackground(child: child ?? const SizedBox()),
+            ),
+          ),
         );
       },
-      home: widget.isPaired ? const MainShell() : const PairingScreen(),
+      // Splash from the design, then the same first screen as before.
+      home: SplashGate(child: widget.isPaired ? const MainShell() : const PairingScreen()),
     );
   }
 }

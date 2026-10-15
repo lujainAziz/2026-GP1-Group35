@@ -1,3 +1,5 @@
+import 'package:assas_core/assas_core.dart';
+import 'session_store.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../config/data_source.dart' show kApiBaseUrlOverride, kApiBaseUrlFallback;
@@ -20,19 +22,25 @@ import 'discovery_none.dart' if (dart.library.io) 'discovery_nsd.dart'
 Future<String> resolveApiBaseUrl({
   Duration timeout = const Duration(seconds: 4),
 }) async {
+  final expected = await SessionStore.getApplianceId();
+  Future<bool> accepts(String url) async => expected == null ||
+      await ApiRepository.identityAt(url) == expected;
   final staticUrl = staticBaseUrl(
     override: kApiBaseUrlOverride,
     isWeb: kIsWeb,
     fallback: kApiBaseUrlFallback,
   );
-  if (staticUrl != null) return staticUrl;
+  if (staticUrl != null) {
+    if (await accepts(staticUrl)) return staticUrl;
+    throw const AssasApiException('Paired appliance not found');
+  }
 
   try {
-    final discovered = await discovery.discoverAssasBaseUrl(timeout);
-    return (discovered != null && discovered.isNotEmpty)
-        ? discovered
-        : kApiBaseUrlFallback;
+    final discovered = await discovery.discoverAssasBaseUrl(timeout, accepts: accepts);
+    if (discovered != null && discovered.isNotEmpty) return discovered;
   } catch (_) {
-    return kApiBaseUrlFallback;
+    // Try the known hostname below, but never send a token to a different ID.
   }
+  if (await accepts(kApiBaseUrlFallback)) return kApiBaseUrlFallback;
+  throw const AssasApiException('Paired appliance not found');
 }

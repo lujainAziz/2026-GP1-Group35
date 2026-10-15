@@ -3,4 +3,4 @@
 // or dart:io imports, so it always compiles; the caller uses the fallback URL.
 
 /// No DNS-SD on this platform: always returns null so the caller falls back.
-Future<String?> discoverAssasBaseUrl(Duration timeout) async => null;
+Future<String?> discoverAssasBaseUrl(Duration timeout, {Future<bool> Function(String)? accepts}) async => null;

@@ -1,7 +1,9 @@
 import '../models/appliance_settings.dart';
+import '../models/live_activity.dart';
 import '../models/device.dart';
 import '../models/network_status.dart';
 import '../models/pairing_code.dart';
+import '../models/paired_phone.dart';
 import '../models/security_alert.dart';
 import 'api_client.dart';
 import 'assas_repository.dart';
@@ -39,6 +41,7 @@ class ApiRepository implements AssasRepository {
   ApiRepository(this._api);
 
   final ApiClient _api;
+  String? applianceId;
 
   @override
   bool get isDemo => false;
@@ -48,6 +51,17 @@ class ApiRepository implements AssasRepository {
 
   @override
   void setAuthToken(String? token) => _api.token = token;
+
+  static Future<String?> identityAt(String url) async {
+    final client = ApiClient(baseUrl: url);
+    try {
+      final response = await client.get('/healthz');
+      ApiClient.ensureOk(response, 'identify appliance');
+      return ApiClient.decodeObject(response)['appliance_id']?.toString();
+    } finally {
+      client.dispose();
+    }
+  }
 
   // ---------- Status ----------
 
@@ -73,12 +87,34 @@ class ApiRepository implements AssasRepository {
   }
 
   // ---------- Devices ----------
+  @override
+  Future<LiveActivity?> getActivity() async {
+    final response = await _api.get('/activity');
+    if (response.statusCode == 404) return null;
+    ApiClient.ensureOk(response, '/activity');
+    final data = ApiClient.decodeObject(response);
+    return data['available'] == true ? LiveActivity.fromApi(data) : null;
+  }
 
   @override
   Future<List<Device>> getDevices() async {
-    final r = await _api.get('/devices?limit=500');
-    ApiClient.ensureOk(r, '/devices');
-    return ApiClient.decodeList(r).map(Device.fromApi).toList();
+    const pageSize = 500;
+    final devices = <String, Device>{};
+    var offset = 0;
+    while (true) {
+      final r = await _api.get('/devices?limit=$pageSize&offset=$offset');
+      ApiClient.ensureOk(r, '/devices');
+      final page = ApiClient.decodeList(r).map(Device.fromApi).toList();
+      final previousCount = devices.length;
+      for (final device in page) {
+        devices[device.mac] = device;
+      }
+      if (page.length < pageSize) return devices.values.toList();
+      if (devices.length == previousCount) {
+        throw const FormatException('Device pagination did not advance');
+      }
+      offset += page.length;
+    }
   }
 
   @override
@@ -95,6 +131,16 @@ class ApiRepository implements AssasRepository {
       {'trusted': trusted},
     );
     ApiClient.ensureOk(r, 'trust device');
+  }
+
+  @override
+  Future<void> renameDevice(String mac, String? name) async {
+    final clean = name?.trim();
+    final r = await _api.put(
+      '/devices/${Uri.encodeComponent(mac)}/name',
+      {'name': (clean == null || clean.isEmpty) ? null : clean},
+    );
+    ApiClient.ensureOk(r, 'rename device');
   }
 
   // ---------- Alerts ----------
@@ -121,15 +167,22 @@ class ApiRepository implements AssasRepository {
   // ---------- Pairing ----------
 
   @override
-  Future<String> pair(String code) async {
-    final r = await _api.post('/pair', {'code': code.trim().toUpperCase()});
+  Future<String> pair(String code, {String? deviceName}) async {
+    var name = deviceName?.trim() ?? '';
+    if (name.length > 40) name = name.substring(0, 40);
+    final r = await _api.post('/pair', {
+      'code': code.trim().toUpperCase(),
+      if (name.isNotEmpty) 'device_name': name,
+    });
     if (r.statusCode == 400 || r.statusCode == 401 || r.statusCode == 403) {
-      throw const PairingException('Invalid or expired pairing code.');
+      throw const PairingException(PairingException.wrongCode);
     }
     if (r.statusCode < 200 || r.statusCode >= 300) {
-      throw const PairingException('Could not reach your Assas device. Try again.');
+      throw const PairingException('Pairing failed. Try again.');
     }
-    final token = ApiClient.decodeObject(r)['token']?.toString();
+    final result = ApiClient.decodeObject(r);
+    applianceId = result['appliance_id']?.toString();
+    final token = result['token']?.toString();
     if (token == null || token.isEmpty) {
       throw const PairingException('Pairing failed. Try again.');
     }
@@ -147,6 +200,15 @@ class ApiRepository implements AssasRepository {
     final r = await _api.get('/pairing/code');
     ApiClient.ensureOk(r, '/pairing/code');
     return PairingCode.fromApi(ApiClient.decodeObject(r));
+  }
+
+  @override
+  Future<List<PairedPhone>?> getPairedPhones() async {
+    final r = await _api.get('/sessions');
+    if (r.statusCode == 404) return null; // not merged on the backend yet
+    ApiClient.ensureOk(r, '/sessions');
+    return [for (final j in ApiClient.decodeList(r)) PairedPhone.fromApi(j)]
+      ..sort((a, b) => a.id.compareTo(b.id));
   }
 
   // ---------- Settings ----------

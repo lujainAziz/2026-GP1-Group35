@@ -15,6 +15,7 @@ export 'models/security_alert.dart';
 export 'models/network_status.dart';
 export 'models/pairing_code.dart';
 export 'models/appliance_settings.dart';
+export 'models/paired_phone.dart';
 
 // Data layer
 export 'data/assas_repository.dart';
@@ -29,3 +30,4 @@ export 'theme/wave_clipper.dart';
 
 // Utils
 export 'utils/time_format.dart';
+export 'models/live_activity.dart';

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/foundation.dart';
+import 'package:assas_design/release_status.dart';
 
 /// Holds the latest data for all tabs and refreshes it every few seconds
 /// (API_CONTRACT polling guidance: devices every 5 s).
@@ -16,13 +17,22 @@ class AppState extends ChangeNotifier {
   List<Device> devices = const [];
   List<SecurityAlert>? alerts; // null = not available yet
   RiskInfo? risk; // null = not available yet
-  ConnectionStatus connection = ConnectionStatus.live;
+  LiveActivity? activity;
+  ConnectionStatus connection = ConnectionStatus.checking;
   bool loadedOnce = false;
+
+  /// True when Assas rejected this phone's session (HTTP 401): it was revoked
+  /// or the appliance was reset. The phone must pair again.
+  bool sessionEnded = false;
+
+  /// When the device list was last received from Assas (null = never).
+  DateTime? lastSync;
 
   Timer? _timer;
   bool _busy = false;
 
   void startPolling() {
+    if (sessionEnded) return;
     refresh();
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
@@ -34,25 +44,47 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
-    if (_busy) return;
+    if (_busy || sessionEnded) return;
     _busy = true;
     try {
       connection = await repo.checkHealth();
 
       try {
         devices = await repo.getDevices();
+        lastSync = DateTime.now();
+      } on AssasApiException catch (e) {
+        if (e.statusCode == 401) {
+          // Session revoked: stop asking, the screen sends the user to pairing.
+          sessionEnded = true;
+          stopPolling();
+          notifyListeners();
+          return;
+        }
+        // other errors: keep last devices
+        if (connection == ConnectionStatus.live) connection = ConnectionStatus.stale;
       } catch (_) {
         // keep last devices
+        if (connection == ConnectionStatus.live) connection = ConnectionStatus.stale;
       }
+      try {
+        activity = await repo.getActivity();
+      } catch (e) {
+        activity = null;
+        if (handleFailure(e)) return;
+      }
+      if (FeatureRelease.alerts) {
       try {
         alerts = await repo.getAlerts();
       } catch (_) {
         // keep last alerts
       }
+      }
+      if (FeatureRelease.risk) {
       try {
         risk = await repo.getRiskLevel();
       } catch (_) {
         // keep last risk
+      }
       }
       loadedOnce = true;
       notifyListeners();
@@ -85,6 +117,17 @@ class AppState extends ChangeNotifier {
 
   List<SecurityAlert>? alertsForDevice(String mac) =>
       alerts?.where((a) => a.deviceMac == mac).toList();
+
+  /// Use the same revoked-session handling for every protected operation.
+  bool handleFailure(Object error) {
+    if (error is! AssasApiException || error.statusCode != 401) return false;
+    if (!sessionEnded) {
+      sessionEnded = true;
+      stopPolling();
+      notifyListeners();
+    }
+    return true;
+  }
 
   // ---------- Actions ----------
   Future<void> setTrusted(String mac, bool trusted) async {

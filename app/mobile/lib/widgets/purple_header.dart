@@ -117,6 +117,7 @@ class ConnectionPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dot = switch (status) {
+      ConnectionStatus.checking => const Color(0xFF9CA3AF),
       ConnectionStatus.live => const Color(0xFF6EE7A8),
       ConnectionStatus.stale => const Color(0xFFFCD34D),
       ConnectionStatus.unreachable => const Color(0xFFFCA5A5),

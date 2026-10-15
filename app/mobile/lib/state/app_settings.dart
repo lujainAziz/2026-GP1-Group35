@@ -6,9 +6,10 @@ class AppSettings extends ChangeNotifier {
   AppSettings._();
   static final AppSettings instance = AppSettings._();
 
-  /// Text size steps. Kept in a safe range so the layout never breaks.
-  static const List<double> textScales = [0.9, 1.0, 1.1, 1.2];
-  static const List<String> textScaleLabels = ['Small', 'Default', 'Large', 'Larger'];
+  /// Text size steps, same as the design: the whole screen zooms
+  /// (1, 1.06, 1.12, 1.2), not only the text.
+  static const List<double> textScales = [1.0, 1.06, 1.12, 1.2];
+  static const List<String> textScaleLabels = ['Small', 'Default', 'Large', 'Largest'];
 
   /// Final text scale (user choice x phone setting) is kept inside this range.
   static const double minTextScale = 0.85;
@@ -18,7 +19,7 @@ class AppSettings extends ChangeNotifier {
   static const _scaleKey = 'assas_text_scale_index';
 
   bool darkMode = false;
-  int textScaleIndex = 1;
+  int textScaleIndex = 0; // design default
 
   double get textScale => textScales[textScaleIndex];
   String get textScaleLabel => textScaleLabels[textScaleIndex];
@@ -26,7 +27,7 @@ class AppSettings extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     darkMode = prefs.getBool(_darkKey) ?? false;
-    textScaleIndex = (prefs.getInt(_scaleKey) ?? 1).clamp(0, textScales.length - 1).toInt();
+    textScaleIndex = (prefs.getInt(_scaleKey) ?? 0).clamp(0, textScales.length - 1).toInt();
   }
 
   Future<void> setDarkMode(bool value) async {

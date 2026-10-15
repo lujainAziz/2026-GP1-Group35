@@ -16,7 +16,7 @@ const String kAssasServiceType = '_assas._tcp';
 /// Browse for the ASSAS API over DNS-SD and return the first usable IPv4 base
 /// URL, or null if none is found within [timeout]. Discovery is always stopped,
 /// including on timeout/error, so no background browse is left running.
-Future<String?> discoverAssasBaseUrl(Duration timeout) async {
+Future<String?> discoverAssasBaseUrl(Duration timeout, {Future<bool> Function(String)? accepts}) async {
   nsd.Discovery? discovery;
   try {
     // ipLookupType.v4: resolve IPv4 addresses (the API listens on IPv4 only;
@@ -27,13 +27,19 @@ Future<String?> discoverAssasBaseUrl(Duration timeout) async {
     );
 
     final completer = Completer<String?>();
+    final checking = <String>{};
     void evaluate() {
       if (completer.isCompleted) return;
       for (final service in discovery!.services) {
         final url = _serviceToBaseUrl(service);
-        if (url != null) {
-          completer.complete(url);
-          return;
+        if (url != null && checking.add(url)) {
+          Future<void>(() async {
+            try {
+              if ((accepts == null || await accepts(url)) && !completer.isCompleted) {
+                completer.complete(url);
+              }
+            } catch (_) { /* Another discovered device may match. */ }
+          });
         }
       }
     }

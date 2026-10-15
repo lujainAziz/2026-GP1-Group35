@@ -34,14 +34,21 @@ late final AssasRepository repository;
 // }
 // =====================================================================
 
-// ======================= REAL BACKEND ================================
-const bool kShowPairingSkip = false;
+// ======================= ACTIVE ======================================
+/// Demo data only when built with --dart-define=ASSAS_DEMO=true.
+/// Default (no flag): the real backend. No file edit needed to switch.
+const bool kUseDemoBackend = bool.fromEnvironment('ASSAS_DEMO');
 
-// /// The real backend resolves its base URL first (ASSAS_API_BASE_URL override
-// /// -> DNS-SD _assas._tcp -> assas-pi.local fallback), then builds the client.
+/// "Skip" button on the pairing screen: demo builds only.
+const bool kShowPairingSkip = kUseDemoBackend;
+
+/// The real backend resolves its base URL first (ASSAS_API_BASE_URL override
+/// -> DNS-SD _assas._tcp -> assas-pi.local fallback), then builds the client.
+/// Demo data needs no backend, so it never triggers a network browse.
 Future<AssasRepository> createRepository(
-  Future<String> Function() resolveBaseUrl,
- ) async {
+    Future<String> Function() resolveBaseUrl,
+    ) async {
+  if (kUseDemoBackend) return DemoRepository();
   return ApiRepository(ApiClient(baseUrl: await resolveBaseUrl()));
- }
+}
 // =====================================================================

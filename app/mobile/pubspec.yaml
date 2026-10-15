@@ -7,6 +7,8 @@ environment:
   sdk: ^3.5.0
 
 dependencies:
+  assas_design:
+    path: ../packages/assas_design
   flutter:
     sdk: flutter
 
@@ -18,8 +20,10 @@ dependencies:
   mobile_scanner: ^7.0.0        # QR scanning with the camera
   shared_preferences: ^2.3.0    # stores the pairing token
   nsd: ^4.1.0                   # DNS-SD browse for _assas._tcp (android/ios/macos/windows)
+  device_info_plus: ^13.3.0
 
 dev_dependencies:
+  http: ^1.2.0
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
@@ -28,3 +32,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+  fonts:
+    - family: Bricolage Grotesque
+      fonts:
+        - asset: assets/fonts/BricolageGrotesque.ttf
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono.ttf

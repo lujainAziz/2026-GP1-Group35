@@ -1,5 +1,6 @@
 /// Connection to the appliance (from GET /healthz, see API_CONTRACT.md).
 enum ConnectionStatus {
+  checking,
   /// 200 + daemon_stale=false
   live,
 
@@ -12,6 +13,7 @@ enum ConnectionStatus {
 
 extension ConnectionStatusLabel on ConnectionStatus {
   String get label => switch (this) {
+        ConnectionStatus.checking => 'Connecting',
         ConnectionStatus.live => 'Connected',
         ConnectionStatus.stale => 'Outdated data',
         ConnectionStatus.unreachable => 'Offline',
