@@ -346,6 +346,12 @@ OS_HINTS = [
 # produced it (e.g. an Android OS connectivity domain in DOMAIN_HINTS).
 OS_LEVEL_TYPES = frozenset(dtype for _, dtype in OS_HINTS)
 
+# General OS-family verdicts: classified enough to display, but still worth an
+# active probe (nmap/mDNS/NBNS) that could refine them into a specific form
+# factor (Mobile/Tablet/Smart TV/Computer). Kept explicit rather than reusing
+# OS_LEVEL_TYPES, which is token-derived and holds only "Android Device".
+GENERAL_TYPES = frozenset({"Android Device", "Apple Device"})
+
 # The Android form-factor family. The startup stale-classification correction
 # (reevaluate_stale_classifications) will only ever change one of these into
 # another of these -- it never crosses out of the family, so a TV/Router/Apple/
@@ -970,6 +976,20 @@ def is_unclassified(dtype):
     unclassified, not classified.
     """
     return not dtype or dtype == "Generic / Unknown"
+
+
+def is_general_type(dtype):
+    """Whether a stored device_type is a general OS-family verdict (e.g.
+    "Android Device", "Apple Device") -- specific enough to show, but still a
+    candidate for refinement into a form factor by an active probe."""
+    return dtype in GENERAL_TYPES
+
+
+def needs_type_probe(dtype):
+    """Whether a device is still worth an active type probe: either truly
+    unclassified OR only classified to a general OS family. Specific types
+    (Mobile, Tablet, Smart TV, Computer, ...) return False and are skipped."""
+    return is_unclassified(dtype) or is_general_type(dtype)
 
 
 def merge_candidate(current, dtype, score, source):

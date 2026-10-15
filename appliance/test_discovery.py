@@ -489,11 +489,21 @@ class ProbeTriggerTests(unittest.TestCase):
         self.assertNotIn(mac, discovery.mdns_probed)
         self.assertNotIn(mac, discovery.active_probed)
 
-    def test_existing_classified_without_name_gets_mdns(self):
-        # Classified but NO hostname -> eligible for mDNS name enrichment,
-        # but NOT the active/Nmap probe (which stays unclassified-only).
+    def test_existing_general_type_gets_mdns_and_active(self):
+        # B2: a general OS verdict ("Apple Device") is still refinable, so it
+        # now gets BOTH mDNS name enrichment AND the active/Nmap probe.
         mac = "72:e4:6b:44:a6:22"
         self._insert(mac, "Apple Device")
+        discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
+        self.assertIn(mac, discovery.mdns_probed)
+        self.assertIn(mac, discovery.active_probed)
+
+    def test_existing_specific_type_without_name_gets_mdns_only(self):
+        # A specific type with no hostname is still eligible for mDNS name
+        # enrichment, but NOT the active/Nmap probe (which is probe-eligible
+        # only for unclassified or general-OS types).
+        mac = "72:e4:6b:44:a6:33"
+        self._insert(mac, "Computer")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertIn(mac, discovery.mdns_probed)
         self.assertNotIn(mac, discovery.active_probed)
@@ -1769,8 +1779,8 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
         self.assertEqual(self.calls["nbns"], [])
         self.assertEqual(self.calls["active"], [])
 
-    # 2. classified + hostname missing -> eligible for mDNS/NBNS (not Nmap)
-    def test_classified_without_hostname_gets_name_enrichment(self):
+    # 2. general OS type -> eligible for mDNS/NBNS AND Nmap (B2 broadening)
+    def test_general_type_gets_name_enrichment_and_active(self):
         mac = "aa:00:00:00:22:02"
         discovery.update_device(
             mac, ip="192.168.1.71", seen_on_span=True, hostname=None,
@@ -1778,7 +1788,18 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
         )
         self.assertEqual(self.calls["mdns"], [mac])
         self.assertEqual(self.calls["nbns"], [mac])
-        self.assertEqual(self.calls["active"], [])  # active probe NOT broadened
+        self.assertEqual(self.calls["active"], [mac])  # now broadened to general types
+
+    # 2b. a SPECIFIC type with no hostname -> mDNS/NBNS only, never Nmap
+    def test_specific_type_without_hostname_gets_name_enrichment_only(self):
+        mac = "aa:00:00:00:22:0b"
+        discovery.update_device(
+            mac, ip="192.168.1.78", seen_on_span=True, hostname=None,
+            candidate=("Computer", discovery.SCORES["service"], "test"),
+        )
+        self.assertEqual(self.calls["mdns"], [mac])
+        self.assertEqual(self.calls["nbns"], [mac])
+        self.assertEqual(self.calls["active"], [])  # specific type not probe-eligible
 
     # 3. unclassified -> still eligible as before (incl. active probe)
     def test_unclassified_still_eligible(self):
@@ -1805,6 +1826,9 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
         self.assertTrue(discovery._name_enrichment_eligible("Apple Device", "   "))
         self.assertTrue(discovery._name_enrichment_eligible(None, None))
         self.assertTrue(discovery._name_enrichment_eligible("Generic / Unknown", "x"))
+        # B2: a general OS type is eligible even WITH a usable hostname, so the
+        # name probes get a chance to refine it into a specific type.
+        self.assertTrue(discovery._name_enrichment_eligible("Android Device", "somehost"))
 
 
 class MdnsNamePersistenceTests(unittest.TestCase):
@@ -2064,6 +2088,144 @@ class ActiveProbesSettingTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(n, 1)
+
+
+class ProbeGuardTests(unittest.TestCase):
+    """B2 guard: weak probe evidence must not flip a general OS verdict into a
+    wrong specific type (threshold = SCORES["port"]=75). Strong evidence and
+    truly-unknown rows are unaffected, and name enrichment still applies."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+
+    def tearDown(self):
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert(self, mac, device_type, class_score):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO devices (mac, ip, device_type, class_score, "
+            "first_seen, last_seen, status) "
+            "VALUES (?, '192.168.100.60', ?, ?, 'x', 'x', 'online')",
+            (mac, device_type, class_score),
+        )
+        conn.commit()
+        conn.close()
+
+    def _row(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            return conn.execute(
+                "SELECT device_type, hostname FROM devices WHERE mac=?", (mac,)
+            ).fetchone()
+        finally:
+            conn.close()
+
+    # --- the guard decision itself ---
+    def test_candidate_allowed_pure(self):
+        weak = ("Computer", discovery.SCORES["weak_service"], "NetBIOS responder")
+        port = ("Printer", discovery.SCORES["port"], "nmap")
+        # general + weak -> suppressed
+        self.assertIsNone(discovery._probe_type_candidate_allowed("Apple Device", weak))
+        self.assertIsNone(discovery._probe_type_candidate_allowed("Android Device", weak))
+        # general + port-tier (75) -> allowed (the threshold is inclusive)
+        self.assertEqual(discovery._probe_type_candidate_allowed("Apple Device", port), port)
+        # non-general stored type -> unchanged even for weak evidence
+        self.assertEqual(discovery._probe_type_candidate_allowed("Computer", weak), weak)
+        self.assertEqual(discovery._probe_type_candidate_allowed(None, weak), weak)
+        # no candidate -> None
+        self.assertIsNone(discovery._probe_type_candidate_allowed("Apple Device", None))
+
+    # --- mDNS worker path through _apply_mdns_reply ---
+    def _patch_mdns(self, service=None, weak=None, model=None, model_type=None):
+        self._mdns_orig = (
+            discovery.type_from_payload, discovery.weak_type_from_payload,
+            discovery.extract_mdns_metadata, discovery.mdns_name_candidate,
+        )
+        discovery.type_from_payload = lambda raw: service
+        discovery.weak_type_from_payload = lambda raw: weak
+        discovery.extract_mdns_metadata = lambda pkt: (
+            model, model_type,
+            discovery.SCORES["model"] if model else 0,
+            "probe model" if model else None, None, None,
+        )
+        discovery.mdns_name_candidate = lambda pkt, friendly: (None, None)
+
+    def _unpatch_mdns(self):
+        (discovery.type_from_payload, discovery.weak_type_from_payload,
+         discovery.extract_mdns_metadata, discovery.mdns_name_candidate) = self._mdns_orig
+
+    def test_mdns_weak_suppressed_on_general(self):
+        mac = "aa:11:00:00:00:01"
+        self._insert(mac, "Apple Device", discovery.SCORES["os_hint"])
+        self._patch_mdns(weak="Computer / Server")  # weak_service tier (45)
+        try:
+            discovery._apply_mdns_reply(mac, "192.168.100.60", b"",
+                                        stored_type="Apple Device")
+        finally:
+            self._unpatch_mdns()
+        self.assertEqual(self._row(mac)["device_type"], "Apple Device")  # not flipped
+
+    def test_mdns_strong_refines_general(self):
+        mac = "aa:11:00:00:00:02"
+        self._insert(mac, "Apple Device", discovery.SCORES["os_hint"])
+        self._patch_mdns(model="Chromecast", model_type="Smart TV / Media Device")
+        try:
+            discovery._apply_mdns_reply(mac, "192.168.100.60", b"",
+                                        stored_type="Apple Device")
+        finally:
+            self._unpatch_mdns()
+        self.assertEqual(self._row(mac)["device_type"], "Smart TV / Media Device")
+
+    def test_mdns_weak_applied_on_unknown(self):
+        # Guard engages only for general types; a truly-unknown row keeps today's
+        # behavior (weak evidence classifies it).
+        mac = "aa:11:00:00:00:03"
+        self._insert(mac, None, 0)
+        self._patch_mdns(weak="Computer / Server")
+        try:
+            discovery._apply_mdns_reply(mac, "192.168.100.60", b"", stored_type=None)
+        finally:
+            self._unpatch_mdns()
+        self.assertEqual(self._row(mac)["device_type"], "Computer / Server")
+
+    # --- NBNS worker path ---
+    def _run_nbns(self, mac, name):
+        orig_delay = discovery.NBNS_PROBE_DELAY_SECONDS
+        orig_query = discovery._nbns_nodestatus_query
+        orig_name = discovery.extract_nbns_nodestatus_name
+        discovery.NBNS_PROBE_DELAY_SECONDS = 0
+        discovery._nbns_nodestatus_query = lambda ip, timeout=2.0: object()
+        discovery.extract_nbns_nodestatus_name = lambda reply: name
+        try:
+            discovery.nbns_probe_device(mac, "192.168.100.60")
+        finally:
+            discovery.NBNS_PROBE_DELAY_SECONDS = orig_delay
+            discovery._nbns_nodestatus_query = orig_query
+            discovery.extract_nbns_nodestatus_name = orig_name
+
+    def test_nbns_computer_suppressed_on_general_but_name_kept(self):
+        mac = "aa:22:00:00:00:01"
+        self._insert(mac, "Android Device", discovery.SCORES["os_hint"])
+        self._run_nbns(mac, "WINPC")
+        row = self._row(mac)
+        self.assertEqual(row["device_type"], "Android Device")  # not flipped to Computer
+        self.assertEqual(row["hostname"], "WINPC")              # name still enriched
+
+    def test_nbns_computer_applied_on_unknown(self):
+        mac = "aa:22:00:00:00:02"
+        self._insert(mac, None, 0)
+        self._run_nbns(mac, "WINPC")
+        self.assertEqual(self._row(mac)["device_type"], "Computer")
 
 
 if __name__ == "__main__":

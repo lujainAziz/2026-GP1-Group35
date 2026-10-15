@@ -9,6 +9,8 @@ from classification import (
     _is_ordered_subsequence,
     fingerprint_tcp_syn,
     is_unclassified,
+    is_general_type,
+    needs_type_probe,
     merge_candidate,
     surveillance_type_from_ports,
     type_from_dns_query,
@@ -358,6 +360,31 @@ class IsUnclassifiedTests(unittest.TestCase):
     def test_false_cases(self):
         for v in ("Computer", "Apple Device", "Smart TV / Media Device"):
             self.assertFalse(is_unclassified(v))
+
+
+class GeneralTypeTests(unittest.TestCase):
+    def test_is_general_type_true(self):
+        for v in ("Android Device", "Apple Device"):
+            self.assertTrue(is_general_type(v))
+
+    def test_is_general_type_false(self):
+        # Specific/terminal types (form-factor and functional) are not general.
+        for v in ("Computer", "Smart TV / Media Device", "Mobile (Android)",
+                  "Tablet (Apple)", "IoT Device", "Network Device",
+                  "Video Surveillance Device", "Printer", "Router",
+                  "Generic / Unknown", None, ""):
+            self.assertFalse(is_general_type(v))
+
+    def test_needs_type_probe_true(self):
+        # Truly unclassified OR only an OS-family verdict.
+        for v in (None, "", "Generic / Unknown", "Android Device", "Apple Device"):
+            self.assertTrue(needs_type_probe(v))
+
+    def test_needs_type_probe_false(self):
+        for v in ("Computer", "Smart TV / Media Device", "Mobile (Android)",
+                  "Tablet (Apple)", "IoT Device", "Network Device",
+                  "Video Surveillance Device", "Printer", "Router"):
+            self.assertFalse(needs_type_probe(v))
 
 
 class MdnsQueryHintTests(unittest.TestCase):

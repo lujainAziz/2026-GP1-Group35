@@ -238,6 +238,8 @@ from classification import (
     vendor_from_mdns_query_needle,
     fingerprint_tcp_syn,
     is_unclassified,
+    is_general_type,
+    needs_type_probe,
     surveillance_type_from_ports,
     CAMERA_PORTS,
     SURVEILLANCE_MGMT_PORTS,
@@ -1503,7 +1505,7 @@ def probe_device_ports(mac, ip):
             "SELECT device_type FROM devices WHERE mac=?", (mac,)
         ).fetchone()
         conn.close()
-    if row is None or not is_unclassified(row[0]):
+    if row is None or not needs_type_probe(row[0]):
         reason = "no DB row" if row is None else f"already classified as {row[0]}"
         print(f"[PROBE-SKIP] {mac} ({ip}) {reason}")
         return
@@ -1574,7 +1576,23 @@ def _name_enrichment_eligible(device_type, hostname):
     and the probe workers' own re-checks keep this from probing repeatedly or
     probing a device that already has a usable hostname.
     """
-    return is_unclassified(device_type) or not (hostname or "").strip()
+    return needs_type_probe(device_type) or not (hostname or "").strip()
+
+
+def _probe_type_candidate_allowed(stored_type, candidate):
+    """Keep a general OS verdict sticky against weak probe evidence.
+
+    A probe may refine a general type (e.g. "Android Device") only with
+    port-tier evidence or stronger; a weak-tier type hint -- an NBNS responder,
+    an AirPlay/RAOP/SMB/SSH/ONVIF mDNS service -- must not flip it to a wrong
+    specific type. Returns the candidate unchanged for non-general stored types
+    (the normal score-based merge in update_device applies), and None when a
+    weak candidate is suppressed. The device's name/model enrichment is passed
+    to update_device separately and is unaffected.
+    """
+    if candidate and is_general_type(stored_type) and candidate[1] < SCORES["port"]:
+        return None
+    return candidate
 
 
 def schedule_active_probe(mac, ip):
@@ -1666,11 +1684,14 @@ def _mdns_needs_followup_txt(pkt):
     return _mdns_device_info_instance(pkt) is not None
 
 
-def _apply_mdns_reply(mac, ip, pkt):
+def _apply_mdns_reply(mac, ip, pkt, stored_type=None):
     """Route one probe mDNS reply through the same pipeline as passive mDNS.
 
     Returns True if the reply yielded a usable model (so no follow-up TXT
-    query is needed).
+    query is needed). When stored_type is a general OS verdict, a weak-tier
+    type hint from this reply is suppressed (see _probe_type_candidate_allowed)
+    while name/model enrichment still applies; the passive caller passes no
+    stored_type, so its behavior is unchanged.
     """
     raw = bytes(pkt)
     candidate = None
@@ -1695,6 +1716,7 @@ def _apply_mdns_reply(mac, ip, pkt):
             candidate, type_from_hostname(mdns_name), SCORES["hostname"],
             f"{mdns_name_src} (probe)",
         )
+    candidate = _probe_type_candidate_allowed(stored_type, candidate)
     if candidate or model or hostname or vendor:
         update_device(
             mac, ip=ip, vendor=vendor, hostname=hostname,
@@ -1723,6 +1745,7 @@ def mdns_probe_device(mac, ip):
         conn.close()
     if row is None or not _name_enrichment_eligible(row[0], row[1]):
         return
+    stored_type = row[0]
 
     # Diagnostic start line so the journal can distinguish "probe ran but got
     # no usable reply" (common for randomized-MAC Android phones, which do not
@@ -1736,7 +1759,7 @@ def mdns_probe_device(mac, ip):
         model_found = False
         instance = None
         for pkt in replies:
-            if _apply_mdns_reply(mac, ip, pkt):
+            if _apply_mdns_reply(mac, ip, pkt, stored_type=stored_type):
                 model_found = True
                 print(f"[MDNS-PROBE] {mac} ({ip}) -> model via DNS-SD reply")
             if instance is None and _mdns_needs_followup_txt(pkt):
@@ -1746,7 +1769,7 @@ def mdns_probe_device(mac, ip):
         # may not have been included as an additional record above.
         if not model_found and instance:
             for pkt in _mdns_unicast_query(ip, [instance], qtype="TXT"):
-                if _apply_mdns_reply(mac, ip, pkt):
+                if _apply_mdns_reply(mac, ip, pkt, stored_type=stored_type):
                     model_found = True
                     print(f"[MDNS-PROBE] {mac} ({ip}) -> model via _device-info TXT")
 
@@ -1834,6 +1857,7 @@ def nbns_probe_device(mac, ip):
         conn.close()
     if row is None or not _name_enrichment_eligible(row[0], row[1]):
         return
+    stored_type = row[0]
 
     print(f"[NBNS-PROBE] {mac} ({ip}) querying NBSTAT node status")
     try:
@@ -1856,6 +1880,7 @@ def nbns_probe_device(mac, ip):
                 candidate, type_from_hostname(name), SCORES["broadcast_name"],
                 "NBNS name",
             )
+        candidate = _probe_type_candidate_allowed(stored_type, candidate)
         update_device(
             mac, ip=ip, hostname=hostname, candidate=candidate,
             seen_on_span=False,
@@ -2385,7 +2410,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 f"type={dtype or 'Generic / Unknown'}  "
                 f"vendor={display_vendor(mac, vendor, vendor_source)}"
             )
-            if ip and is_unclassified(dtype):
+            if ip and needs_type_probe(dtype):
                 schedule_active_probe(mac, ip)
             if ip and _name_enrichment_eligible(dtype, hostname):
                 schedule_mdns_probe(mac, ip)
@@ -2556,7 +2581,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
             # make this once-per-runtime; the workers self-gate on ENABLE_*.
             effective_type = new_type or old_type
             effective_name = hostname or old_hostname
-            if ip and is_unclassified(effective_type):
+            if ip and needs_type_probe(effective_type):
                 schedule_active_probe(mac, ip)
             if ip and _name_enrichment_eligible(effective_type, effective_name):
                 schedule_mdns_probe(mac, ip)
