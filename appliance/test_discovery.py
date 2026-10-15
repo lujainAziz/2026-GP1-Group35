@@ -572,13 +572,51 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(self._get("aa:00:00:00:00:01")[0], "Computer")
         self.assertGreaterEqual(n, 1)
 
-    def test_vendor_class_upgrades_unknown(self):
+    def test_vendor_class_android_rescores_to_os_hint(self):
+        # "android-dhcp-..." is an OS token, not a phone: it now rescores to the
+        # neutral "Android Device" at the weak os_hint tier (was Mobile (Android)
+        # at dhcp_vendor -- that mapping was the bug).
         self._insert("aa:00:00:00:00:02", vendor_class="android-dhcp-15")
         discovery.rescore_stored_evidence(verbose=False)
         dtype, score, source = self._get("aa:00:00:00:00:02")
-        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    def test_xbox_vendor_class_still_upgrades_unknown(self):
+        # A specific (non-OS) vendor class is unaffected by the android change.
+        self._insert("aa:00:00:00:00:12", vendor_class="XBOX 1.0")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:12")
+        self.assertEqual(dtype, "Game Console")
         self.assertEqual(score, discovery.SCORES["dhcp_vendor"])
-        self.assertIn("android-dhcp-", source)
+
+    def test_mitv_model_beats_android_hostname(self):
+        # Real case 60:35:73:f2:4d:7b: an Android-TV A-record hostname (OS token)
+        # plus a TV model. The model (95) must win over the android OS hint (40),
+        # so the device is a Smart TV, not "Mobile (Android)".
+        self._insert("aa:00:00:00:00:13",
+                     hostname="android-aesp0", model="MiTV-AESP0", model_score=95)
+        discovery.rescore_stored_evidence(verbose=False)
+        self.assertEqual(self._get("aa:00:00:00:00:13")[0],
+                         "Smart TV / Media Device")
+
+    def test_android_only_hostname_rescores_to_os_hint(self):
+        # Real case Android-5: a bare "android" hostname with no form-factor
+        # evidence is the neutral OS label, not a phone.
+        self._insert("aa:00:00:00:00:14", hostname="Android-5")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:14")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    def test_zflip3_hostname_rescores_to_mobile(self):
+        # Real case d2:5a:1b:a1:48:de: the phone family in the hostname is
+        # form-factor evidence, so it stays Mobile (Android).
+        self._insert("aa:00:00:00:00:15", hostname="Z-Flip3-alkhas-b-noura")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:15")
+        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(score, discovery.SCORES["hostname"])
 
     def test_no_downgrade_of_stronger_classification(self):
         # Strong existing type (gateway, 100) with only weak stored vendor
@@ -888,6 +926,63 @@ class MdnsQueryVendorInferenceTests(unittest.TestCase):
         self.assertIsNone(vsrc)
         # weak mdns_query (40) cannot beat the stored dhcp_vendor (65) type.
         self.assertEqual(dtype, "Computer")
+
+
+class AndroidTvClassificationTests(unittest.TestCase):
+    """Full handle() path for the real Xiaomi Android-TV case: an mDNS response
+    whose A-record hostname carries the "android" OS token plus a TV model. The
+    model must win so the device is a Smart TV, not Mobile (Android)."""
+
+    def setUp(self):
+        import ipaddress
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        self._orig_nets = list(discovery.monitored_networks)
+        discovery.monitored_networks[:] = [ipaddress.ip_network("192.168.100.0/24")]
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.monitored_networks[:] = self._orig_nets
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _row(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute(
+            "SELECT device_type FROM devices WHERE mac=?", (mac.lower(),)
+        ).fetchone()
+        conn.close()
+        return r
+
+    def _mdns(self, mac, src_ip, answers):
+        return Ether(bytes(
+            Ether(src=mac) / IP(src=src_ip, dst="224.0.0.251") /
+            UDP(sport=5353, dport=5353) / DNS(qr=1, an=answers)
+        ))
+
+    def test_android_tv_model_beats_android_hostname(self):
+        mac = "60:35:73:f2:4d:7b"
+        pkt = self._mdns(mac, "192.168.100.50", [
+            DNSRR(rrname="android-aesp0.local", type="A", rdata="192.168.100.50"),
+            DNSRR(rrname="x._device-info._tcp.local", type="TXT",
+                  rdata=[b"model=MiTV-AESP0"]),
+        ])
+        discovery.handle(pkt)
+        self.assertEqual(self._row(mac)[0], "Smart TV / Media Device")
+
+    def test_android_only_hostname_is_android_device(self):
+        mac = "d2:9b:4b:ce:f7:84"
+        pkt = self._mdns(mac, "192.168.100.51", [
+            DNSRR(rrname="Android-5.local", type="A", rdata="192.168.100.51"),
+        ])
+        discovery.handle(pkt)
+        self.assertEqual(self._row(mac)[0], "Android Device")
 
 
 class CleanupStaleMdnsQueryTests(unittest.TestCase):

@@ -223,6 +223,8 @@ from classification import (
     is_locally_administered_mac,
     _first_match,
     type_from_hostname,
+    type_from_os_hint,
+    OS_LEVEL_TYPES,
     type_from_vendor,
     type_from_payload,
     weak_type_from_payload,
@@ -2284,6 +2286,10 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
         candidate, type_from_hostname(hostname), SCORES["hostname"], "hostname"
     )
     candidate = merge_candidate(
+        candidate, type_from_os_hint(hostname), SCORES["os_hint"],
+        "android OS hostname"
+    )
+    candidate = merge_candidate(
         candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor"
     )
 
@@ -2417,6 +2423,12 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 type_from_hostname(hostname or old_hostname),
                 SCORES["hostname"],
                 "stored hostname",
+            )
+            candidate = merge_candidate(
+                candidate,
+                type_from_os_hint(hostname or old_hostname),
+                SCORES["os_hint"],
+                "android OS hostname",
             )
 
             new_type = None
@@ -2907,6 +2919,12 @@ def handle_dhcp(packet):
                     candidate, vc_dtype, SCORES["dhcp_vendor"],
                     f"DHCP vendor class ({vc_needle})"
                 )
+            # "android-dhcp-..." identifies only the OS (phones, tablets, TVs,
+            # boxes all send it), so it is a weak os_hint, never a form factor.
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(vendor_class), SCORES["os_hint"],
+                "android OS (DHCP vendor class)"
+            )
 
         elif key == "param_req_list":
             try:
@@ -3171,8 +3189,15 @@ def handle(packet):
                 # avoid persisting a device's browsing/service history.
                 dtype, needle = type_from_dns_query(qname)
                 if dtype:
+                    # An OS-only verdict (e.g. an Android connectivity domain,
+                    # also hit by Android TVs) enters at the weak os_hint tier;
+                    # every other domain stays at weak_service.
+                    dns_score = (
+                        SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                        else SCORES["weak_service"]
+                    )
                     candidate = merge_candidate(
-                        candidate, dtype, SCORES["weak_service"],
+                        candidate, dtype, dns_score,
                         f"DNS query (matched: {needle})"
                     )
                 domain_vendor = vendor_from_domain_needle(needle)
@@ -3557,6 +3582,10 @@ def rescore_stored_evidence(verbose=True):
                 "stored hostname",
             )
             candidate = merge_candidate(
+                candidate, type_from_os_hint(hostname), SCORES["os_hint"],
+                "android OS hostname",
+            )
+            candidate = merge_candidate(
                 candidate, type_from_model(model), SCORES["model"],
                 "device model identifier",
             )
@@ -3575,6 +3604,10 @@ def rescore_stored_evidence(verbose=True):
                     candidate, vc_dtype, SCORES["dhcp_vendor"],
                     f"DHCP vendor class ({vc_needle})",
                 )
+            candidate = merge_candidate(
+                candidate, type_from_os_hint(vendor_class), SCORES["os_hint"],
+                "android OS (DHCP vendor class)",
+            )
             candidate = merge_candidate(
                 candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor",
             )

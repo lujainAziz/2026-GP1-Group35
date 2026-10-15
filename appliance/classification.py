@@ -22,6 +22,12 @@ SCORES = {
     "dhcp": 60,
     "broadcast_name": 50,
     "weak_service": 45,
+    # An OS-only signal (e.g. the "android" token in a hostname, DHCP vendor
+    # class, or OS connectivity-check domain). It identifies the operating
+    # system but NOT the form factor, so it sits below every form-factor signal
+    # and, crucially, below "dhcp" (60) so a genuine phone/stack fingerprint
+    # still wins. Always overridden by real evidence.
+    "os_hint": 40,
     # An mDNS *query* for a service the device wants is a weak OS signal
     # (below weak_service): it only nudges an otherwise-unknown device and is
     # always overridden by real evidence.
@@ -185,9 +191,11 @@ DHCP_SIGNATURES = {
 # Android TV boxes).
 VENDOR_CLASS_HINTS = [
     ("xbox", "Game Console"),            # specific -- must precede "msft 5.0"
-    ("android-dhcp-", "Mobile (Android)"),
     ("msft 5.0", "Computer"),            # Windows DHCP client (generic, last)
 ]
+# "android-dhcp-..." is sent by Android phones, tablets, TVs and set-top boxes
+# alike, so it only identifies the OS, never the form factor. It is handled as
+# an OS token (see OS_HINTS / type_from_os_hint) at SCORES["os_hint"], NOT here.
 
 # mDNS *query* service-types -> weak OS hint. A device multicasts queries for
 # services it wants to USE, visible even when only its broadcasts reach us. Only
@@ -231,10 +239,13 @@ DOMAIN_HINTS = [
     ("mzstatic.com", "Apple Device"),
     ("apple-dns.net", "Apple Device"),
 
-    # Android connectivity-check / Play Services infrastructure
-    ("connectivitycheck.gstatic.com", "Mobile (Android)"),
-    ("android.clients.google.com", "Mobile (Android)"),
-    ("play.googleapis.com", "Mobile (Android)"),
+    # Android connectivity-check / Play Services infrastructure. These prove the
+    # OS (Android), not the form factor -- Android TVs and boxes hit the same
+    # endpoints -- so they map to the neutral OS label and are scored at
+    # SCORES["os_hint"] by the caller (see OS_LEVEL_TYPES).
+    ("connectivitycheck.gstatic.com", "Android Device"),
+    ("android.clients.google.com", "Android Device"),
+    ("play.googleapis.com", "Android Device"),
 
     # Windows Network Connectivity Status Indicator
     ("msftconnecttest.com", "Computer"),
@@ -262,8 +273,12 @@ DOMAIN_HINTS = [
 HOSTNAME_HINTS = [
     ("iphone", "Mobile (Apple)"),
     ("ipad", "Tablet (Apple)"),
-    ("android", "Mobile (Android)"),
+    # Bare "android" is an OS token, not a form factor -- handled weakly via
+    # OS_HINTS. Only phone-specific families are a form-factor signal here.
     ("galaxy", "Mobile (Android)"),
+    ("z-flip", "Mobile (Android)"),
+    ("z-fold", "Mobile (Android)"),
+    ("redmi", "Mobile (Android)"),
     ("pixel", "Mobile (Android)"),
     ("macbook", "Computer"),
     ("imac", "Computer"),
@@ -307,6 +322,22 @@ HOSTNAME_HINTS = [
     ("router", "Router"),
     ("gateway", "Router"),
 ]
+
+# OS-level tokens that identify only the operating system, never the form
+# factor. "android" appears in the hostnames, DHCP vendor classes
+# ("android-dhcp-...") and OS connectivity domains of Android phones, tablets,
+# TVs and set-top boxes alike. Classified at SCORES["os_hint"] (weak) so that
+# any real form-factor evidence -- a TV service, a TV/box model, or a
+# phone/tablet model/hostname family -- overrides it. Match is substring,
+# lowercased (see type_from_os_hint()).
+OS_HINTS = [
+    ("android", "Android Device"),
+]
+
+# The set of verdicts that are OS-only. A caller that resolves one of these
+# from any table must enter it at SCORES["os_hint"], regardless of which table
+# produced it (e.g. an Android OS connectivity domain in DOMAIN_HINTS).
+OS_LEVEL_TYPES = frozenset(dtype for _, dtype in OS_HINTS)
 
 # Vendor-only classification is intentionally conservative.  OUI lookup still
 # identifies the manufacturer for thousands of vendors, but type is assigned
@@ -358,8 +389,19 @@ MODEL_TYPE_HINTS = [
     ("ipad", "Tablet (Apple)"),
     ("apple tv", "Smart TV / Media Device"),
     ("appletv", "Smart TV / Media Device"),
-    ("galaxy tab", "Tablet (Android)"),
+    ("galaxy tab", "Tablet (Android)"),  # tablet -- must precede "galaxy"
     ("galaxy", "Mobile (Android)"),
+    ("z-flip", "Mobile (Android)"),
+    ("z-fold", "Mobile (Android)"),
+    ("redmi", "Mobile (Android)"),
+    # Samsung Galaxy PHONE model-code prefixes only (SM-S/A/G/F/N). Tablet
+    # prefixes (SM-T/X/P) are deliberately excluded so tablets are never
+    # classified as phones.
+    ("sm-s", "Mobile (Android)"),
+    ("sm-a", "Mobile (Android)"),
+    ("sm-g", "Mobile (Android)"),
+    ("sm-f", "Mobile (Android)"),
+    ("sm-n", "Mobile (Android)"),
     ("pixel", "Mobile (Android)"),
     ("chromecast", "Smart TV / Media Device"),
     ("roku", "Smart TV / Media Device"),
@@ -367,6 +409,17 @@ MODEL_TYPE_HINTS = [
     ("webos", "Smart TV / Media Device"),
     ("oled", "Smart TV / Media Device"),
     ("qled", "Smart TV / Media Device"),
+    # Android-based TVs / set-top boxes. These are form-factor evidence (a TV),
+    # unlike the bare "android" OS token.
+    ("android tv", "Smart TV / Media Device"),
+    ("androidtv", "Smart TV / Media Device"),
+    ("mitv", "Smart TV / Media Device"),
+    ("mi tv", "Smart TV / Media Device"),
+    ("mibox", "Smart TV / Media Device"),
+    ("mi box", "Smart TV / Media Device"),
+    ("shield", "Smart TV / Media Device"),
+    ("fire tv", "Smart TV / Media Device"),
+    ("firetv", "Smart TV / Media Device"),
     ("laserjet", "Printer"),
     ("officejet", "Printer"),
     ("deskjet", "Printer"),
@@ -621,6 +674,29 @@ def vendor_from_domain_needle(needle):
     return None
 
 
+# Phone-family brands such as "galaxy" and "redmi" also ship tablets (Galaxy
+# Tab, Redmi Pad) and TVs (Redmi TV). A bare family name means a phone, but when
+# the name ALSO carries a non-phone form-factor word it is not a phone. Matched
+# as whole tokens (split on -, _, ., space) so an incidental substring like the
+# "tab" inside "database" never triggers a false veto.
+_NON_PHONE_FORM_FACTOR_TOKENS = frozenset(("pad", "tab", "tv"))
+
+
+def _android_phone_family_form_factor(dtype, text):
+    """Correct a phone-family verdict when the name also names a non-phone form
+    factor. Only ever adjusts "Mobile (Android)"; every other dtype passes
+    through unchanged.
+    """
+    if dtype != "Mobile (Android)":
+        return dtype
+    tokens = set(re.split(r"[-_.\s]+", (text or "").lower()))
+    if "tv" in tokens:
+        return "Smart TV / Media Device"
+    if "pad" in tokens or "tab" in tokens:
+        return "Tablet (Android)"
+    return dtype
+
+
 def type_from_model(model):
     if not model:
         return None
@@ -630,7 +706,7 @@ def type_from_model(model):
     text = model.lower()
     for needle, dtype in MODEL_TYPE_HINTS:
         if needle in text:
-            return dtype
+            return _android_phone_family_form_factor(dtype, text)
     return None
 
 
@@ -660,7 +736,17 @@ def _first_match(text, table):
 
 
 def type_from_hostname(hostname):
-    return _first_match(hostname, HOSTNAME_HINTS)
+    return _android_phone_family_form_factor(
+        _first_match(hostname, HOSTNAME_HINTS), hostname
+    )
+
+
+def type_from_os_hint(text):
+    """Return an OS-only verdict ("Android Device") from a hostname or DHCP
+    vendor-class string, or None. The caller must merge this at
+    SCORES["os_hint"] so any form-factor evidence overrides it.
+    """
+    return _first_match(text, OS_HINTS)
 
 
 def type_from_vendor(vendor):
