@@ -846,6 +846,50 @@ def type_from_vendor_class(vendor_class):
     return None, None
 
 
+# Huawei devices send a DHCP option-60 vendor class of the form
+# "HUAWEI:android:<CODE>", where <CODE> is the model-line prefix (e.g. DBY-W09 ->
+# "DBY"). The "android" token alone is OS-only, but a KNOWN model-code prefix is
+# form-factor evidence. Unknown codes are deliberately left to the existing
+# OS-only path (type_from_os_hint -> "Android Device").
+HUAWEI_VENDOR_CLASS_PREFIX = "huawei:"
+HUAWEI_MODEL_CODE_HINTS = {
+    "dby": "Tablet (Android)",   # MatePad 11 (DBY-W09)
+    "mna": "Mobile (Android)",   # P60 Pro (MNA-LX9)
+}
+
+
+def vendor_from_vendor_class(vendor_class):
+    """Infer the manufacturer from a DHCP option-60 vendor class.
+
+    Only the unambiguous Huawei "HUAWEI:..." prefix is recognised. The caller
+    must gate this on the MAC having no real OUI vendor (as with the other
+    inferred-vendor paths), so a genuine OUI vendor is never overwritten.
+    """
+    if not vendor_class:
+        return None
+    if vendor_class.lower().startswith(HUAWEI_VENDOR_CLASS_PREFIX):
+        return "Huawei"
+    return None
+
+
+def type_from_huawei_vendor_class(vendor_class):
+    """Return a form factor from a known Huawei model-code prefix, or None.
+
+    Returns None for a non-Huawei vendor class and for an unknown Huawei code,
+    so unknown codes fall back to the OS-only "Android Device" classification.
+    """
+    if not vendor_class:
+        return None
+    lowered = vendor_class.lower()
+    if not lowered.startswith(HUAWEI_VENDOR_CLASS_PREFIX):
+        return None
+    code = lowered.rsplit(":", 1)[-1].strip()
+    for prefix, dtype in HUAWEI_MODEL_CODE_HINTS.items():
+        if code.startswith(prefix):
+            return dtype
+    return None
+
+
 def type_from_mdns_query(qname):
     """Match an mDNS *query* service-type against MDNS_QUERY_HINTS.
 

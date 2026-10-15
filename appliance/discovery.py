@@ -231,6 +231,8 @@ from classification import (
     type_from_dns_query,
     type_from_vendor_class,
     type_from_dhcp_signature,
+    vendor_from_vendor_class,
+    type_from_huawei_vendor_class,
     type_from_mdns_query,
     vendor_from_mdns_query_needle,
     fingerprint_tcp_syn,
@@ -2997,6 +2999,22 @@ def handle(packet):
         if dhcp_candidate:
             candidate = merge_candidate(candidate, *dhcp_candidate)
 
+        # Huawei's "HUAWEI:android:<CODE>" vendor class: a KNOWN model-code
+        # prefix is form-factor evidence (above the generic android os_hint),
+        # and the "HUAWEI:" prefix infers the manufacturer when the MAC has no
+        # real OUI vendor (same gate as the mDNS-query inference below).
+        if vendor_class:
+            candidate = merge_candidate(
+                candidate, type_from_huawei_vendor_class(vendor_class),
+                SCORES["dhcp_vendor"], "Huawei DHCP vendor class"
+            )
+            vc_vendor = vendor_from_vendor_class(vendor_class)
+            if vc_vendor and (
+                is_locally_administered_mac(mac) or get_vendor(mac) is None
+            ):
+                observed_vendor = vc_vendor
+                observed_vendor_source = "inferred: DHCP vendor class"
+
     if UDP in packet:
         sport = int(packet[UDP].sport)
         dport = int(packet[UDP].dport)
@@ -3618,6 +3636,10 @@ def rescore_stored_evidence(verbose=True):
             candidate = merge_candidate(
                 candidate, type_from_os_hint(vendor_class), SCORES["os_hint"],
                 "android OS (DHCP vendor class)",
+            )
+            candidate = merge_candidate(
+                candidate, type_from_huawei_vendor_class(vendor_class),
+                SCORES["dhcp_vendor"], "Huawei DHCP vendor class",
             )
             candidate = merge_candidate(
                 candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor",

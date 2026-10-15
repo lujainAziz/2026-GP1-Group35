@@ -14,9 +14,11 @@ from classification import (
     type_from_dns_query,
     type_from_hostname,
     type_from_dhcp_signature,
+    type_from_huawei_vendor_class,
     type_from_mdns_query,
     type_from_model,
     type_from_os_hint,
+    vendor_from_vendor_class,
     type_from_payload,
     type_from_vendor,
     type_from_vendor_class,
@@ -153,6 +155,34 @@ class DhcpSignatureMatchTests(unittest.TestCase):
             self.assertIsNone(C.type_from_dhcp_signature((1, 2, 3, 4)))
         finally:
             C.DHCP_SIGNATURES = saved
+
+
+class HuaweiVendorClassTests(unittest.TestCase):
+    """Fix A: HUAWEI:android:<CODE> vendor class -> vendor + known form factors."""
+
+    def test_vendor_inferred_from_huawei_prefix(self):
+        self.assertEqual(vendor_from_vendor_class("HUAWEI:android:DBY"), "Huawei")
+        self.assertEqual(vendor_from_vendor_class("HUAWEI:android:MNA"), "Huawei")
+        self.assertEqual(vendor_from_vendor_class("huawei:android:dby"), "Huawei")
+
+    def test_vendor_not_inferred_from_non_huawei(self):
+        for vc in ("android-dhcp-13", "MSFT 5.0", "", None):
+            self.assertIsNone(vendor_from_vendor_class(vc))
+
+    def test_known_model_codes_are_form_factor(self):
+        # Real cases: DBY-W09 = MatePad 11 (tablet); MNA-LX9 = P60 Pro (phone).
+        self.assertEqual(type_from_huawei_vendor_class("HUAWEI:android:DBY"),
+                         "Tablet (Android)")
+        self.assertEqual(type_from_huawei_vendor_class("HUAWEI:android:MNA"),
+                         "Mobile (Android)")
+
+    def test_unknown_code_stays_os_only(self):
+        # Unknown model code -> None, so it falls back to the OS-only path.
+        self.assertIsNone(type_from_huawei_vendor_class("HUAWEI:android:XYZ"))
+
+    def test_non_huawei_vendor_class_returns_none(self):
+        for vc in ("android-dhcp-13", "MSFT 5.0", "", None):
+            self.assertIsNone(type_from_huawei_vendor_class(vc))
 
 
 class VendorHintsTests(unittest.TestCase):

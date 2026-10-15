@@ -11,7 +11,7 @@ from scapy.layers.netbios import (
 )
 from scapy.layers.llmnr import LLMNRQuery, LLMNRResponse
 from scapy.layers.dns import DNS, DNSRR, DNSQR
-from scapy.all import Ether, IP, TCP, UDP
+from scapy.all import Ether, IP, TCP, UDP, BOOTP, DHCP
 
 import discovery
 from discovery import (
@@ -639,6 +639,25 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(dtype, "Mobile (Android)")
         self.assertEqual(score, discovery.SCORES["hostname"])
 
+    def test_huawei_known_code_rescores_to_form_factor(self):
+        # Fix A real cases: DBY = MatePad 11 (tablet), MNA = P60 Pro (phone).
+        self._insert("aa:00:00:00:00:18", vendor_class="HUAWEI:android:DBY")
+        self._insert("aa:00:00:00:00:19", vendor_class="HUAWEI:android:MNA")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype_tab, score_tab, _ = self._get("aa:00:00:00:00:18")
+        dtype_phone, _, _ = self._get("aa:00:00:00:00:19")
+        self.assertEqual(dtype_tab, "Tablet (Android)")
+        self.assertEqual(score_tab, discovery.SCORES["dhcp_vendor"])
+        self.assertEqual(dtype_phone, "Mobile (Android)")
+
+    def test_huawei_unknown_code_rescores_to_os_hint(self):
+        # Unknown Huawei model code stays OS-only ("Android Device").
+        self._insert("aa:00:00:00:00:1a", vendor_class="HUAWEI:android:XYZ")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:1a")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
     def test_no_downgrade_of_stronger_classification(self):
         # Strong existing type (gateway, 100) with only weak stored vendor
         # evidence must be left untouched.
@@ -1004,6 +1023,78 @@ class AndroidTvClassificationTests(unittest.TestCase):
         ])
         discovery.handle(pkt)
         self.assertEqual(self._row(mac)[0], "Android Device")
+
+
+class HuaweiVendorClassHandleTests(unittest.TestCase):
+    """Full handle() path for the Huawei DHCP vendor class: a known model code
+    classifies the form factor and infers the Huawei vendor (only when the MAC
+    has no real OUI vendor)."""
+
+    def setUp(self):
+        import ipaddress
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        self._orig_nets = list(discovery.monitored_networks)
+        discovery.monitored_networks[:] = [ipaddress.ip_network("192.168.100.0/24")]
+        self._orig_oui = dict(discovery.oui_dict)
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.monitored_networks[:] = self._orig_nets
+        discovery.oui_dict.clear()
+        discovery.oui_dict.update(self._orig_oui)
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _get(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute(
+            "SELECT device_type, vendor, vendor_source FROM devices WHERE mac=?",
+            (mac.lower(),),
+        ).fetchone()
+        conn.close()
+        return r
+
+    def _dhcp(self, mac, src_ip, vendor_class):
+        # Explicit broadcast L2 dst so scapy does not try to resolve a MAC.
+        return Ether(bytes(
+            Ether(src=mac, dst="ff:ff:ff:ff:ff:ff") /
+            IP(src=src_ip, dst="255.255.255.255") /
+            UDP(sport=68, dport=67) / BOOTP(chaddr=b"\x00" * 16) /
+            DHCP(options=[("vendor_class_id", vendor_class.encode()), "end"])
+        ))
+
+    def test_huawei_tablet_randomized_mac(self):
+        mac = "02:11:22:33:44:55"  # locally administered -> no OUI vendor
+        discovery.handle(self._dhcp(mac, "192.168.100.60", "HUAWEI:android:DBY"))
+        dtype, vendor, vsrc = self._get(mac)
+        self.assertEqual(dtype, "Tablet (Android)")
+        self.assertEqual(vendor, "Huawei")
+        self.assertEqual(vsrc, "inferred: DHCP vendor class")
+
+    def test_huawei_phone_randomized_mac(self):
+        mac = "02:66:77:88:99:aa"
+        discovery.handle(self._dhcp(mac, "192.168.100.61", "HUAWEI:android:MNA"))
+        dtype, vendor, vsrc = self._get(mac)
+        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(vendor, "Huawei")
+        self.assertEqual(vsrc, "inferred: DHCP vendor class")
+
+    def test_real_oui_vendor_not_overwritten(self):
+        # A real OUI vendor must survive: the gate stops the inferred "Huawei".
+        mac = "e0:28:6d:01:02:03"
+        discovery.oui_dict["e0286d"] = "Huawei Technologies Co.,Ltd"
+        discovery.handle(self._dhcp(mac, "192.168.100.62", "HUAWEI:android:DBY"))
+        dtype, vendor, vsrc = self._get(mac)
+        self.assertEqual(dtype, "Tablet (Android)")       # form factor still set
+        self.assertEqual(vendor, "Huawei Technologies Co.,Ltd")
+        self.assertIsNone(vsrc)                           # real OUI, not inferred
 
 
 class CleanupStaleMdnsQueryTests(unittest.TestCase):
