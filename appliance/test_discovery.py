@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import socket
 import sqlite3
@@ -1237,6 +1239,130 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
         self.assertNotEqual(dtype, "Security Camera")
         self.assertEqual(score, discovery.SCORES["port"])
         self.assertIn("554", source)
+
+
+class ActiveProbeLoggingTests(unittest.TestCase):
+    """Fix B: probe_device_ports() logs one line for every branch. Logging only
+    -- behaviour (classification / control flow) is unchanged."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db_path = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        self._orig_delay = discovery.ACTIVE_PROBE_DELAY_SECONDS
+        self._orig_check_output = discovery.subprocess.check_output
+        discovery.ACTIVE_PROBE_DELAY_SECONDS = 0
+
+    def tearDown(self):
+        discovery.ACTIVE_PROBE_DELAY_SECONDS = self._orig_delay
+        discovery.subprocess.check_output = self._orig_check_output
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db_path
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _insert(self, mac, ip, device_type):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO devices (mac, ip, device_type, first_seen, last_seen, status) "
+            "VALUES (?, ?, ?, 'x', 'x', 'online')",
+            (mac, ip, device_type),
+        )
+        conn.commit()
+        conn.close()
+
+    def _nmap(self, table_text):
+        def _check_output(cmd, **kwargs):
+            return table_text
+        discovery.subprocess.check_output = _check_output
+
+    def _nmap_raises(self, exc):
+        def _check_output(cmd, **kwargs):
+            raise exc
+        discovery.subprocess.check_output = _check_output
+
+    def _run(self, mac, ip):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            discovery.probe_device_ports(mac, ip)
+        return buf.getvalue()
+
+    def _dtype(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT device_type FROM devices WHERE mac=?", (mac,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else "<no row>"
+
+    def test_skip_already_classified(self):
+        mac, ip = "aa:00:00:00:b0:01", "192.168.1.10"
+        self._insert(mac, ip, "Computer")
+        # nmap must never be invoked for an already-classified device.
+        self._nmap_raises(AssertionError("nmap should not run"))
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-SKIP]", out)
+        self.assertIn("already classified as Computer", out)
+        self.assertEqual(self._dtype(mac), "Computer")  # unchanged
+
+    def test_skip_no_db_row(self):
+        out = self._run("aa:00:00:00:b0:02", "192.168.1.11")
+        self.assertIn("[PROBE-SKIP]", out)
+        self.assertIn("no DB row", out)
+
+    def test_nmap_not_installed(self):
+        mac, ip = "aa:00:00:00:b0:03", "192.168.1.12"
+        self._insert(mac, ip, None)
+        self._nmap_raises(FileNotFoundError())
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-ERR]", out)
+        self.assertIn("nmap not installed", out)
+        self.assertEqual(self._dtype(mac), None)  # still unclassified
+
+    def test_nmap_timeout(self):
+        mac, ip = "aa:00:00:00:b0:04", "192.168.1.13"
+        self._insert(mac, ip, None)
+        self._nmap_raises(discovery.subprocess.TimeoutExpired(cmd="nmap", timeout=60))
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-TIMEOUT]", out)
+
+    def test_nmap_generic_error(self):
+        mac, ip = "aa:00:00:00:b0:05", "192.168.1.14"
+        self._insert(mac, ip, None)
+        self._nmap_raises(RuntimeError("boom"))
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-ERR]", out)
+        self.assertIn("nmap failed", out)
+
+    def test_no_open_ports(self):
+        mac, ip = "aa:00:00:00:b0:06", "192.168.1.15"
+        self._insert(mac, ip, None)
+        self._nmap("PORT   STATE  SERVICE\n(all closed)\n")
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-NORESULT]", out)
+        self.assertIn("no open ports", out)
+        self.assertEqual(self._dtype(mac), None)  # unchanged
+
+    def test_open_ports_but_no_hint(self):
+        mac, ip = "aa:00:00:00:b0:07", "192.168.1.16"
+        self._insert(mac, ip, None)
+        self._nmap("PORT      STATE  SERVICE\n1234/tcp  open   unknown\n")
+        out = self._run(mac, ip)
+        self.assertIn("[PROBE-NORESULT]", out)
+        self.assertIn("1234", out)
+        self.assertIn("no type hint", out)
+        self.assertEqual(self._dtype(mac), None)  # unchanged
+
+    def test_success_still_logs_probed(self):
+        mac, ip = "aa:00:00:00:b0:08", "192.168.1.17"
+        self._insert(mac, ip, None)
+        self._nmap("PORT     STATE  SERVICE\n9100/tcp open   jetdirect\n")
+        out = self._run(mac, ip)
+        self.assertIn("[PROBED]", out)
+        self.assertEqual(self._dtype(mac), "Printer")  # behaviour preserved
 
 
 class OnvifRefinementTests(unittest.TestCase):

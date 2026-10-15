@@ -1503,6 +1503,8 @@ def probe_device_ports(mac, ip):
         ).fetchone()
         conn.close()
     if row is None or not is_unclassified(row[0]):
+        reason = "no DB row" if row is None else f"already classified as {row[0]}"
+        print(f"[PROBE-SKIP] {mac} ({ip}) {reason}")
         return
 
     try:
@@ -1511,7 +1513,13 @@ def probe_device_ports(mac, ip):
              "-p", ACTIVE_PROBE_PORTS, ip],
             text=True, stderr=subprocess.DEVNULL, timeout=60,
         )
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, FileNotFoundError):
+            print(f"[PROBE-ERR] {mac} ({ip}) nmap not installed")
+        elif isinstance(exc, subprocess.TimeoutExpired):
+            print(f"[PROBE-TIMEOUT] {mac} ({ip}) nmap timed out")
+        else:
+            print(f"[PROBE-ERR] {mac} ({ip}) nmap failed: {exc}")
         return
 
     open_ports = []
@@ -1547,6 +1555,12 @@ def probe_device_ports(mac, ip):
                 candidate=(hint, SCORES["port"], f"nmap active probe port {port}"),
             )
             return
+
+    # Reached only when nothing above classified the device.
+    if open_ports:
+        print(f"[PROBE-NORESULT] {mac} ({ip}) open ports {open_ports} but no type hint")
+    else:
+        print(f"[PROBE-NORESULT] {mac} ({ip}) no open ports")
 
 
 def _name_enrichment_eligible(device_type, hostname):
