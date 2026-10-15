@@ -618,6 +618,27 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(dtype, "Mobile (Android)")
         self.assertEqual(score, discovery.SCORES["hostname"])
 
+    def test_android_signature_with_extra_options_rescores_to_os_hint(self):
+        # Fix 2 real case: Z-Flip3 PRL = base Android + 114 + 108 (RFC 8925).
+        # Exact-tuple lookup missed it; tolerant matching classifies it, and it
+        # is OS-only -> "Android Device" at os_hint (no hostname evidence here).
+        self._insert("aa:00:00:00:00:16",
+                     dhcp_signature="1,3,6,15,26,28,51,58,59,43,114,108")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:16")
+        self.assertEqual(dtype, "Android Device")
+        self.assertEqual(score, discovery.SCORES["os_hint"])
+
+    def test_zflip3_hostname_plus_signature_stays_mobile(self):
+        # With the phone-family hostname AND the Android signature, the
+        # form-factor hostname (90) wins over the OS signature (os_hint).
+        self._insert("aa:00:00:00:00:17", hostname="Z-Flip3-alkhas-b-noura",
+                     dhcp_signature="1,3,6,15,26,28,51,58,59,43,114,108")
+        discovery.rescore_stored_evidence(verbose=False)
+        dtype, score, _ = self._get("aa:00:00:00:00:17")
+        self.assertEqual(dtype, "Mobile (Android)")
+        self.assertEqual(score, discovery.SCORES["hostname"])
+
     def test_no_downgrade_of_stronger_classification(self):
         # Strong existing type (gateway, 100) with only weak stored vendor
         # evidence must be left untouched.

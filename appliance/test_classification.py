@@ -6,12 +6,14 @@ from classification import (
     DHCP_SIGNATURES,
     PORT_HINTS,
     SCORES,
+    _is_ordered_subsequence,
     fingerprint_tcp_syn,
     is_unclassified,
     merge_candidate,
     surveillance_type_from_ports,
     type_from_dns_query,
     type_from_hostname,
+    type_from_dhcp_signature,
     type_from_mdns_query,
     type_from_model,
     type_from_os_hint,
@@ -77,6 +79,80 @@ class DhcpFingerprintTests(unittest.TestCase):
         self.assertEqual(os_dtype, "Android Device")
         result = merge_candidate(tv, os_dtype, SCORES["os_hint"], "android OS")
         self.assertEqual(result, tv)
+
+
+class DhcpSignatureMatchTests(unittest.TestCase):
+    """Fix 2: tolerant option-55 matching (ordered subsequence + 75% coverage)."""
+
+    APPLE = (1, 121, 3, 6, 15, 119, 252)
+    ANDROID = (1, 3, 6, 15, 26, 28, 51, 58, 59, 43)
+    WINDOWS = (1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252)
+    ZFLIP3 = (1, 3, 6, 15, 26, 28, 51, 58, 59, 43, 114, 108)  # real device PRL
+
+    def test_exact_signatures_preserved(self):
+        for sig, dtype in DHCP_SIGNATURES.items():
+            self.assertEqual(type_from_dhcp_signature(sig), dtype, sig)
+
+    def test_zflip3_android_signature_is_android_device(self):
+        # Real case d2:5a:1b:a1:48:de: base Android PRL + 114 + 108 (RFC 8925).
+        # Android option-55 is OS-only -> "Android Device", never a phone.
+        self.assertEqual(type_from_dhcp_signature(self.ZFLIP3), "Android Device")
+
+    def test_apple_and_windows_types_unchanged(self):
+        self.assertEqual(type_from_dhcp_signature(self.APPLE), "Apple Device")
+        self.assertEqual(type_from_dhcp_signature(self.WINDOWS), "Computer")
+
+    def test_tolerates_appended_option(self):
+        self.assertEqual(type_from_dhcp_signature(self.APPLE + (108,)),
+                         "Apple Device")
+
+    def test_tolerates_interspersed_option(self):
+        # 114 inserted just before the final option; order of ANDROID preserved.
+        prl = (1, 3, 6, 15, 26, 28, 51, 58, 59, 114, 43)
+        self.assertTrue(_is_ordered_subsequence(self.ANDROID, prl))
+        self.assertEqual(type_from_dhcp_signature(prl), "Android Device")
+
+    def test_coverage_floor_rejects_short_sig_in_long_list(self):
+        # The short Apple sig IS an ordered subsequence here, but covers only
+        # 7/10 = 0.70 (< 0.75), so the coverage floor rejects it.
+        long_prl = self.APPLE + (200, 201, 202)
+        self.assertTrue(_is_ordered_subsequence(self.APPLE, long_prl))
+        self.assertIsNone(type_from_dhcp_signature(long_prl))
+
+    def test_unrelated_prl_returns_none(self):
+        self.assertIsNone(type_from_dhcp_signature((50, 51, 52, 53)))
+
+    def test_too_short_prefix_returns_none(self):
+        self.assertIsNone(type_from_dhcp_signature((1, 3, 6, 15)))
+
+    def test_empty_prl_returns_none(self):
+        self.assertIsNone(type_from_dhcp_signature(()))
+
+    def test_no_cross_type_subsumption_among_known_signatures(self):
+        # Invariant: no known signature is an ordered subsequence of another of
+        # a DIFFERENT type -- keeps tolerant matching from ever cross-matching.
+        sigs = list(DHCP_SIGNATURES.items())
+        for a, ta in sigs:
+            for b, tb in sigs:
+                if a is not b and ta != tb:
+                    self.assertFalse(_is_ordered_subsequence(a, b),
+                                     f"{a} ({ta}) subsumed by {b} ({tb})")
+
+    def test_longest_match_wins_over_shorter(self):
+        # ZFLIP3 matches both the 10- and 11-length Android signatures; the
+        # longest wins. (Both agree, so the result is Android Device.)
+        self.assertEqual(type_from_dhcp_signature(self.ZFLIP3), "Android Device")
+
+    def test_ambiguous_equal_length_conflict_returns_none(self):
+        # Directly exercise the ambiguity branch: two equal-length signatures of
+        # different types both matching -> None (never guess).
+        import classification as C
+        saved = C.DHCP_SIGNATURES
+        C.DHCP_SIGNATURES = {(1, 2, 3): "Type A", (1, 2, 4): "Type B"}
+        try:
+            self.assertIsNone(C.type_from_dhcp_signature((1, 2, 3, 4)))
+        finally:
+            C.DHCP_SIGNATURES = saved
 
 
 class VendorHintsTests(unittest.TestCase):

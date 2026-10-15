@@ -230,6 +230,7 @@ from classification import (
     weak_type_from_payload,
     type_from_dns_query,
     type_from_vendor_class,
+    type_from_dhcp_signature,
     type_from_mdns_query,
     vendor_from_mdns_query_needle,
     fingerprint_tcp_syn,
@@ -2930,9 +2931,15 @@ def handle_dhcp(packet):
             try:
                 sig = tuple(int(x) for x in value)
                 dhcp_sig = ",".join(str(x) for x in sig)
-                dtype = DHCP_SIGNATURES.get(sig)
+                dtype = type_from_dhcp_signature(sig)
+                # The Android option-55 list is OS-only (phones/tablets/TVs all
+                # send it) -> os_hint; Apple/Windows fingerprints stay at dhcp.
+                dhcp_score = (
+                    SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                    else SCORES["dhcp"]
+                )
                 candidate = merge_candidate(
-                    candidate, dtype, SCORES["dhcp"], "DHCP fingerprint"
+                    candidate, dtype, dhcp_score, "DHCP fingerprint"
                 )
             except (TypeError, ValueError):
                 pass
@@ -3592,9 +3599,13 @@ def rescore_stored_evidence(verbose=True):
             if dhcp_sig:
                 try:
                     sig = tuple(int(x) for x in dhcp_sig.split(","))
+                    dtype = type_from_dhcp_signature(sig)
+                    dhcp_score = (
+                        SCORES["os_hint"] if dtype in OS_LEVEL_TYPES
+                        else SCORES["dhcp"]
+                    )
                     candidate = merge_candidate(
-                        candidate, DHCP_SIGNATURES.get(sig), SCORES["dhcp"],
-                        "DHCP fingerprint",
+                        candidate, dtype, dhcp_score, "DHCP fingerprint",
                     )
                 except (TypeError, ValueError):
                     pass

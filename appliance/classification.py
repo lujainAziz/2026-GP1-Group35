@@ -164,15 +164,22 @@ def surveillance_type_from_ports(open_ports):
     return None
 
 # DHCP Parameter Request List (option 55) signatures are supporting evidence only.
-# Exact-tuple match, merged at SCORES["dhcp"] (below hostname/mDNS/model) so any
-# stronger signal always wins. New entries below the original set were derived
-# empirically from param-request-lists observed on devices already identified at
-# high confidence on this network (not guessed from memory).
+# Matched tolerantly (see type_from_dhcp_signature): a signature matches when it
+# is an ordered subsequence of the observed PRL and covers >= 75% of it, so OS
+# updates that add options (e.g. 114, or 108 / RFC 8925 IPv6-Only Preferred)
+# still match. New entries below the original set were derived empirically from
+# param-request-lists observed on devices already identified at high confidence
+# on this network (not guessed from memory).
+#
+# The Android option-55 list is sent identically by Android phones, tablets, TVs
+# and set-top boxes, so it identifies only the OS -> "Android Device", merged at
+# SCORES["os_hint"] (not a form factor). Apple/Windows fingerprints keep their
+# type and are merged at SCORES["dhcp"].
 DHCP_SIGNATURES = {
     (1, 121, 3, 6, 15, 119, 252): "Apple Device",
     (1, 121, 3, 6, 15, 119, 252, 95, 44, 46): "Apple Device",
-    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43): "Mobile (Android)",
-    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43, 114): "Mobile (Android)",
+    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43): "Android Device",
+    (1, 3, 6, 15, 26, 28, 51, 58, 59, 43, 114): "Android Device",
     (1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252): "Computer",
     (1, 15, 3, 6, 44, 46, 47, 31, 33, 121, 249, 43): "Computer",
     (1, 28, 2, 3, 15, 6, 119, 12, 44, 47, 26, 121, 42): "Computer",
@@ -777,6 +784,50 @@ def type_from_dns_query(qname):
         if needle in lowered:
             return dtype, needle
     return None, None
+
+
+# A known signature must cover at least this fraction of the observed PRL, so a
+# short signature cannot match a much longer unrelated list by chance.
+_DHCP_SIG_MIN_COVERAGE = 0.75
+
+
+def _is_ordered_subsequence(needle, haystack):
+    """True if every element of `needle` appears in `haystack` in the same
+    relative order (extra elements between/around them are allowed)."""
+    it = iter(haystack)
+    return all(element in it for element in needle)
+
+
+def type_from_dhcp_signature(prl):
+    """Tolerantly classify a DHCP option-55 Parameter Request List.
+
+    A known signature matches when it is an ordered subsequence of the observed
+    `prl` AND covers at least _DHCP_SIG_MIN_COVERAGE of it. This lets OS updates
+    that insert/append options (e.g. 114, or 108 = RFC 8925 IPv6-Only Preferred)
+    still match, while the coverage floor stops a short signature matching a long
+    unrelated list. The longest matching signature wins (most specific); a tie
+    between equally long matches that disagree on type is ambiguous -> None.
+    Exact matches still work (a tuple is an ordered subsequence of itself).
+    """
+    observed = tuple(prl)
+    if not observed:
+        return None
+    min_len = _DHCP_SIG_MIN_COVERAGE * len(observed)
+    best_len = 0
+    best_type = None
+    ambiguous = False
+    for sig, dtype in DHCP_SIGNATURES.items():
+        if len(sig) < min_len:
+            continue
+        if not _is_ordered_subsequence(sig, observed):
+            continue
+        if len(sig) > best_len:
+            best_len, best_type, ambiguous = len(sig), dtype, False
+        elif len(sig) == best_len and dtype != best_type:
+            ambiguous = True
+    if ambiguous:
+        return None
+    return best_type
 
 
 def type_from_vendor_class(vendor_class):
