@@ -183,7 +183,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                     railColor: hero,
                     rows: [
                       ('Vendor', d.vendorLabel, Ui.ink),
-                      ('Type', d.typeLabel, Ui.ink),
+                      ('Type', d.typeWithModel, Ui.ink),
                       ('Last seen', TimeFormat.lastSeen(d.lastSeen), Ui.ink),
                       d.monitored == null
                           ? ('Monitoring', 'Unknown', Ui.mute)

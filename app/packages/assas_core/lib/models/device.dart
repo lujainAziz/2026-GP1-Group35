@@ -55,6 +55,14 @@ class Device {
   bool get hasUserName => _clean(userName) != null;
   String get vendorLabel => _clean(vendor) ?? 'Unknown';
   String get typeLabel => _clean(deviceType) ?? 'Unknown';
+
+  /// Type text with the model appended ("Type · Model") when a distinct model
+  /// is known; otherwise just the type. Model is shown only when non-empty and
+  /// different from the displayed device name. Additive display helper.
+  String get typeWithModel {
+    final m = _clean(model);
+    return (m == null || m == displayName) ? typeLabel : '$typeLabel · $m';
+  }
   String get ipLabel => _clean(ip) ?? 'Unknown';
   String get macLabel => mac.toUpperCase();
 
