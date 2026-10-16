@@ -661,7 +661,7 @@ def _android_phone_family_form_factor(dtype, text):
         return "Tablet (Android)"
     # These families also sell accessories. Do not invent a phone form factor
     # when the available taxonomy has no supported accessory classification.
-    if tokens & {"watch", "buds", "book", "chromebook"}:
+    if tokens & {"watch", "buds", "book", "chromebook", "camera"}:
         return None
     return dtype
 

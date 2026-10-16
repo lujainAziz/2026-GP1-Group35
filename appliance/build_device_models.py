@@ -109,6 +109,8 @@ def classify(brand_key, name, code):
     major = brand_key in MAJOR_BRANDS
     kinds = APPLE_TYPES if brand_key == "apple" else ANDROID_TYPES
     low = name.lower()
+    if _kw("galaxy camera", "galaxy nx").search(low):
+        return None
     # Some major-brand TVs carry the TV only in the code (TCL "Smart TV").
     text = f"{low} {code.lower()}" if major else low
     if NO_TYPE_RE.search(low) or any(z in name for z in NO_TYPE_ZH):

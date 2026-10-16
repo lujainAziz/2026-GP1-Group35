@@ -834,6 +834,12 @@ def init_db():
         if column not in existing:
             conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {definition}")
 
+    # Preserve legacy addresses before another family overwrites devices.ip.
+    for mac, ip in conn.execute("SELECT mac, ip FROM devices WHERE ip IS NOT NULL").fetchall():
+        family = _ip_family_column(ip)
+        if family:
+            conn.execute(f"UPDATE devices SET {family}=COALESCE({family}, ?) WHERE mac=?", (ip, mac))
+
     # One-time (but idempotent) cleanup of fake vendor text previously stored
     # for randomized MACs (e.g. "(locally administered / randomized MAC)",
     # arp-scan's own "(Unknown: locally administered)" with DUP suffixes,
@@ -2372,6 +2378,15 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
         # get_vendor() is a real OUI hit (or None) -- never inferred.
         vendor_source = None
 
+    if not model:
+        hostname_model = model_db.model_from_hostname(hostname)
+        if hostname_model:
+            model = hostname_model
+            model_score = SCORES["hostname"]
+            model_source = "hostname model code"
+            _, model_type = normalize_model(model)
+            candidate = merge_candidate(candidate, model_type, model_score, model_source)
+
     # A randomized/local MAC cannot provide a trustworthy OUI vendor.
     # If passive metadata gives us an unambiguous model or hostname
     # identity, use that stronger evidence instead of leaving the
@@ -3753,15 +3768,16 @@ def rescore_stored_evidence(verbose=True):
         conn = connect_db()
         rows = conn.execute(
             "SELECT mac, dhcp_signature, vendor_class, hostname, vendor, model, "
-            "device_type, COALESCE(class_score, 0) FROM devices"
+            "device_type, COALESCE(class_score, 0), model_score, model_source FROM devices"
         ).fetchall()
 
         changed = 0
         for (mac, dhcp_sig, vendor_class, hostname, vendor, model,
-             old_type, old_score) in rows:
+             old_type, old_score, stored_model_score, stored_model_source) in rows:
             # Model database: type a stored "Name (CODE)" by its CODE, exactly
             # as when it was observed.
             model = model_db.stored_code(model)
+            evidence_score = SCORES["hostname"] if stored_model_source == "hostname model code" else (stored_model_score or SCORES["model"])
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3771,12 +3787,12 @@ def rescore_stored_evidence(verbose=True):
                 "android OS hostname",
             )
             candidate = merge_candidate(
-                candidate, type_from_model(model), SCORES["model"],
+                candidate, type_from_model(model), evidence_score,
                 "device model identifier",
             )
             if type_from_model(model) is None:
                 candidate = merge_candidate(
-                    candidate, model_db.type_for_model(model), SCORES["model"],
+                    candidate, model_db.type_for_model(model), evidence_score,
                     "device model identifier (model database)",
                 )
             if dhcp_sig:
@@ -3849,6 +3865,8 @@ _REDERIVABLE_CLASS_SOURCES = frozenset({
     "android OS hostname", "android OS (DHCP vendor class)",
     "Huawei DHCP vendor class", "DHCP fingerprint",
     "device model identifier", "WS-Discovery model identifier",
+    "device model identifier (model database)",
+    "hostname model code",
     "MAC vendor",
 })
 
@@ -3899,18 +3917,27 @@ def reevaluate_stale_classifications(verbose=True):
         conn = connect_db()
         rows = conn.execute(
             "SELECT mac, dhcp_signature, vendor_class, hostname, vendor, model, "
-            "device_type, COALESCE(class_score, 0), class_source FROM devices"
+            "device_type, COALESCE(class_score, 0), class_source, model_score, model_source FROM devices"
         ).fetchall()
 
         changed = 0
         for (mac, dhcp_sig, vendor_class, hostname, vendor, model,
-             old_type, old_score, old_source) in rows:
+             old_type, old_score, old_source, stored_model_score, stored_model_source) in rows:
             # Recompute from stored evidence with the current rules. This mirrors
             # rescore_stored_evidence()'s recompute on purpose -- duplicated so
             # that function stays untouched (the accepted second-pass cost).
             # Model database: type a stored "Name (CODE)" by its CODE, exactly
             # as when it was observed.
             model = model_db.stored_code(model)
+            evidence_score = SCORES["hostname"] if stored_model_source == "hostname model code" else (stored_model_score or SCORES["model"])
+            entry = model_db.lookup(model)
+            if (old_type == "Mobile (Android)" and _is_rederivable_source(old_source)
+                    and entry and entry.brand == "Samsung" and not entry.type
+                    and any(k in entry.name.lower() for k in ("galaxy camera", "galaxy nx"))):
+                conn.execute("UPDATE devices SET device_type=?, class_score=?, class_source=? WHERE mac=?",
+                             ("Android Device", SCORES["os_hint"], "device model identifier (model database)", mac))
+                changed += 1
+                continue
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3920,12 +3947,12 @@ def reevaluate_stale_classifications(verbose=True):
                 "android OS hostname",
             )
             candidate = merge_candidate(
-                candidate, type_from_model(model), SCORES["model"],
+                candidate, type_from_model(model), evidence_score,
                 "device model identifier",
             )
             if type_from_model(model) is None:
                 candidate = merge_candidate(
-                    candidate, model_db.type_for_model(model), SCORES["model"],
+                    candidate, model_db.type_for_model(model), evidence_score,
                     "device model identifier (model database)",
                 )
             if dhcp_sig:
