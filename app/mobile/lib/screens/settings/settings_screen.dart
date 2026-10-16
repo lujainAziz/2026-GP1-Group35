@@ -105,12 +105,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } on AssasApiException catch (e) {
       // A rejected token is already invalid; other failures must keep it.
       if (e.statusCode != 401) {
-        if (mounted) showToast(context, 'Could not unpair. Connect to ASSAS and try again.');
-        return;
+        if (!await _confirmForgetOffline()) return;
       }
     } catch (_) {
-      if (mounted) showToast(context, 'Could not unpair. Connect to ASSAS and try again.');
-      return;
+      if (!await _confirmForgetOffline()) return;
     }
     await SessionStore.clear();
     _repo.setAuthToken(null);
@@ -123,6 +121,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       _unpairing = false;
     }
+  }
+
+  /// ASSAS could not be reached: offer to forget it on this phone only.
+  Future<bool> _confirmForgetOffline() async {
+    if (!mounted) return false;
+    final ok = await showConfirm(
+      context,
+      title: "Can't reach ASSAS",
+      message: "Can't reach ASSAS. Forget it on this phone anyway?",
+      confirmLabel: 'Forget',
+      danger: true,
+    );
+    if (!ok && mounted) showToast(context, 'Could not unpair. Connect to ASSAS and try again.');
+    return ok;
   }
 
   @override

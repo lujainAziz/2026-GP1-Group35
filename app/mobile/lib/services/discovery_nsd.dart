@@ -28,25 +28,36 @@ Future<String?> discoverAssasBaseUrl(Duration timeout, {Future<bool> Function(St
 
     final completer = Completer<String?>();
     final checking = <String>{};
+    final pending = <Future<void>>[];
     void evaluate() {
       if (completer.isCompleted) return;
       for (final service in discovery!.services) {
         final url = _serviceToBaseUrl(service);
         if (url != null && checking.add(url)) {
-          Future<void>(() async {
+          pending.add(Future<void>(() async {
             try {
               if ((accepts == null || await accepts(url)) && !completer.isCompleted) {
                 completer.complete(url);
               }
             } catch (_) { /* Another discovered device may match. */ }
-          });
+          }));
         }
       }
     }
 
     discovery.addListener(evaluate);
     evaluate(); // services may already be resolved by the time we attach.
-    return await completer.future.timeout(timeout, onTimeout: () => null);
+    return await completer.future.timeout(timeout, onTimeout: () async {
+      // Browse window over: look for no new services, but let an identity
+      // check that already started finish (max 5 s).
+      discovery!.removeListener(evaluate);
+      if (completer.isCompleted) return completer.future;
+      if (pending.isEmpty) return null;
+      return Future.any<String?>([
+        completer.future,
+        Future.wait(pending).then((_) => completer.isCompleted ? completer.future : null),
+      ]).timeout(const Duration(seconds: 5), onTimeout: () => null);
+    });
   } finally {
     if (discovery != null) {
       // Best-effort cleanup; never let a stop error mask the result.

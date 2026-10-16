@@ -41,9 +41,38 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('Unpair'));
     await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text("Can't reach ASSAS"), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(await SessionStore.getToken(), 'keep-me');
     expect(find.byType(SettingsScreen), findsOneWidget);
     expect(find.text('Could not unpair. Connect to ASSAS and try again.'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+  testWidgets('offline unpair can forget locally', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await SessionStore.saveToken('forget-me', applianceId: 'pi-1');
+    final state = AppState(FailingRepo());
+    await tester.binding.setSurfaceSize(const Size(600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(theme: MobileTheme.dark,
+      home: Scaffold(body: SettingsScreen(state: state))));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Unpair this phone'));
+    await tester.tap(find.text('Unpair this phone'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Unpair'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Forget'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(await SessionStore.getToken(), isNull);
+    expect(await SessionStore.getApplianceId(), isNull);
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.byType(SettingsScreen), findsNothing);
     await tester.pump(const Duration(seconds: 2));
     await tester.pumpWidget(const SizedBox());
     state.dispose();

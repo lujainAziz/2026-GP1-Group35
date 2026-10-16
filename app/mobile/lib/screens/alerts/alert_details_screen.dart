@@ -33,8 +33,8 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
       await widget.state.setAlertState(widget.alertId, s);
       if (!mounted) return;
       showToast(context, s == AlertState.resolved ? 'Marked as resolved' : 'Marked as reviewed');
-    } catch (_) {
-      if (!mounted) return;
+    } catch (e) {
+      if (widget.state.handleFailure(e) || !mounted) return;
       showToast(context, 'Could not update the alert. Try again.');
     } finally {
       if (mounted) setState(() => _saving = false);

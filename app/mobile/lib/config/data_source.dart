@@ -49,6 +49,6 @@ Future<AssasRepository> createRepository(
     Future<String> Function() resolveBaseUrl,
     ) async {
   if (kUseDemoBackend) return DemoRepository();
-  return ApiRepository(ApiClient(baseUrl: await resolveBaseUrl()));
+  return ApiRepository(ApiClient(baseUrl: kApiBaseUrlFallback, resolveBaseUrl: resolveBaseUrl));
 }
 // =====================================================================
