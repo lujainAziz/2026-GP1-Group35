@@ -3871,6 +3871,13 @@ _REDERIVABLE_CLASS_SOURCES = frozenset({
 })
 
 
+# Sources whose verdict came from the device model alone.
+_MODEL_CLASS_SOURCES = frozenset({
+    "device model identifier", "device model identifier (model database)",
+    "hostname model code",
+})
+
+
 def _is_rederivable_source(source):
     """True if a stored class_source came from a persisted evidence column, so
     the current rules can reproduce it. The unicast-probe name path appends
@@ -3930,14 +3937,6 @@ def reevaluate_stale_classifications(verbose=True):
             # as when it was observed.
             model = model_db.stored_code(model)
             evidence_score = SCORES["hostname"] if stored_model_source == "hostname model code" else (stored_model_score or SCORES["model"])
-            entry = model_db.lookup(model)
-            if (old_type == "Mobile (Android)" and _is_rederivable_source(old_source)
-                    and entry and entry.brand == "Samsung" and not entry.type
-                    and any(k in entry.name.lower() for k in ("galaxy camera", "galaxy nx"))):
-                conn.execute("UPDATE devices SET device_type=?, class_score=?, class_source=? WHERE mac=?",
-                             ("Android Device", SCORES["os_hint"], "device model identifier (model database)", mac))
-                changed += 1
-                continue
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3986,6 +3985,15 @@ def reevaluate_stale_classifications(verbose=True):
                 candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor",
             )
 
+            if (candidate is None and model and old_type in ANDROID_FAMILY_TYPES
+                    and old_source in _MODEL_CLASS_SOURCES
+                    and type_from_model(model) is None
+                    and model_db.type_for_model(model) is None):
+                # The form factor rested on the model alone, and the current
+                # rules no longer type it (e.g. a Galaxy Camera): keep only the
+                # OS-level verdict instead of a phone/tablet it cannot support.
+                candidate = ("Android Device", SCORES["os_hint"],
+                             "device model identifier (model database)")
             if candidate is None:
                 continue                                    # guard 1
             new_type, new_score, new_source = candidate

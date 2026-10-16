@@ -69,6 +69,10 @@ NO_TYPE_RE = _kw(
     "chromebook", "matebook", "magicbook", "book", "laptop", "notebook",
     "ideapad", "thinkpad", "glass", "glasses", "eyewear", "ipod", "simulator",
 )
+# Dedicated cameras that run Android ("Galaxy Camera", "Galaxy NX"). A phone
+# sold on its camera ("Prime Camera Edition") is still a phone, and a bare
+# "NX" is a phone line at other brands (ARROWS NX, TECNO NX).
+CAMERA_RE = re.compile(r"(?<![a-z])camera(?![a-z])(?!\s+edition)|(?<![a-z])galaxy nx(?![a-z])")
 NO_TYPE_ZH = ("手表", "手环", "耳机", "笔记本", "擎云", "眼镜", "车机", "路由", "音箱")
 # "TV" as its own word, or glued to a known TV family ("MiTV", "LenovoTV").
 # Deliberately not "DTV": that marks a phone with a TV tuner.
@@ -109,11 +113,9 @@ def classify(brand_key, name, code):
     major = brand_key in MAJOR_BRANDS
     kinds = APPLE_TYPES if brand_key == "apple" else ANDROID_TYPES
     low = name.lower()
-    if _kw("galaxy camera", "galaxy nx").search(low):
-        return None
     # Some major-brand TVs carry the TV only in the code (TCL "Smart TV").
     text = f"{low} {code.lower()}" if major else low
-    if NO_TYPE_RE.search(low) or any(z in name for z in NO_TYPE_ZH):
+    if NO_TYPE_RE.search(low) or CAMERA_RE.search(low) or any(z in name for z in NO_TYPE_ZH):
         return None
     if TUNER_PHONE_RE.search(low) and TV_RE.search(low):
         return None

@@ -29,7 +29,9 @@ class AppState extends ChangeNotifier {
   DateTime? lastSync;
 
   Timer? _timer;
-  bool _busy = false;
+  /// Generation of the refresh in flight. A refresh cancelled by stopPolling()
+  /// no longer blocks the next one, so polling resumes at once after restart.
+  int? _busyGeneration;
   bool _disposed = false;
   int _generation = 0;
 
@@ -47,10 +49,10 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
-    if (_busy || sessionEnded || _disposed) return;
+    if (_busyGeneration == _generation || sessionEnded || _disposed) return;
     final generation = _generation;
     bool cancelled() => _disposed || generation != _generation || sessionEnded;
-    _busy = true;
+    _busyGeneration = generation;
     try {
       final health = await repo.checkHealth();
       if (cancelled()) return;
@@ -104,7 +106,7 @@ class AppState extends ChangeNotifier {
       loadedOnce = true;
       notifyListeners();
     } finally {
-      _busy = false;
+      if (_busyGeneration == generation) _busyGeneration = null;
     }
   }
 

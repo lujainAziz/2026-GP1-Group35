@@ -25,6 +25,9 @@ class AuditRepairs(unittest.TestCase):
     def test_camera_is_not_a_phone(self):
         self.assertIsNone(classify('samsung', 'Galaxy Camera 2', 'EK-GC200'))
         self.assertEqual(classify('htc', 'One M9+ (Prime Camera Edition)', 'HTC-M9'), 'Mobile (Android)')
+        self.assertIsNone(classify('samsung', 'Galaxy NX', 'EK-GN120'))
+        self.assertEqual(classify('fujitsu', 'ARROWS NX F-06E', 'F-06E'), 'Mobile (Android)')
+        self.assertEqual(classify('tecno', 'NX', 'TECNO R8O'), 'Mobile (Android)')
         self.assertEqual(c.normalize_model('EK-GC200'), ('EK-GC200', None))
         self.assertIsNone(c.type_from_model('Galaxy Camera 2 (EK-GC200)'))
 
@@ -65,3 +68,15 @@ class AuditRepairs(unittest.TestCase):
         self.assertEqual(d.reevaluate_stale_classifications(verbose=False), 1)
         with closing(sqlite3.connect(self.db)) as con, con:
             self.assertEqual(con.execute('SELECT device_type FROM devices').fetchone()[0], 'Android Device')
+
+    def test_model_only_verdict_falls_back_but_other_evidence_is_kept(self):
+        with closing(sqlite3.connect(self.db)) as con, con:
+            # Model alone said phone; the current rules no longer type it.
+            con.execute("INSERT INTO devices(mac,first_seen,last_seen,model,model_score,device_type,class_score,class_source) VALUES ('a4:00:00:00:00:91','x','x','Galaxy NX (EK-GN120)',95,'Mobile (Android)',95,'device model identifier')")
+            # Same model, but the verdict came from a live-only source: untouched.
+            con.execute("INSERT INTO devices(mac,first_seen,last_seen,model,model_score,device_type,class_score,class_source) VALUES ('a4:00:00:00:00:92','x','x','Galaxy NX (EK-GN120)',95,'Mobile (Android)',95,'mDNS advertisement')")
+        self.assertEqual(d.reevaluate_stale_classifications(verbose=False), 1)
+        with closing(sqlite3.connect(self.db)) as con, con:
+            rows = dict(con.execute('SELECT mac, device_type FROM devices').fetchall())
+        self.assertEqual(rows['a4:00:00:00:00:91'], 'Android Device')
+        self.assertEqual(rows['a4:00:00:00:00:92'], 'Mobile (Android)')
