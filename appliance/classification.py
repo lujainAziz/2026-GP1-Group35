@@ -8,6 +8,7 @@ runtime state; discovery.py imports these names so existing references resolve.
 """
 import re
 
+import model_db
 from scapy.all import IP, TCP
 
 
@@ -475,6 +476,13 @@ def normalize_model(model):
     alias = MODEL_ALIASES.get(model.lower())
     if alias:
         return alias
+    # Model database fallback (model_db.py): its type is used only when the
+    # tables above found none. The code itself is kept here; it is shown as
+    # "Marketing Name (CODE)" when the device row is stored.
+    if type_from_model(model) is None:
+        db_type = model_db.type_for_model(model)
+        if db_type:
+            return model, db_type
     return model, type_from_model(model)
 
 
@@ -582,6 +590,11 @@ def vendor_from_model(model):
     for needle, vendor in MODEL_VENDOR_HINTS:
         if needle in text:
             return vendor
+
+    # Model database fallback: exact model code only (never a hostname).
+    db_vendor = model_db.vendor_for_model(model)
+    if db_vendor:
+        return db_vendor
 
     return None
 
@@ -828,6 +841,11 @@ def type_from_huawei_vendor_class(vendor_class):
     for prefix, dtype in HUAWEI_MODEL_CODE_HINTS.items():
         if code.startswith(prefix):
             return dtype
+    # Model database fallback: every known model under this code prefix must
+    # agree on the type, otherwise None (the OS-only path still applies).
+    db_type = model_db.type_for_huawei_code(code)
+    if db_type:
+        return db_type
     return None
 
 

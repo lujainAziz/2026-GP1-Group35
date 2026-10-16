@@ -196,6 +196,8 @@ last_ap_error = None
 _tplink_auth_cache = {"mode": None, "headers": None, "station_url": None, "time": None}
 TPLINK_AUTH_TTL_SECONDS = max(60, int(os.getenv("ASSAS_AP_AUTH_TTL_SECONDS", "600")))
 
+import model_db
+
 # Higher score = stronger classification evidence.
 from classification import (
     SCORES,
@@ -2370,6 +2372,12 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
     if deployment_model and not model:
         model, model_score, model_source = deployment_model
 
+    # Model database: store a bare model code as "Marketing Name (CODE)".
+    # display_model() returns None for unknown codes and for text that is
+    # already a name, so an observed name is never overwritten.
+    if model:
+        model = model_db.display_model(model) or model
+
     if ip and ip in infra_hints:
         candidate = merge_candidate(
             candidate, infra_hints[ip], SCORES["gateway"], "default gateway"
@@ -3090,6 +3098,14 @@ def handle(packet):
             ):
                 observed_vendor = vc_vendor
                 observed_vendor_source = "inferred: DHCP vendor class"
+            # Model database: name the Huawei model line ("HUAWEI MatePad
+            # (DBY)") only when this packet carried no model. The stored model
+            # is replaced only when empty or weaker, so a real mDNS/UPnP model
+            # (score 90+) is never overwritten by this one.
+            vc_model = model_db.model_from_huawei_vendor_class(vendor_class)
+            if vc_model and not model:
+                model, model_score = vc_model, SCORES["dhcp_vendor"]
+                model_source = "Huawei DHCP vendor class"
 
     if UDP in packet:
         sport = int(packet[UDP].sport)
@@ -3695,6 +3711,9 @@ def rescore_stored_evidence(verbose=True):
         changed = 0
         for (mac, dhcp_sig, vendor_class, hostname, vendor, model,
              old_type, old_score) in rows:
+            # Model database: type a stored "Name (CODE)" by its CODE, exactly
+            # as when it was observed.
+            model = model_db.stored_code(model)
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3707,6 +3726,11 @@ def rescore_stored_evidence(verbose=True):
                 candidate, type_from_model(model), SCORES["model"],
                 "device model identifier",
             )
+            if type_from_model(model) is None:
+                candidate = merge_candidate(
+                    candidate, model_db.type_for_model(model), SCORES["model"],
+                    "device model identifier (model database)",
+                )
             if dhcp_sig:
                 try:
                     sig = tuple(int(x) for x in dhcp_sig.split(","))
@@ -3836,6 +3860,9 @@ def reevaluate_stale_classifications(verbose=True):
             # Recompute from stored evidence with the current rules. This mirrors
             # rescore_stored_evidence()'s recompute on purpose -- duplicated so
             # that function stays untouched (the accepted second-pass cost).
+            # Model database: type a stored "Name (CODE)" by its CODE, exactly
+            # as when it was observed.
+            model = model_db.stored_code(model)
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3848,6 +3875,11 @@ def reevaluate_stale_classifications(verbose=True):
                 candidate, type_from_model(model), SCORES["model"],
                 "device model identifier",
             )
+            if type_from_model(model) is None:
+                candidate = merge_candidate(
+                    candidate, model_db.type_for_model(model), SCORES["model"],
+                    "device model identifier (model database)",
+                )
             if dhcp_sig:
                 try:
                     sig = tuple(int(x) for x in dhcp_sig.split(","))
