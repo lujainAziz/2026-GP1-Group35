@@ -27,6 +27,7 @@ _DEVICES_SCHEMA = (
     "membership_source TEXT, discovered_current INTEGER, last_discovery_seen TEXT, "
     "traffic_seen INTEGER, last_traffic_seen TEXT, vendor_source TEXT, "
     "user_name TEXT, "
+    "last_ipv4 TEXT, last_ipv6_global TEXT, last_ipv6_ll TEXT, "
     "trusted INTEGER NOT NULL DEFAULT 0"
 )
 
@@ -1220,6 +1221,105 @@ class ConnectionThreadTests(unittest.TestCase):
         self.assertEqual(used, [])
         self.assertEqual(closed, [])
 
- 
+
+class IpResolutionHelperTests(unittest.TestCase):
+    """_resolve_display_ip / _resolve_ipv6 preference ordering, including the
+    fe80:: link-local last-resort rule and legacy single-`ip` fallback."""
+
+    def test_classify_ip_families(self):
+        self.assertEqual(api._classify_ip("192.168.1.1"), "ipv4")
+        self.assertEqual(api._classify_ip("2001:db8::1"), "ipv6_global")
+        self.assertEqual(api._classify_ip("fe80::1"), "ipv6_ll")
+        self.assertEqual(api._classify_ip("fe80::1%eth0"), "ipv6_ll")
+        self.assertIsNone(api._classify_ip(None))
+        self.assertIsNone(api._classify_ip(""))
+        self.assertIsNone(api._classify_ip("not-an-ip"))
+
+    def test_ipv4_preferred_over_both_ipv6_forms(self):
+        self.assertEqual(
+            api._resolve_display_ip("192.168.1.1", "2001:db8::1", "fe80::1", None),
+            "192.168.1.1",
+        )
+
+    def test_global_ipv6_preferred_over_link_local(self):
+        self.assertEqual(
+            api._resolve_display_ip(None, "2001:db8::1", "fe80::1", None),
+            "2001:db8::1",
+        )
+
+    def test_link_local_only_as_last_resort(self):
+        self.assertEqual(
+            api._resolve_display_ip(None, None, "fe80::1", None), "fe80::1"
+        )
+
+    def test_legacy_ip_folded_into_families(self):
+        # Old row: only the legacy `ip` column is set (here a global IPv6).
+        self.assertEqual(
+            api._resolve_display_ip(None, None, None, "2001:db8::5"), "2001:db8::5"
+        )
+        # Legacy fe80:: is still a genuine last resort.
+        self.assertEqual(
+            api._resolve_display_ip(None, None, None, "fe80::5"), "fe80::5"
+        )
+        # A known per-family IPv4 still wins over a legacy fe80:: value.
+        self.assertEqual(
+            api._resolve_display_ip("10.0.0.2", None, None, "fe80::5"), "10.0.0.2"
+        )
+
+    def test_resolve_ipv6_list_order_and_empty(self):
+        self.assertEqual(
+            api._resolve_ipv6("192.168.1.1", "2001:db8::1", "fe80::1", None),
+            ["2001:db8::1", "fe80::1"],
+        )
+        self.assertEqual(
+            api._resolve_ipv6(None, None, "fe80::1", None), ["fe80::1"]
+        )
+        self.assertIsNone(api._resolve_ipv6("192.168.1.1", None, None, None))
+
+
+class IpResolutionEndpointTests(_SeededDBTest):
+    """The resolved address and ipv6 field as seen through the endpoints."""
+
+    def test_summary_shows_ipv4_when_all_families_known(self):
+        self.insert(
+            mac="aa:bb:cc:dd:ee:01", ip="fe80::1", last_ipv4="192.168.1.50",
+            last_ipv6_global="2001:db8::50", last_ipv6_ll="fe80::1",
+            status="online", last_seen="2026-10-16T10:00:00",
+        )
+        rows = api.list_devices(conn=self.conn, limit=100, offset=0)
+        row = next(r for r in rows if r.mac == "aa:bb:cc:dd:ee:01")
+        self.assertEqual(row.ip, "192.168.1.50")
+
+    def test_detail_prefers_global_ipv6_and_lists_ipv6(self):
+        self.insert(
+            mac="aa:bb:cc:dd:ee:02", ip="fe80::2",
+            last_ipv6_global="2001:db8::2", last_ipv6_ll="fe80::2",
+            status="online", last_seen="2026-10-16T10:00:00",
+        )
+        d = api.get_device("aa:bb:cc:dd:ee:02", self.conn)
+        self.assertEqual(d.ip, "2001:db8::2")
+        self.assertEqual(d.ipv6, ["2001:db8::2", "fe80::2"])
+
+    def test_detail_link_local_last_resort(self):
+        self.insert(
+            mac="aa:bb:cc:dd:ee:03", ip="fe80::3", last_ipv6_ll="fe80::3",
+            status="online", last_seen="2026-10-16T10:00:00",
+        )
+        d = api.get_device("aa:bb:cc:dd:ee:03", self.conn)
+        self.assertEqual(d.ip, "fe80::3")
+        self.assertEqual(d.ipv6, ["fe80::3"])
+
+    def test_legacy_ipv4_only_row_unchanged(self):
+        # Row predating the new columns: only `ip` is set. Behaviour must not
+        # regress -- the app still sees the IPv4 address.
+        self.insert(
+            mac="aa:bb:cc:dd:ee:04", ip="192.168.1.77",
+            status="online", last_seen="2026-10-16T10:00:00",
+        )
+        d = api.get_device("aa:bb:cc:dd:ee:04", self.conn)
+        self.assertEqual(d.ip, "192.168.1.77")
+        self.assertIsNone(d.ipv6)
+
+
 if __name__ == "__main__":
     unittest.main()

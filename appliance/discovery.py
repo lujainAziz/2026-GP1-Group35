@@ -817,6 +817,16 @@ def init_db():
         # discovery, traffic capture, or later anomaly detection. Defaults to 0
         # (Unrecognized) so every newly discovered device starts untrusted.
         "trusted": "INTEGER NOT NULL DEFAULT 0",
+        # Per-family last-seen address columns. The legacy `ip` column keeps its
+        # existing behaviour (last address of ANY family), which is what made the
+        # same card flip between IPv4, global IPv6 and link-local fe80:: forms.
+        # These additive columns record the last address of each family
+        # separately so the API can present one stable address (IPv4 preferred,
+        # then global IPv6, then fe80:: only as a last resort). MAC stays the
+        # device identity; nothing here feeds classification.
+        "last_ipv4": "TEXT",
+        "last_ipv6_global": "TEXT",
+        "last_ipv6_ll": "TEXT",
     }
 
     existing = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
@@ -2001,6 +2011,30 @@ def local_monitored_ip(ip):
     return ip
 
 
+def _ip_family_column(ip):
+    """Map an observed address to its dedicated per-family column name.
+
+    Returns "last_ipv4" for an IPv4 address, "last_ipv6_global" for a routable
+    IPv6 address, "last_ipv6_ll" for a link-local fe80:: address, or None when
+    the value is empty or unparseable. update_device() uses this to additively
+    record the last address of each family for a MAC so the API never flips a
+    device card between address forms. Any IPv6 zone suffix (e.g. "%eth0") is
+    stripped before parsing. The return value is always one of a fixed set of
+    column names, so it is safe to interpolate into the UPDATE statement.
+    """
+    if not ip:
+        return None
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return None
+    if addr.version == 4:
+        return "last_ipv4"
+    if addr.is_link_local:
+        return "last_ipv6_ll"
+    return "last_ipv6_global"
+
+
 def is_valid_host_mac(mac):
     try:
         mac = mac.lower()
@@ -2625,6 +2659,20 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
             if ip and _name_enrichment_eligible(effective_type, effective_name):
                 schedule_mdns_probe(mac, ip)
                 schedule_nbns_probe(mac, ip)
+
+        # Additive per-family IP tracking (consumed by api._resolve_display_ip):
+        # record the last IPv4 / global IPv6 / link-local IPv6 observed for this
+        # MAC in its own column, in the same transaction as the identity write
+        # above. The legacy `ip` column is left exactly as the queries above set
+        # it; this only fills the dedicated column for whichever family `ip`
+        # belongs to, so the app can stop flipping between address forms. MAC
+        # remains the identity and no classification is affected.
+        ip_family_column = _ip_family_column(ip)
+        if ip_family_column:
+            cur.execute(
+                f"UPDATE devices SET {ip_family_column} = ? WHERE mac = ?",
+                (ip, mac),
+            )
 
         conn.commit()
         conn.close()

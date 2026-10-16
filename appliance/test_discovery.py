@@ -2304,5 +2304,87 @@ class ProbeGuardTests(unittest.TestCase):
         self.assertEqual(self._row(mac)["device_type"], "Computer")
 
 
+class IpFamilyColumnTests(unittest.TestCase):
+    """_ip_family_column classification, including fe80:: link-local cases."""
+
+    def test_ipv4(self):
+        self.assertEqual(discovery._ip_family_column("192.168.1.1"), "last_ipv4")
+
+    def test_global_ipv6(self):
+        self.assertEqual(
+            discovery._ip_family_column("2001:db8::1"), "last_ipv6_global"
+        )
+
+    def test_link_local_ipv6(self):
+        self.assertEqual(discovery._ip_family_column("fe80::1"), "last_ipv6_ll")
+
+    def test_link_local_ipv6_with_zone(self):
+        self.assertEqual(
+            discovery._ip_family_column("fe80::1%eth0"), "last_ipv6_ll"
+        )
+
+    def test_none_and_garbage(self):
+        self.assertIsNone(discovery._ip_family_column(None))
+        self.assertIsNone(discovery._ip_family_column(""))
+        self.assertIsNone(discovery._ip_family_column("not-an-ip"))
+
+
+class UpdateDeviceIpTrackingTests(unittest.TestCase):
+    """update_device() additively records the last address of each family in its
+    own column while leaving the legacy `ip` column behaving as before."""
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db_path = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.DB_PATH = self._orig_db_path
+        discovery.write_cache.clear()
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _row(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        r = conn.execute("SELECT * FROM devices WHERE mac=?", (mac,)).fetchone()
+        conn.close()
+        return r
+
+    def test_ipv4_fills_last_ipv4_on_insert(self):
+        mac = "aa:30:00:00:00:01"
+        discovery.update_device(mac, ip="192.168.1.40", seen_in_discovery=True)
+        row = self._row(mac)
+        self.assertEqual(row["last_ipv4"], "192.168.1.40")
+        self.assertIsNone(row["last_ipv6_global"])
+        self.assertIsNone(row["last_ipv6_ll"])
+
+    def test_families_tracked_separately_across_flips(self):
+        mac = "aa:30:00:00:00:02"
+        # The same MAC is seen under three different address families over time.
+        discovery.update_device(mac, ip="192.168.1.41", seen_in_discovery=True)
+        discovery.update_device(mac, ip="2001:db8::41", seen_in_discovery=True)
+        discovery.update_device(mac, ip="fe80::41", seen_in_discovery=True)
+        row = self._row(mac)
+        # Each family column retains its own address; the IPv4 is NOT lost even
+        # though the legacy `ip` column now holds the last-seen (link-local) one.
+        self.assertEqual(row["last_ipv4"], "192.168.1.41")
+        self.assertEqual(row["last_ipv6_global"], "2001:db8::41")
+        self.assertEqual(row["last_ipv6_ll"], "fe80::41")
+
+    def test_link_local_only_device(self):
+        mac = "aa:30:00:00:00:03"
+        discovery.update_device(mac, ip="fe80::43", seen_in_discovery=True)
+        row = self._row(mac)
+        self.assertEqual(row["last_ipv6_ll"], "fe80::43")
+        self.assertIsNone(row["last_ipv4"])
+        self.assertIsNone(row["last_ipv6_global"])
+
+
 if __name__ == "__main__":
     unittest.main()

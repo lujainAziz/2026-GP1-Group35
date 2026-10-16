@@ -7,6 +7,7 @@ runs in WAL journal mode, so concurrent reads while it writes are safe.
 """
 import os
 import hashlib
+import ipaddress
 import secrets
 import threading
 import sqlite3
@@ -98,6 +99,38 @@ def ensure_user_name_column() -> None:
         conn.close()
 
 
+# Per-family IP columns owned by discovery.py (see its migrations dict). Unlike
+# `trusted`/`user_name`, these are NOT API-owned; this guard only mirrors their
+# shape so a SELECT cannot fail with "no such column" when the API boots against
+# a DB written by an older discovery.py that has not been restarted yet. Values
+# are always written by discovery; the API only reads them.
+_IP_FAMILY_COLUMNS = ("last_ipv4", "last_ipv6_global", "last_ipv6_ll")
+
+
+def ensure_ip_columns() -> None:
+    """Deployment safety: guarantee the per-family IP columns exist before any
+    endpoint SELECTs them, without waiting for discovery.py to be restarted.
+
+    Idempotent and a no-op if the DB or devices table does not exist yet. Adds
+    only the columns that are missing, each as plain TEXT (matching discovery's
+    migration), so an already-migrated DB is left untouched.
+    """
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError:
+        return  # DB not created yet; discovery.init_db() will build it fresh.
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+        if not cols:
+            return  # devices table absent; discovery owns table creation.
+        for column in _IP_FAMILY_COLUMNS:
+            if column not in cols:
+                conn.execute(f"ALTER TABLE devices ADD COLUMN {column} TEXT")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # Kept textually identical to discovery.init_db()'s app_settings DDL so the two
 # processes never create diverging schemas for the same table.
 _APP_SETTINGS_DDL = (
@@ -135,6 +168,7 @@ async def lifespan(_app: "FastAPI"):
     # request is served, so the trusted column and settings table are present.
     ensure_trusted_column()
     ensure_user_name_column()
+    ensure_ip_columns()
     ensure_settings_table()
     yield
 
@@ -353,6 +387,11 @@ class Classification(BaseModel):
 
 
 class DeviceDetail(DeviceSummary):
+    # Known IPv6 addresses for this device (global first, link-local fe80:: last),
+    # or null when none are known. The `ip` field already prefers IPv4, then a
+    # global IPv6, then a link-local address; this exposes the IPv6 forms without
+    # changing device identity (MAC).
+    ipv6: Optional[list[str]] = None
     dhcp_signature: Optional[str] = None
     vendor_class: Optional[str] = None
     upnp_location: Optional[str] = None
@@ -395,6 +434,13 @@ class SummaryStats(BaseModel):
 SUMMARY_COLUMNS = (
     "mac, ip, hostname, device_type, model, vendor, vendor_source, "
     "status, COALESCE(is_monitored, 0) AS monitored, trusted, user_name, first_seen, last_seen")
+
+# Additive: also fetch the per-family IP columns so row_to_summary/row_to_detail
+# can resolve one stable display address (see _resolve_display_ip) and expose
+# the IPv6 addresses. Appended here so every existing SELECT that uses
+# SUMMARY_COLUMNS / DETAIL_COLUMNS picks them up without touching the queries.
+SUMMARY_COLUMNS = SUMMARY_COLUMNS + (
+    ", last_ipv4, last_ipv6_global, last_ipv6_ll")
 
 DETAIL_COLUMNS = SUMMARY_COLUMNS + (
     ", class_score, model_source, model_score, "
@@ -439,9 +485,68 @@ def _shown_model(model):
     return model_db.display_model(model) or model
 
 
+def _classify_ip(value):
+    """Return 'ipv4', 'ipv6_global', 'ipv6_ll', or None for a stored address.
+
+    Any IPv6 zone suffix (e.g. "%eth0") is stripped before parsing. Mirrors
+    discovery._ip_family_column so the read side folds the legacy single `ip`
+    column into the same families the writer records.
+    """
+    if not value:
+        return None
+    try:
+        addr = ipaddress.ip_address(str(value).split("%", 1)[0])
+    except ValueError:
+        return None
+    if addr.version == 4:
+        return "ipv4"
+    if addr.is_link_local:
+        return "ipv6_ll"
+    return "ipv6_global"
+
+
+def _best_addresses(last_ipv4, ipv6_global, ipv6_ll, legacy_ip):
+    """Resolve the best-known address of each family for a device.
+
+    Prefers the dedicated per-family columns, then folds the legacy `ip` column
+    into whichever family it belongs to so rows written before those columns
+    existed (or by an older discovery.py) still resolve correctly. Returns the
+    tuple (ipv4, ipv6_global, ipv6_link_local), any of which may be None.
+    """
+    v4, g, ll = last_ipv4, ipv6_global, ipv6_ll
+    fam = _classify_ip(legacy_ip)
+    if fam == "ipv4" and not v4:
+        v4 = legacy_ip
+    elif fam == "ipv6_global" and not g:
+        g = legacy_ip
+    elif fam == "ipv6_ll" and not ll:
+        ll = legacy_ip
+    return v4, g, ll
+
+
+def _resolve_display_ip(last_ipv4, ipv6_global, ipv6_ll, legacy_ip):
+    """The single address shown to the app: IPv4 if known, else a global IPv6,
+    else a link-local fe80:: address only as a last resort. Stops the same card
+    from flipping between address families."""
+    v4, g, ll = _best_addresses(last_ipv4, ipv6_global, ipv6_ll, legacy_ip)
+    return v4 or g or ll
+
+
+def _resolve_ipv6(last_ipv4, ipv6_global, ipv6_ll, legacy_ip):
+    """The device's known IPv6 addresses (global first, link-local last), or None
+    when there are none. Surfaced in the optional `ipv6` response field."""
+    _, g, ll = _best_addresses(last_ipv4, ipv6_global, ipv6_ll, legacy_ip)
+    addrs = [a for a in (g, ll) if a]
+    return addrs or None
+
+
 def row_to_summary(row) -> DeviceSummary:
     # presence is not a SQL column; it is derived from status below.
     data = {k: row[k] for k in DeviceSummary.model_fields if k != "presence"}
+    # Replace the flip-prone legacy `ip` with one stable resolved address.
+    data["ip"] = _resolve_display_ip(
+        row["last_ipv4"], row["last_ipv6_global"], row["last_ipv6_ll"], row["ip"]
+    )
     data["model"] = _shown_model(data.get("model"))
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
@@ -460,6 +565,16 @@ def row_to_summary(row) -> DeviceSummary:
 
 def row_to_detail(row) -> DeviceDetail:
     data = dict(row)
+    # Replace the flip-prone legacy `ip` with one stable resolved address, and
+    # surface the known IPv6 addresses in the optional `ipv6` field.
+    data["ip"] = _resolve_display_ip(
+        data.get("last_ipv4"), data.get("last_ipv6_global"),
+        data.get("last_ipv6_ll"), data.get("ip"),
+    )
+    data["ipv6"] = _resolve_ipv6(
+        data.get("last_ipv4"), data.get("last_ipv6_global"),
+        data.get("last_ipv6_ll"), data.get("ip"),
+    )
     data["model"] = _shown_model(data.get("model"))
     for flag in (
         "is_ap_client", "ap_associated", "discovered_current",
