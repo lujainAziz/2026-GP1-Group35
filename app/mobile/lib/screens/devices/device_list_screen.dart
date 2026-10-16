@@ -534,7 +534,7 @@ class _DeviceRow extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '${d.vendorLabel} · ${d.typeWithModel}',
+                          '${d.vendorLabel} · ${d.typeLabel}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: meta,
