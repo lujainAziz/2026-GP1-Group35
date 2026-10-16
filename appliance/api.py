@@ -20,6 +20,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool, field_validator
 
+import model_db
+
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 
 # Above this many seconds without a daemon write, /healthz flags the daemon stale.
@@ -424,9 +426,23 @@ def _presence_from_status(status, last_seen=None, now=None) -> str:
     return "online"
 
 
+def _shown_model(model):
+    """Read-time marketing-name fallback for a stored model value.
+
+    When model_db recognizes the raw code, show "Marketing Name (CODE)"
+    (e.g. "J720AP" -> "iPad Pro 13-inch (M4) (J720AP)"); otherwise return the
+    stored value unchanged. Purely a display transform -- nothing is written
+    back to the DB, and an empty/None value is left as-is.
+    """
+    if not model:
+        return model
+    return model_db.display_model(model) or model
+
+
 def row_to_summary(row) -> DeviceSummary:
     # presence is not a SQL column; it is derived from status below.
     data = {k: row[k] for k in DeviceSummary.model_fields if k != "presence"}
+    data["model"] = _shown_model(data.get("model"))
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
@@ -444,6 +460,7 @@ def row_to_summary(row) -> DeviceSummary:
 
 def row_to_detail(row) -> DeviceDetail:
     data = dict(row)
+    data["model"] = _shown_model(data.get("model"))
     for flag in (
         "is_ap_client", "ap_associated", "discovered_current",
     "traffic_seen", "session_seen", "trusted", "monitored",    ):

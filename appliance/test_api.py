@@ -89,6 +89,51 @@ class DeviceDetailClassificationTests(_SeededDBTest):
         self.assertEqual(d.classification.vendor_source, "inferred: private MAC")
 
 
+class ModelDisplayFallbackTests(_SeededDBTest):
+    """Read-time marketing-name fallback (_shown_model): a known raw model code
+    is shown as "Marketing Name (CODE)"; an existing name or an empty value is
+    left exactly as stored, and the DB column is never rewritten."""
+
+    def test_raw_code_becomes_name_in_list(self):
+        self.insert(mac="aa:bb:cc:dd:ee:10", status="online", model="J720AP")
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(devices[0].model, "iPad Pro 13-inch (M4) (J720AP)")
+
+    def test_raw_code_becomes_name_in_detail(self):
+        self.insert(mac="aa:bb:cc:dd:ee:11", status="online", model="SM-G991B")
+        d = api.get_device("aa:bb:cc:dd:ee:11", self.conn)
+        self.assertEqual(d.model, "Galaxy S21 5G (SM-G991B)")
+        # The classification needle shows the same friendly name, not the raw code.
+        self.assertEqual(d.classification.model, "Galaxy S21 5G (SM-G991B)")
+
+    def test_existing_name_stays_unchanged(self):
+        # "Pixel 10" is already its own marketing name: model_db returns nothing,
+        # so the stored value is passed through untouched.
+        self.insert(mac="aa:bb:cc:dd:ee:12", status="online", model="Pixel 10")
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(devices[0].model, "Pixel 10")
+        d = api.get_device("aa:bb:cc:dd:ee:12", self.conn)
+        self.assertEqual(d.model, "Pixel 10")
+
+    def test_empty_model_stays_empty(self):
+        self.insert(mac="aa:bb:cc:dd:ee:13", status="online", model="")
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(devices[0].model, "")
+
+    def test_null_model_stays_null(self):
+        self.insert(mac="aa:bb:cc:dd:ee:14", status="online")  # model column NULL
+        d = api.get_device("aa:bb:cc:dd:ee:14", self.conn)
+        self.assertIsNone(d.model)
+
+    def test_stored_column_is_not_rewritten(self):
+        self.insert(mac="aa:bb:cc:dd:ee:15", status="online", model="J720AP")
+        api.get_device("aa:bb:cc:dd:ee:15", self.conn)
+        stored = self.conn.execute(
+            "SELECT model FROM devices WHERE mac = ?", ("aa:bb:cc:dd:ee:15",)
+        ).fetchone()[0]
+        self.assertEqual(stored, "J720AP")
+
+
 class HealthzHeartbeatTests(_SeededDBTest):
     def test_fresh_write_not_stale(self):
         now = datetime.now().isoformat(timespec="seconds")
