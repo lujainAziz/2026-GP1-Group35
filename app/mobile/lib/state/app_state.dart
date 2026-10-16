@@ -29,7 +29,11 @@ class AppState extends ChangeNotifier {
   DateTime? lastSync;
 
   Timer? _timer;
-  bool _busy = false;
+  /// Generation of the refresh in flight. A refresh cancelled by stopPolling()
+  /// no longer blocks the next one, so polling resumes at once after restart.
+  int? _busyGeneration;
+  bool _disposed = false;
+  int _generation = 0;
 
   void startPolling() {
     if (sessionEnded) return;
@@ -39,20 +43,28 @@ class AppState extends ChangeNotifier {
   }
 
   void stopPolling() {
+    _generation++;
     _timer?.cancel();
     _timer = null;
   }
 
   Future<void> refresh() async {
-    if (_busy || sessionEnded) return;
-    _busy = true;
+    if (_busyGeneration == _generation || sessionEnded || _disposed) return;
+    final generation = _generation;
+    bool cancelled() => _disposed || generation != _generation || sessionEnded;
+    _busyGeneration = generation;
     try {
-      connection = await repo.checkHealth();
+      final health = await repo.checkHealth();
+      if (cancelled()) return;
+      connection = health;
 
       try {
-        devices = await repo.getDevices();
+        final latest = await repo.getDevices();
+        if (cancelled()) return;
+        devices = latest;
         lastSync = DateTime.now();
       } on AssasApiException catch (e) {
+        if (cancelled()) return;
         if (e.statusCode == 401) {
           // Session revoked: stop asking, the screen sends the user to pairing.
           sessionEnded = true;
@@ -63,12 +75,16 @@ class AppState extends ChangeNotifier {
         // other errors: keep last devices
         if (connection == ConnectionStatus.live) connection = ConnectionStatus.stale;
       } catch (_) {
+        if (cancelled()) return;
         // keep last devices
         if (connection == ConnectionStatus.live) connection = ConnectionStatus.stale;
       }
       try {
-        activity = await repo.getActivity();
+        final latest = await repo.getActivity();
+        if (cancelled()) return;
+        activity = latest;
       } catch (e) {
+        if (cancelled()) return;
         activity = null;
         if (handleFailure(e)) return;
       }
@@ -86,10 +102,11 @@ class AppState extends ChangeNotifier {
         // keep last risk
       }
       }
+      if (cancelled()) return;
       loadedOnce = true;
       notifyListeners();
     } finally {
-      _busy = false;
+      if (_busyGeneration == generation) _busyGeneration = null;
     }
   }
 
@@ -120,6 +137,7 @@ class AppState extends ChangeNotifier {
 
   /// Use the same revoked-session handling for every protected operation.
   bool handleFailure(Object error) {
+    if (_disposed) return false;
     if (error is! AssasApiException || error.statusCode != 401) return false;
     if (!sessionEnded) {
       sessionEnded = true;
@@ -142,6 +160,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     stopPolling();
     super.dispose();
   }

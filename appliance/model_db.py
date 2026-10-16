@@ -168,6 +168,23 @@ def type_for_model(model):
     return entry.type if entry else None
 
 
+def model_from_hostname(hostname):
+    """Match a whole model code, never an arbitrary substring or brand name.
+
+    Hostnames are user-editable; callers must use a lower score than a
+    structured model field. Generic Android OS IDs do not identify hardware.
+    """
+    if not hostname:
+        return None
+    text = hostname.strip().rstrip('.')
+    if text.lower().endswith('.local'):
+        text = text[:-6]
+    entry = lookup(text)
+    if not entry or not entry.brand or text.casefold() != entry.code.casefold():
+        return None
+    return entry.code if any(c.isdigit() for c in text) else None
+
+
 def vendor_for_model(model):
     entry = lookup(model)
     if not entry or not entry.brand:

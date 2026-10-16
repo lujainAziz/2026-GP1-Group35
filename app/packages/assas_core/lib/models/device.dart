@@ -10,6 +10,7 @@ enum BaselineStatus { insufficientData, established }
 class Device {
   final String mac;
   final String? ip;
+  final List<String> ipv6;
 
   /// Name the user gave the device in the app (null = use the detected name).
   final String? userName;
@@ -32,6 +33,7 @@ class Device {
   const Device({
     required this.mac,
     this.ip,
+    this.ipv6 = const [],
     this.userName,
     this.hostname,
     this.model,
@@ -79,6 +81,7 @@ class Device {
   Device copyWith({bool? trusted, String? userName}) => Device(
         mac: mac,
         ip: ip,
+        ipv6: ipv6,
         userName: userName == null ? this.userName : (userName.isEmpty ? null : userName),
         hostname: hostname,
         model: model,
@@ -106,6 +109,10 @@ class Device {
     return Device(
       mac: (j['mac'] ?? '').toString(),
       ip: j['ip']?.toString(),
+      ipv6: j['ipv6'] is List
+          ? List<String>.unmodifiable((j['ipv6'] as List)
+              .whereType<String>().map((v) => v.trim()).where((v) => v.isNotEmpty).toSet())
+          : const [],
       userName: j['user_name']?.toString(),
       hostname: j['hostname']?.toString(),
       model: j['model']?.toString(),

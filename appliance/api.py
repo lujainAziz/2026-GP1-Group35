@@ -126,6 +126,11 @@ def ensure_ip_columns() -> None:
         for column in _IP_FAMILY_COLUMNS:
             if column not in cols:
                 conn.execute(f"ALTER TABLE devices ADD COLUMN {column} TEXT")
+        for mac, ip in conn.execute("SELECT mac, ip FROM devices WHERE ip IS NOT NULL").fetchall():
+            family = _classify_ip(ip)
+            column = {'ipv4': 'last_ipv4', 'ipv6_global': 'last_ipv6_global', 'ipv6_ll': 'last_ipv6_ll'}.get(family)
+            if column:
+                conn.execute(f"UPDATE devices SET {column}=COALESCE({column}, ?) WHERE mac=?", (ip, mac))
         conn.commit()
     finally:
         conn.close()
@@ -565,6 +570,7 @@ def row_to_summary(row) -> DeviceSummary:
 
 def row_to_detail(row) -> DeviceDetail:
     data = dict(row)
+    legacy_ip = data.get("ip")
     # Replace the flip-prone legacy `ip` with one stable resolved address, and
     # surface the known IPv6 addresses in the optional `ipv6` field.
     data["ip"] = _resolve_display_ip(
@@ -573,7 +579,7 @@ def row_to_detail(row) -> DeviceDetail:
     )
     data["ipv6"] = _resolve_ipv6(
         data.get("last_ipv4"), data.get("last_ipv6_global"),
-        data.get("last_ipv6_ll"), data.get("ip"),
+        data.get("last_ipv6_ll"), legacy_ip,
     )
     data["model"] = _shown_model(data.get("model"))
     for flag in (

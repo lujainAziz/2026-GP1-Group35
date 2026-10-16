@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
@@ -229,18 +230,22 @@ class _StatusScreenState extends State<StatusScreen> {
               const SizedBox(width: 5),
               Text('/${_total ?? '—'}', style: UiText.sans(22, 600, color: Ui.mute)),
             ]),
-            Row(children: [for (var i = 0; i < signals.length; i++) ...[
-              if (i > 0) const SizedBox(width: 4),
-              Expanded(child: Container(height: 6, decoration: BoxDecoration(color: signals[i].bar,
-                  borderRadius: BorderRadius.circular(3)))),
-            ]]),
+            LayoutBuilder(builder: (context, box) {
+              // Counts include every device; the marks are a bounded sample.
+              final count = math.min(signals.length, (box.maxWidth / 8).floor());
+              return Row(children: [for (var i = 0; i < count; i++) ...[
+                if (i > 0) const SizedBox(width: 4),
+                Expanded(child: Container(height: 6, decoration: BoxDecoration(color: signals[i].bar,
+                    borderRadius: BorderRadius.circular(3)))),
+              ]]);
+            }),
           ]))),
         const SizedBox(height: 12),
         Container(padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
           decoration: surfCard(UiRadius.card, color: Ui.mix(Ui.high, .16, Ui.surf)),
           child: Row(children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Open\nalerts', style: UiText.sans(15, 600)),
+              Text('Unresolved\nalerts', style: UiText.sans(15, 600)),
               if (!FeatureRelease.alerts) ...[const SizedBox(height: 8), const SoonTag(2)],
             ])),
             Text(!FeatureRelease.alerts ? 'SOON' : _alertsAvailable ? '${_unresolved ?? '—'}' : '—',

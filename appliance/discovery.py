@@ -90,6 +90,10 @@ ENABLE_UPNP_ENRICHMENT = os.getenv("ASSAS_UPNP_ENRICH", "0").lower() in {
 UPNP_TIMEOUT_SECONDS = 2.0
 UPNP_MAX_BYTES = 128 * 1024
 
+# Evidence source labels stored in model_source / class_source.
+SRC_HOSTNAME_MODEL_CODE = "hostname model code"
+SRC_MODEL_DATABASE = "device model identifier (model database)"
+
 # ASSAS-Test client membership source.  The TL-WR802N is the authoritative
 # source for which wireless stations are actually associated to the SSID.
 AP_URL = os.getenv("ASSAS_AP_URL", "http://192.168.100.2").rstrip("/")
@@ -833,6 +837,12 @@ def init_db():
     for column, definition in migrations.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {definition}")
+
+    # Preserve legacy addresses before another family overwrites devices.ip.
+    for mac, ip in conn.execute("SELECT mac, ip FROM devices WHERE ip IS NOT NULL").fetchall():
+        family = _ip_family_column(ip)
+        if family:
+            conn.execute(f"UPDATE devices SET {family}=COALESCE({family}, ?) WHERE mac=?", (ip, mac))
 
     # One-time (but idempotent) cleanup of fake vendor text previously stored
     # for randomized MACs (e.g. "(locally administered / randomized MAC)",
@@ -2372,6 +2382,15 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
         # get_vendor() is a real OUI hit (or None) -- never inferred.
         vendor_source = None
 
+    if not model:
+        hostname_model = model_db.model_from_hostname(hostname)
+        if hostname_model:
+            model = hostname_model
+            model_score = SCORES["hostname"]
+            model_source = SRC_HOSTNAME_MODEL_CODE
+            _, model_type = normalize_model(model)
+            candidate = merge_candidate(candidate, model_type, model_score, model_source)
+
     # A randomized/local MAC cannot provide a trustworthy OUI vendor.
     # If passive metadata gives us an unambiguous model or hostname
     # identity, use that stronger evidence instead of leaving the
@@ -3753,15 +3772,16 @@ def rescore_stored_evidence(verbose=True):
         conn = connect_db()
         rows = conn.execute(
             "SELECT mac, dhcp_signature, vendor_class, hostname, vendor, model, "
-            "device_type, COALESCE(class_score, 0) FROM devices"
+            "device_type, COALESCE(class_score, 0), model_score, model_source FROM devices"
         ).fetchall()
 
         changed = 0
         for (mac, dhcp_sig, vendor_class, hostname, vendor, model,
-             old_type, old_score) in rows:
+             old_type, old_score, stored_model_score, stored_model_source) in rows:
             # Model database: type a stored "Name (CODE)" by its CODE, exactly
             # as when it was observed.
             model = model_db.stored_code(model)
+            evidence_score = SCORES["hostname"] if stored_model_source == SRC_HOSTNAME_MODEL_CODE else (stored_model_score or SCORES["model"])
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3771,13 +3791,13 @@ def rescore_stored_evidence(verbose=True):
                 "android OS hostname",
             )
             candidate = merge_candidate(
-                candidate, type_from_model(model), SCORES["model"],
+                candidate, type_from_model(model), evidence_score,
                 "device model identifier",
             )
             if type_from_model(model) is None:
                 candidate = merge_candidate(
-                    candidate, model_db.type_for_model(model), SCORES["model"],
-                    "device model identifier (model database)",
+                    candidate, model_db.type_for_model(model), evidence_score,
+                    SRC_MODEL_DATABASE,
                 )
             if dhcp_sig:
                 try:
@@ -3849,7 +3869,16 @@ _REDERIVABLE_CLASS_SOURCES = frozenset({
     "android OS hostname", "android OS (DHCP vendor class)",
     "Huawei DHCP vendor class", "DHCP fingerprint",
     "device model identifier", "WS-Discovery model identifier",
+    SRC_MODEL_DATABASE,
+    SRC_HOSTNAME_MODEL_CODE,
     "MAC vendor",
+})
+
+
+# Sources whose verdict came from the device model alone.
+_MODEL_CLASS_SOURCES = frozenset({
+    "device model identifier", SRC_MODEL_DATABASE,
+    SRC_HOSTNAME_MODEL_CODE,
 })
 
 
@@ -3899,18 +3928,19 @@ def reevaluate_stale_classifications(verbose=True):
         conn = connect_db()
         rows = conn.execute(
             "SELECT mac, dhcp_signature, vendor_class, hostname, vendor, model, "
-            "device_type, COALESCE(class_score, 0), class_source FROM devices"
+            "device_type, COALESCE(class_score, 0), class_source, model_score, model_source FROM devices"
         ).fetchall()
 
         changed = 0
         for (mac, dhcp_sig, vendor_class, hostname, vendor, model,
-             old_type, old_score, old_source) in rows:
+             old_type, old_score, old_source, stored_model_score, stored_model_source) in rows:
             # Recompute from stored evidence with the current rules. This mirrors
             # rescore_stored_evidence()'s recompute on purpose -- duplicated so
             # that function stays untouched (the accepted second-pass cost).
             # Model database: type a stored "Name (CODE)" by its CODE, exactly
             # as when it was observed.
             model = model_db.stored_code(model)
+            evidence_score = SCORES["hostname"] if stored_model_source == SRC_HOSTNAME_MODEL_CODE else (stored_model_score or SCORES["model"])
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3920,13 +3950,13 @@ def reevaluate_stale_classifications(verbose=True):
                 "android OS hostname",
             )
             candidate = merge_candidate(
-                candidate, type_from_model(model), SCORES["model"],
+                candidate, type_from_model(model), evidence_score,
                 "device model identifier",
             )
             if type_from_model(model) is None:
                 candidate = merge_candidate(
-                    candidate, model_db.type_for_model(model), SCORES["model"],
-                    "device model identifier (model database)",
+                    candidate, model_db.type_for_model(model), evidence_score,
+                    SRC_MODEL_DATABASE,
                 )
             if dhcp_sig:
                 try:
@@ -3959,6 +3989,15 @@ def reevaluate_stale_classifications(verbose=True):
                 candidate, type_from_vendor(vendor), SCORES["vendor"], "MAC vendor",
             )
 
+            if (candidate is None and model and old_type in ANDROID_FAMILY_TYPES
+                    and old_source in _MODEL_CLASS_SOURCES
+                    and type_from_model(model) is None
+                    and model_db.type_for_model(model) is None):
+                # The form factor rested on the model alone, and the current
+                # rules no longer type it (e.g. a Galaxy Camera): keep only the
+                # OS-level verdict instead of a phone/tablet it cannot support.
+                candidate = ("Android Device", SCORES["os_hint"],
+                             SRC_MODEL_DATABASE)
             if candidate is None:
                 continue                                    # guard 1
             new_type, new_score, new_source = candidate
