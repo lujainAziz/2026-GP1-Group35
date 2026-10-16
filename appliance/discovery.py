@@ -90,6 +90,10 @@ ENABLE_UPNP_ENRICHMENT = os.getenv("ASSAS_UPNP_ENRICH", "0").lower() in {
 UPNP_TIMEOUT_SECONDS = 2.0
 UPNP_MAX_BYTES = 128 * 1024
 
+# Evidence source labels stored in model_source / class_source.
+SRC_HOSTNAME_MODEL_CODE = "hostname model code"
+SRC_MODEL_DATABASE = "device model identifier (model database)"
+
 # ASSAS-Test client membership source.  The TL-WR802N is the authoritative
 # source for which wireless stations are actually associated to the SSID.
 AP_URL = os.getenv("ASSAS_AP_URL", "http://192.168.100.2").rstrip("/")
@@ -2383,7 +2387,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
         if hostname_model:
             model = hostname_model
             model_score = SCORES["hostname"]
-            model_source = "hostname model code"
+            model_source = SRC_HOSTNAME_MODEL_CODE
             _, model_type = normalize_model(model)
             candidate = merge_candidate(candidate, model_type, model_score, model_source)
 
@@ -3777,7 +3781,7 @@ def rescore_stored_evidence(verbose=True):
             # Model database: type a stored "Name (CODE)" by its CODE, exactly
             # as when it was observed.
             model = model_db.stored_code(model)
-            evidence_score = SCORES["hostname"] if stored_model_source == "hostname model code" else (stored_model_score or SCORES["model"])
+            evidence_score = SCORES["hostname"] if stored_model_source == SRC_HOSTNAME_MODEL_CODE else (stored_model_score or SCORES["model"])
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3793,7 +3797,7 @@ def rescore_stored_evidence(verbose=True):
             if type_from_model(model) is None:
                 candidate = merge_candidate(
                     candidate, model_db.type_for_model(model), evidence_score,
-                    "device model identifier (model database)",
+                    SRC_MODEL_DATABASE,
                 )
             if dhcp_sig:
                 try:
@@ -3865,16 +3869,16 @@ _REDERIVABLE_CLASS_SOURCES = frozenset({
     "android OS hostname", "android OS (DHCP vendor class)",
     "Huawei DHCP vendor class", "DHCP fingerprint",
     "device model identifier", "WS-Discovery model identifier",
-    "device model identifier (model database)",
-    "hostname model code",
+    SRC_MODEL_DATABASE,
+    SRC_HOSTNAME_MODEL_CODE,
     "MAC vendor",
 })
 
 
 # Sources whose verdict came from the device model alone.
 _MODEL_CLASS_SOURCES = frozenset({
-    "device model identifier", "device model identifier (model database)",
-    "hostname model code",
+    "device model identifier", SRC_MODEL_DATABASE,
+    SRC_HOSTNAME_MODEL_CODE,
 })
 
 
@@ -3936,7 +3940,7 @@ def reevaluate_stale_classifications(verbose=True):
             # Model database: type a stored "Name (CODE)" by its CODE, exactly
             # as when it was observed.
             model = model_db.stored_code(model)
-            evidence_score = SCORES["hostname"] if stored_model_source == "hostname model code" else (stored_model_score or SCORES["model"])
+            evidence_score = SCORES["hostname"] if stored_model_source == SRC_HOSTNAME_MODEL_CODE else (stored_model_score or SCORES["model"])
             candidate = merge_candidate(
                 None, type_from_hostname(hostname), SCORES["hostname"],
                 "stored hostname",
@@ -3952,7 +3956,7 @@ def reevaluate_stale_classifications(verbose=True):
             if type_from_model(model) is None:
                 candidate = merge_candidate(
                     candidate, model_db.type_for_model(model), evidence_score,
-                    "device model identifier (model database)",
+                    SRC_MODEL_DATABASE,
                 )
             if dhcp_sig:
                 try:
@@ -3993,7 +3997,7 @@ def reevaluate_stale_classifications(verbose=True):
                 # rules no longer type it (e.g. a Galaxy Camera): keep only the
                 # OS-level verdict instead of a phone/tablet it cannot support.
                 candidate = ("Android Device", SCORES["os_hint"],
-                             "device model identifier (model database)")
+                             SRC_MODEL_DATABASE)
             if candidate is None:
                 continue                                    # guard 1
             new_type, new_score, new_source = candidate
