@@ -25,6 +25,7 @@ class AuditRepairs(unittest.TestCase):
     def test_camera_is_not_a_phone(self):
         self.assertIsNone(classify('samsung', 'Galaxy Camera 2', 'EK-GC200'))
         self.assertEqual(classify('htc', 'One M9+ (Prime Camera Edition)', 'HTC-M9'), 'Mobile (Android)')
+        self.assertEqual(classify('htc', 'HTC U11 Camera+', 'HTC 2Q4R400'), 'Mobile (Android)')
         self.assertIsNone(classify('samsung', 'Galaxy NX', 'EK-GN120'))
         self.assertEqual(classify('fujitsu', 'ARROWS NX F-06E', 'F-06E'), 'Mobile (Android)')
         self.assertEqual(classify('tecno', 'NX', 'TECNO R8O'), 'Mobile (Android)')

@@ -70,9 +70,9 @@ NO_TYPE_RE = _kw(
     "ideapad", "thinkpad", "glass", "glasses", "eyewear", "ipod", "simulator",
 )
 # Dedicated cameras that run Android ("Galaxy Camera", "Galaxy NX"). A phone
-# sold on its camera ("Prime Camera Edition") is still a phone, and a bare
-# "NX" is a phone line at other brands (ARROWS NX, TECNO NX).
-CAMERA_RE = re.compile(r"(?<![a-z])camera(?![a-z])(?!\s+edition)|(?<![a-z])galaxy nx(?![a-z])")
+# sold on its camera ("Prime Camera Edition", "U11 Camera+") is still a phone,
+# and a bare "NX" is a phone line at other brands (ARROWS NX, TECNO NX).
+CAMERA_RE = re.compile(r"(?<![a-z])camera(?![a-z])(?!\s*(?:\+|edition))|(?<![a-z])galaxy nx(?![a-z])")
 NO_TYPE_ZH = ("手表", "手环", "耳机", "笔记本", "擎云", "眼镜", "车机", "路由", "音箱")
 # "TV" as its own word, or glued to a known TV family ("MiTV", "LenovoTV").
 # Deliberately not "DTV": that marks a phone with a TV tuner.
