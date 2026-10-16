@@ -8,6 +8,8 @@ The datasets directory must contain (see docs/DEVICE_MODELS.md for sources):
     supported_devices.csv                    Google Play supported devices (UTF-16)
     apple_ios-device-identifiers.json        kyle-seongwoo-jun/apple-device-identifiers
     apple_tvos-device-identifiers.json       kyle-seongwoo-jun/apple-device-identifiers
+    apple_mac-device-identifiers.json        kyle-seongwoo-jun/apple-device-identifiers
+    ipsw_devices.json                        api.ipsw.me/v4/devices (Apple board IDs)
     mobilemodels/huawei_cn.md                KHwang9883/MobileModels
     mobilemodels/huawei_global_en.md         KHwang9883/MobileModels
     mobilemodels/honor_cn.md                 KHwang9883/MobileModels
@@ -86,6 +88,11 @@ OTHER_MAJOR_RE = _kw("projector", "hub", "display", "vr", "terminal", "router",
 ANDROID_TYPES = {"phone": "Mobile (Android)", "tablet": "Tablet (Android)"}
 APPLE_TYPES = {"phone": "Mobile (Apple)", "tablet": "Tablet (Apple)"}
 TV_TYPE = "Smart TV / Media Device"
+# classification.py labels Macs (and Mac-class Apple hardware) "Computer".
+APPLE_COMPUTER_TYPE = "Computer"
+# Identifier prefixes that are Mac-class hardware (MacBookPro, Macmini, iMac,
+# the Developer Transition Kit, a Mac VM) and so take the Computer type.
+APPLE_COMPUTER_PREFIXES = ("mac", "imac", "virtualmac", "adp")
 
 CJK_RE = re.compile(r"[\u3000-\u9fff\uff00-\uffef]")
 
@@ -182,6 +189,94 @@ def pick_brand(brands):
     return Counter(b for b in brands if b.lower() == key).most_common(1)[0][0]
 
 
+def apple_identifier_type(identifier):
+    """ASSAS type for an Apple identifier, by family. Mac-class hardware takes
+    the Computer type classification.py already uses; iPhone/iPad/Apple TV take
+    their usual Apple form factor; everything else (iPod, Watch, HomePod,
+    Vision Pro) has no ASSAS form factor and so no type."""
+    low = identifier.lower()
+    if low.startswith(APPLE_COMPUTER_PREFIXES):
+        return APPLE_COMPUTER_TYPE
+    if low.startswith("ipad"):
+        return APPLE_TYPES["tablet"]
+    if low.startswith("iphone"):
+        return APPLE_TYPES["phone"]
+    if low.startswith("appletv"):
+        return TV_TYPE
+    return None
+
+
+def _apple_identifier_names(datasets):
+    """identifier -> marketing name, from the Apple identifier datasets. A few
+    identifiers carry a list of names (one code, several products); the first
+    is used."""
+    names = {}
+    for fn in ("apple_ios-device-identifiers.json",
+               "apple_tvos-device-identifiers.json",
+               "apple_mac-device-identifiers.json"):
+        path = datasets / fn
+        if not path.exists():
+            continue
+        with open(path, encoding="utf-8") as f:
+            for code, name in json.load(f).items():
+                names[code] = name[0] if isinstance(name, list) else name
+    return names
+
+
+def apple_extension(datasets, existing, stats):
+    """Additive Apple rows the base datasets do not already produce:
+
+    * every Mac identifier (MacBookPro9,2, iMac13,1, ...) as a Computer row;
+    * every Apple board ID (J271AP, D74AP, ...) as its own code row, resolved
+      through api.ipsw.me to its identifier, then to that identifier's name
+      and form factor.
+
+    Board IDs with no real marketing name (iBridge coprocessors, whose name is
+    just the identifier) are skipped. Codes already produced by the base build
+    -- in `existing` -- are never touched.
+    """
+    names = _apple_identifier_names(datasets)
+    out = []
+    added = set()
+
+    def emit(code, name, dtype):
+        key = code.lower()
+        if key in existing or key in added:
+            return
+        if len(code) < MIN_CODE_LEN or code.isdigit():
+            return
+        added.add(key)
+        out.append((code, "Apple", name, dtype or ""))
+
+    mac_path = datasets / "apple_mac-device-identifiers.json"
+    if mac_path.exists():
+        with open(mac_path, encoding="utf-8") as f:
+            for code, name in json.load(f).items():
+                if code in APPLE_SKIP:
+                    continue
+                display = name[0] if isinstance(name, list) else name
+                emit(code.strip(), display.strip(), apple_identifier_type(code))
+    stats["apple_mac_identifier_rows"] = len(added)
+
+    ipsw_path = datasets / "ipsw_devices.json"
+    before = len(added)
+    if ipsw_path.exists():
+        with open(ipsw_path, encoding="utf-8") as f:
+            devices = json.load(f)
+        for dev in devices:
+            identifier = (dev.get("identifier") or "").strip()
+            name = (names.get(identifier) or dev.get("name") or "").strip()
+            if not name or name == identifier:
+                continue   # no real marketing name (e.g. iBridge coprocessors)
+            dtype = apple_identifier_type(identifier)
+            for board in dev.get("boards") or []:
+                code = (board.get("boardconfig") or "").strip().upper()
+                if code:
+                    emit(code, name, dtype)
+    stats["apple_board_id_rows"] = len(added) - before
+    return out
+
+
 def build(datasets):
     rows = load_rows(datasets)
     stats = Counter(source_rows=len(rows))
@@ -203,6 +298,9 @@ def build(datasets):
             stats["codes_shared_by_brands_left_blank"] += 1
         code = min(e[2] for e in entries)
         out.append((code, brand, pick_name(entries), dtype or ""))
+    stats["rows_from_base_datasets"] = len(out)
+    existing = {r[0].lower() for r in out}
+    out.extend(apple_extension(datasets, existing, stats))
     out.sort(key=lambda r: (r[0].lower(), r[0]))
     stats["output_rows"] = len(out)
     return out, stats

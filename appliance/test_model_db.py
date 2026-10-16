@@ -23,7 +23,7 @@ from classification import (
 HERE = Path(__file__).parent
 ALLOWED_TYPES = {
     "", "Mobile (Android)", "Tablet (Android)", "Mobile (Apple)", "Tablet (Apple)",
-    "Smart TV / Media Device",
+    "Smart TV / Media Device", "Computer",
 }
 
 
@@ -99,6 +99,46 @@ class LookupTests(unittest.TestCase):
         self.assertEqual(model_db.vendor_for_model("SM-X710"), "Samsung Electronics")
         self.assertEqual(model_db.vendor_for_model("iPhone14,2"), "Apple Inc.")
         self.assertEqual(model_db.vendor_for_model("24117RN76G"), "Xiaomi")
+
+
+class AppleBoardAndMacTests(unittest.TestCase):
+    """Apple extension: board IDs (api.ipsw.me) and Mac identifiers."""
+
+    def test_board_ids_resolve_to_name_and_type(self):
+        cases = {
+            "J271AP": ("iPad (10th generation)", "Tablet (Apple)"),
+            "N841AP": ("iPhone XR", "Mobile (Apple)"),
+            "J720AP": ("iPad Pro 13-inch (M4)", "Tablet (Apple)"),
+            "D74AP": ("iPhone 14 Pro Max", "Mobile (Apple)"),
+            "D221AP": ("iPhone X", "Mobile (Apple)"),
+            "V54AP": ("iPhone 17 Pro Max", "Mobile (Apple)"),
+            "J707AP": ("iPad Air 11-inch (M4, WiFi)", "Tablet (Apple)"),
+            "J481AP": ("iPad (A16)", "Tablet (Apple)"),
+            "J181AP": ("iPad (9th generation)", "Tablet (Apple)"),
+        }
+        for code, (name, dtype) in cases.items():
+            with self.subTest(code=code):
+                entry = model_db.lookup(code)
+                self.assertIsNotNone(entry)
+                self.assertEqual((entry.brand, entry.name, entry.type),
+                                 ("Apple", name, dtype))
+
+    def test_mac_identifier_is_a_computer(self):
+        entry = model_db.lookup("MacBookPro9,2")
+        self.assertEqual((entry.brand, entry.name, entry.type),
+                         ("Apple", "MacBook Pro (13-inch, Mid 2012)", "Computer"))
+        self.assertEqual(model_db.vendor_for_model("MacBookPro9,2"), "Apple Inc.")
+
+    def test_computer_type_propagates_through_classification(self):
+        # classification.py is untouched; it must still carry the new type.
+        self.assertEqual(normalize_model("MacBookPro9,2"), ("MacBookPro9,2", "Computer"))
+        self.assertEqual(type_from_model("MacBookPro9,2") or
+                         model_db.type_for_model("MacBookPro9,2"), "Computer")
+
+    def test_existing_board_id_alias_still_wins(self):
+        # D211AP is both a MODEL_ALIASES entry and an ipsw board ID; the alias
+        # (an existing rule) must still win in normalize_model.
+        self.assertEqual(normalize_model("d211ap"), MODEL_ALIASES["d211ap"])
 
 
 class TypeRuleTests(unittest.TestCase):

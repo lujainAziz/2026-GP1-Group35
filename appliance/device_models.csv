@@ -4896,6 +4896,8 @@ B22_C,Biegedy,B22_C,
 B22_EEA,Biegedy,B22_EEA,
 B22_U,Biegedy,B22_U,
 B22_US,Biegedy,B22_US,
+B238AAP,Apple,HomePod,
+B238AP,Apple,HomePod (Unknown Model),
 B23_EEA,Biegedy,B23_U_EEA,
 B23_U_EEA,Biegedy,B23_U_EEA,
 B23_U_US,Biegedy,B23_U_US,
@@ -4938,6 +4940,7 @@ B506_TW,BenQ,B506,
 B5070,Medion,E5008,
 B50_CHT,BenQ,B50_CHT,
 B50Pro,BMobile,B50 PRO,
+B520AP,Apple,HomePod mini,
 B5531,Medion,S5504,
 B5532,Medion,X5520,
 B5Pro,,Bhart 5 PRO,
@@ -4949,6 +4952,7 @@ B60Pro_MV03,BMobile,B60Pro_MV03,
 B610A103A,CIBER,B610A103A,
 B610A115,CIBER,B610A115,
 B610A215,CIBER,B610A215,
+B620AP,Apple,HomePod (2nd generation),
 B63Pro,BMobile,B63Pro,
 B6546,Micromax,CANVAS B20,
 B70Pro,BMobile,B70Pro,
@@ -8262,6 +8266,7 @@ D101,RebotAi,D101_EEA,
 D1018,Delm,D1018,
 D101_EEA,RebotAi,D101_EEA,
 D101_PRO,RebotAi,D101,
+D101AP,Apple,iPhone 7,Mobile (Apple)
 D102,DOMATON,D102,
 D103,DOMATON,D103,
 D103_EEA,Kimlok,D103_EEA,
@@ -8274,7 +8279,9 @@ D107,YUNTAB,D107,
 D108,MEIZE,D108,
 D108_EEA,FEONAL,D108_EEA,
 D109_EEA,FEONAL,D109_EEA,
+D10AP,Apple,iPhone 7,Mobile (Apple)
 D110,Zonko,D110,
+D111AP,Apple,iPhone 7 Plus,Mobile (Apple)
 D113,LZU_lzu,D113,
 D113_EEA,LZU_lzu,D113_EEA,
 D115,,D115,
@@ -8284,6 +8291,7 @@ D117_EEA,FEONAL,D117_EEA,
 D118,Zonko,D118,
 D118_EEA,FEONAL,D118_EEA,
 D11_EEA,DMOAO,D11_EEA,
+D11AP,Apple,iPhone 7 Plus,Mobile (Apple)
 D121,MEIZE,D121,
 D121_EEA,MEIZE,D121_EEA,
 D1221,ETOE,D1221,
@@ -8308,6 +8316,10 @@ D136,Zonko,D136,
 D136_EEA,ANTEMPER,D136_EEA,
 D138,MEIZE,D138,
 D138_EEA,FEONAL,D138_EEA,
+D16AP,Apple,iPhone 13 mini,Mobile (Apple)
+D16DEV,Apple,iPhone 13 mini,Mobile (Apple)
+D17AP,Apple,iPhone 13,Mobile (Apple)
+D17DEV,Apple,iPhone 13,Mobile (Apple)
 D1_Pro,Bluboo,D1_Pro,
 D1MAX,AURZEN,D1MAX,
 D2-0082,Huawei,华为 Ascend D2 联通版,Mobile (Android)
@@ -8322,21 +8334,27 @@ D2-961G,Haier,D2-961G,
 D2-M,Hisense,D2-M,
 D2004,Sony,Xperia E1,Mobile (Android)
 D2005,Sony,Xperia E1,Mobile (Android)
+D201AP,Apple,iPhone 8,Mobile (Apple)
+D20AP,Apple,iPhone 8,Mobile (Apple)
 D2104,Sony,Xperia E1 Dual,Mobile (Android)
 D2105,Sony,Xperia E1 Dual,Mobile (Android)
 D2114,Sony,Xperia E1,Mobile (Android)
+D211AP,Apple,iPhone 8 Plus,Mobile (Apple)
 D2120,Vega,D2120,
 D2130,Nebula,D2130,
 D2140,Nebula,D2140,
 D2150,Nebula,D2150,
 D2151,Nebula,Nebula X1 Pro,
 D2160,Nebula,D2160,
+D21AP,Apple,iPhone 8 Plus,Mobile (Apple)
 D2202,Sony,Xperia E3,Mobile (Android)
 D2203,Sony,Xperia E3,Mobile (Android)
 D2206,Sony,Xperia E3,Mobile (Android)
 D2212,Sony,Xperia E3 Dual,Mobile (Android)
+D221AP,Apple,iPhone X,Mobile (Apple)
 D2241,Nebula,D2241,
 D2243,Sony,Xperia E3,Mobile (Android)
+D22AP,Apple,iPhone X,Mobile (Apple)
 D2302,Sony,Xperia M2 Dual,Mobile (Android)
 D2303,Sony,Xperia M2,Mobile (Android)
 D2305,Sony,Xperia M2,Mobile (Android)
@@ -8344,6 +8362,7 @@ D2306,Sony,Xperia M2,Mobile (Android)
 D2325,Nebula,Nebula_Mars_2_V2,
 D2342,Nebula,Cosmos_4K_SE,
 D2351,Nebula,Nebula X1,
+D23AP,Apple,iPhone Air,Mobile (Apple)
 D2403,Sony,Xperia M2 Aqua,Mobile (Android)
 D2406,Sony,Xperia M2 Aqua,Mobile (Android)
 D2421,Nebula,D2421,
@@ -8351,12 +8370,19 @@ D2425,Nebula,Nebula_Capsule_3,
 D2426,Nebula,Nebula_Capsule_3_Laser,
 D2502,Sony,Xperia C3 Dual,Mobile (Android)
 D2533,Sony,Xperia C3,Mobile (Android)
+D27AP,Apple,iPhone 14,Mobile (Apple)
 D2861,ETOE,D2861,
+D28AP,Apple,iPhone 14 Plus,Mobile (Apple)
 D2_EEA,DMOAO,D2_EEA,
 D2_Pro,Bluboo,D2 Pro,
 D2_US,DMOAO,D2_US,
 D3 MINI,Sunmi,D3 MINI,
 D3 PRO,Sunmi,D3 PRO,
+D321AP,Apple,iPhone XS,Mobile (Apple)
+D331AP,Apple,iPhone XS Max,Mobile (Apple)
+D331PAP,Apple,iPhone XS Max,Mobile (Apple)
+D37AP,Apple,iPhone 15,Mobile (Apple)
+D38AP,Apple,iPhone 15 Plus,Mobile (Apple)
 D3_C,DMOAO,D3_C,
 D3_E,DMOAO,D3_E,
 D3_EEA,DMOAO,D3_EEA,
@@ -8366,7 +8392,12 @@ D3_US,DMOAO,D3_US,
 D3_V_EEA,DMOAO,D3_V_EEA,
 D3_V_US,DMOAO,D3_V_US,
 D4112,Nebula,Capsule Air,
+D421AP,Apple,iPhone 11 Pro,Mobile (Apple)
+D431AP,Apple,iPhone 11 Pro Max,Mobile (Apple)
 D455,Navon,D455,
+D47AP,Apple,iPhone 16,Mobile (Apple)
+D48AP,Apple,iPhone 16 Plus,Mobile (Apple)
+D49AP,Apple,iPhone SE (3rd generation),Mobile (Apple)
 D4_Interactive_Display,LOFT,D4xx,
 D5 Pro,Bluboo,D5 Pro,
 D5-EEA,DMOAO,D5-EEA,
@@ -8385,11 +8416,15 @@ D510,Blu,D510,
 D5102,Sony,Xperia T3,Mobile (Android)
 D5103,Sony,Xperia T3,Mobile (Android)
 D5106,Sony,Xperia T3,Mobile (Android)
+D52GAP,Apple,iPhone 12 mini,Mobile (Apple)
 D5303,Sony,Xperia T2 Ultra,Mobile (Android)
 D5306,Sony,Xperia T2 Ultra,Mobile (Android)
 D5316,Sony,Xperia T2 Ultra,Mobile (Android)
 D5316N,Sony,Xperia T2 Ultra,Mobile (Android)
 D5322,Sony,Xperia T2 Ultra,Mobile (Android)
+D53GAP,Apple,iPhone 12,Mobile (Apple)
+D53PAP,Apple,iPhone 12 Pro,Mobile (Apple)
+D54PAP,Apple,iPhone 12 Pro Max,Mobile (Apple)
 D5503,Sony,Xperia Z1 Compact,Mobile (Android)
 D55L,Kodak,Kodak_D55L,
 D5788,Sony,Xperia J1 Compact,Mobile (Android)
@@ -8406,6 +8441,10 @@ D6000,Datsun,D6000,
 D601L,Duubee,D601L,
 D60LX,Kodak,Kodak_D60LX,
 D61L,Kodak,Kodak_D61L,
+D63AP,Apple,iPhone 13 Pro,Mobile (Apple)
+D63DEV,Apple,iPhone 13 Pro,Mobile (Apple)
+D64AP,Apple,iPhone 13 Pro Max,Mobile (Apple)
+D64DEV,Apple,iPhone 13 Pro Max,Mobile (Apple)
 D6502,Sony,Xperia Z2,Mobile (Android)
 D6503,Sony,Xperia Z2,Mobile (Android)
 D6543,Sony,Xperia Z2,Mobile (Android)
@@ -8427,8 +8466,11 @@ D701,Blu,D701,
 D70R,KXD mobile,D70R,
 D711HC_PG,Inet-Tablet,D711HC_PG,
 D718,,D718,
+D73AP,Apple,iPhone 14 Pro,Mobile (Apple)
+D74AP,Apple,iPhone 14 Pro Max,Mobile (Apple)
 D75E,Honeywell,D75E,
 D7911L3BC_OGS,Inet-Tablet,D7911L3BC_OGS,
+D79AP,Apple,iPhone SE (2nd generation),Mobile (Apple)
 D7_EEA,DMOAO,D7_EEA,
 D7_U,DMOAO,D7_U,
 D7_US,DMOAO,D7_US,
@@ -8438,7 +8480,11 @@ D8109N,Asianet,D8109N,
 D819,TCT (Alcatel),D819,
 D820,TCT (Alcatel),D820,
 D820X,TCT (Alcatel),D820X,
+D83AP,Apple,iPhone 15 Pro,Mobile (Apple)
+D84AP,Apple,iPhone 15 Pro Max,Mobile (Apple)
 D930,ZTE,,
+D93AP,Apple,iPhone 16 Pro,Mobile (Apple)
+D94AP,Apple,iPhone 16 Pro Max,Mobile (Apple)
 D9PRO,Kodak,Kodak_D9PRO,
 DA10,DOUNDY,DA10,
 DA220HQL,Acer,DA220HQL,
@@ -15764,6 +15810,31 @@ IM-W261,iMuz,IM-W261,
 IM0318ND,Intex,Aqua Lions 3,
 iM319,i-Mobile,iM319,
 IMA301,INMO,IMA301,
+"iMac10,1",Apple,"iMac (21.5-inch, Late 2009)",Computer
+"iMac11,2",Apple,"iMac (21.5-inch, Mid 2010)",Computer
+"iMac11,3",Apple,"iMac (27-inch, Mid 2010)",Computer
+"iMac12,1",Apple,"iMac (21.5-inch, Mid 2011)",Computer
+"iMac12,2",Apple,"iMac (27-inch, Mid 2011)",Computer
+"iMac13,1",Apple,"iMac (21.5-inch, Late 2012)",Computer
+"iMac13,2",Apple,"iMac (27-inch, Late 2012)",Computer
+"iMac14,1",Apple,"iMac (21.5-inch, Late 2013)",Computer
+"iMac14,2",Apple,"iMac (27-inch, Late 2013)",Computer
+"iMac14,4",Apple,"iMac (21.5-inch, Mid 2014)",Computer
+"iMac15,1",Apple,"iMac (Retina 5K, 27-inch, Late 2014)",Computer
+"iMac16,1",Apple,"iMac (21.5-inch, Late 2015)",Computer
+"iMac16,2",Apple,"iMac (Retina 4K, 21.5-inch, Late 2015)",Computer
+"iMac17,1",Apple,"iMac (Retina 5K, 27-inch, Late 2015)",Computer
+"iMac18,1",Apple,"iMac (21.5-inch, 2017)",Computer
+"iMac18,2",Apple,"iMac (Retina 4K, 21.5-inch, 2017)",Computer
+"iMac18,3",Apple,"iMac (Retina 5K, 27-inch, 2017)",Computer
+"iMac19,1",Apple,"iMac (Retina 5K, 27-inch, 2019)",Computer
+"iMac19,2",Apple,"iMac (Retina 4K, 21.5-inch, 2019)",Computer
+"iMac20,1",Apple,"iMac (Retina 5K, 27-inch, 2020)",Computer
+"iMac20,2",Apple,"iMac (Retina 5K, 27-inch, 2020)",Computer
+"iMac21,1",Apple,"iMac (24-inch, M1, 2021)",Computer
+"iMac21,2",Apple,"iMac (24-inch, M1, 2021)",Computer
+"iMac9,1",Apple,"iMac (20-inch, Early 2009)",Computer
+"iMacPro1,1",Apple,iMac Pro (2017),Computer
 IMARFLEX 2K Android TV,IMARFLEX,IMARFLEX 2K Android TV,Smart TV / Media Device
 imarflex 2K Google TV,IMARFLEX,imarflex 2K Google TV,Smart TV / Media Device
 IMARFLEX 4K Android TV,IMARFLEX,IMARFLEX 4K Android TV,Smart TV / Media Device
@@ -17280,6 +17351,7 @@ iYOU_M1,iYOU,iYOU_M1,
 IZY01,Intelbras,IZY01,
 J101,JHZL,J101,
 J101-EEA,JHZL,J101-EEA,
+J105AAP,Apple,Apple TV 4K (1st generation),Smart TV / Media Device
 J10_EEA,JUSYEA,J10_EEA,
 J10_US,JUSYEA,J10_US,
 J10L,Blu,J10L,
@@ -17290,8 +17362,28 @@ J11A,JREN,J11A,
 J11B,JREN,J11B,
 J11PLUS,JREN,J11PLUS,
 J12-1,JREN,J12-1,
+J120AP,Apple,iPad Pro (12.9-inch) (2nd generation),Tablet (Apple)
+J121AP,Apple,iPad Pro (12.9-inch) (2nd generation),Tablet (Apple)
+J127AP,Apple,iPad Pro (9.7-inch),Tablet (Apple)
+J128AP,Apple,iPad Pro (9.7-inch),Tablet (Apple)
 J12NEW,JREN,J12NEW,
+J171AAP,Apple,iPad (8th generation),Tablet (Apple)
+J171AP,Apple,iPad (7th generation),Tablet (Apple)
+J172AAP,Apple,iPad (8th generation),Tablet (Apple)
+J172AP,Apple,iPad (7th generation),Tablet (Apple)
+J180DAP,Apple,Mac Pro (2023),Computer
+J181AP,Apple,iPad (9th generation),Tablet (Apple)
+J181DEV,Apple,iPad (9th generation),Tablet (Apple)
+J182AP,Apple,iPad (9th generation),Tablet (Apple)
+J182DEV,Apple,iPad (9th generation),Tablet (Apple)
+J1AP,Apple,iPad (3rd generation),Tablet (Apple)
+J207AP,Apple,iPad Pro (10.5-inch),Tablet (Apple)
+J208AP,Apple,iPad Pro (10.5-inch),Tablet (Apple)
 J210A,Jooyon,J210A,
+J210AP,Apple,iPad mini (5th generation),Tablet (Apple)
+J211AP,Apple,iPad mini (5th generation),Tablet (Apple)
+J217AP,Apple,iPad Air (3rd generation),Tablet (Apple)
+J218AP,Apple,iPad Air (3rd generation),Tablet (Apple)
 J2502,JOVI,JOVI T1 5G,
 J2503,JOVI,JOVI Y21,
 J2505,JOVI,JOVI X300 FE,
@@ -17303,22 +17395,161 @@ J2601,JOVI,JOVI Y21e,
 J2607,JOVI,JOVI V80,
 J2608,JOVI,JOVI Y600 Pro 5G,
 J2609,JOVI,JOVI Y21,
+J271AP,Apple,iPad (10th generation),Tablet (Apple)
+J272AP,Apple,iPad (10th generation),Tablet (Apple)
+J273AAP,Apple,Developer Transition Kit,Computer
+J274AP,Apple,"Mac mini (M1, 2020)",Computer
+J293AP,Apple,"MacBook Pro (13-inch, M1, 2020)",Computer
+J2AAP,Apple,iPad (3rd generation),Tablet (Apple)
+J2AP,Apple,iPad (3rd generation),Tablet (Apple)
+J307AP,Apple,iPad Air (4th generation),Tablet (Apple)
+J308AP,Apple,iPad Air (4th generation),Tablet (Apple)
+J310AP,Apple,iPad mini (6th generation),Tablet (Apple)
+J310DEV,Apple,iPad mini (6th generation),Tablet (Apple)
+J311AP,Apple,iPad mini (6th generation),Tablet (Apple)
+J311DEV,Apple,iPad mini (6th generation),Tablet (Apple)
+J313AP,Apple,"MacBook Air (M1, 2020)",Computer
+J314CAP,Apple,"MacBook Pro (14-inch, 2021)",Computer
+J314SAP,Apple,"MacBook Pro (14-inch, 2021)",Computer
+J316CAP,Apple,"MacBook Pro (16-inch, 2021)",Computer
+J316SAP,Apple,"MacBook Pro (16-inch, 2021)",Computer
 J3173,Sony,Xperia Ace,Mobile (Android)
+J317AP,Apple,iPad Pro (11-inch),Tablet (Apple)
+J317XAP,Apple,iPad Pro (11-inch),Tablet (Apple)
+J318AP,Apple,iPad Pro (11-inch),Tablet (Apple)
+J318XAP,Apple,iPad Pro (11-inch),Tablet (Apple)
+J320AP,Apple,iPad Pro (12.9-inch) (3rd generation),Tablet (Apple)
+J320XAP,Apple,iPad Pro (12.9-inch) (3rd generation),Tablet (Apple)
+J321AP,Apple,iPad Pro (12.9-inch) (3rd generation),Tablet (Apple)
+J321XAP,Apple,iPad Pro (12.9-inch) (3rd generation),Tablet (Apple)
 J3273,Sony,Xperia 8 Lite,Mobile (Android)
+J33AP,Apple,Apple TV (3rd generation),Smart TV / Media Device
+J33IAP,Apple,Apple TV (3rd generation),Smart TV / Media Device
+J375CAP,Apple,Mac Studio (2022),Computer
+J375DAP,Apple,Mac Studio (2022),Computer
+J407AP,Apple,iPad Air (5th generation),Tablet (Apple)
+J408AP,Apple,iPad Air (5th generation),Tablet (Apple)
+J410AP,Apple,iPad mini (A17 Pro),Tablet (Apple)
+J411AP,Apple,iPad mini (A17 Pro),Tablet (Apple)
+J413AP,Apple,"MacBook Air (M2, 2022)",Computer
+J414CAP,Apple,"MacBook Pro (14-inch, 2023)",Computer
+J414SAP,Apple,"MacBook Pro (14-inch, 2023)",Computer
+J415AP,Apple,"MacBook Air (15-inch, M2, 2023)",Computer
+J416CAP,Apple,"MacBook Pro (16-inch, 2023)",Computer
+J416SAP,Apple,"MacBook Pro (16-inch, 2023)",Computer
+J417AP,Apple,iPad Pro (11-inch) (2nd generation),Tablet (Apple)
+J418AP,Apple,iPad Pro (11-inch) (2nd generation),Tablet (Apple)
+J420AP,Apple,iPad Pro (12.9-inch) (4th generation),Tablet (Apple)
+J421AP,Apple,iPad Pro (12.9-inch) (4th generation),Tablet (Apple)
+J42DAP,Apple,Apple TV HD,Smart TV / Media Device
+J433AP,Apple,"iMac (24-inch, 2023, Two ports)",Computer
+J434AP,Apple,"iMac (24-inch, 2023, Four ports)",Computer
+J456AP,Apple,"iMac (24-inch, M1, 2021)",Computer
+J457AP,Apple,"iMac (24-inch, M1, 2021)",Computer
+J473AP,Apple,Mac mini (2023),Computer
+J474SAP,Apple,Mac mini (2023),Computer
+J475CAP,Apple,Mac Studio (2023),Computer
+J475DAP,Apple,Mac Studio (2023),Computer
+J481AP,Apple,iPad (A16),Tablet (Apple)
+J482AP,Apple,iPad (A16),Tablet (Apple)
+J493AP,Apple,"MacBook Pro (13-inch, M2, 2022)",Computer
 J5-EEA,JUSYEA,J5-EEA,
+J504AP,Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+J507AP,Apple,iPad Air 11-inch (M2),Tablet (Apple)
+J508AP,Apple,iPad Air 11-inch (M2),Tablet (Apple)
+J514CAP,Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+J514MAP,Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+J514SAP,Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+J516CAP,Apple,"MacBook Pro (16-inch, Nov 2023)",Computer
+J516MAP,Apple,"MacBook Pro (16-inch, Nov 2023)",Computer
+J516SAP,Apple,"MacBook Pro (16-inch, Nov 2023)",Computer
+J517AP,Apple,iPad Pro (11-inch) (3rd generation),Tablet (Apple)
+J517XAP,Apple,iPad Pro (11-inch) (3rd generation),Tablet (Apple)
+J518AP,Apple,iPad Pro (11-inch) (3rd generation),Tablet (Apple)
+J518XAP,Apple,iPad Pro (11-inch) (3rd generation),Tablet (Apple)
+J522AP,Apple,iPad Pro (12.9-inch) (5th generation),Tablet (Apple)
+J522XAP,Apple,iPad Pro (12.9-inch) (5th generation),Tablet (Apple)
+J523AP,Apple,iPad Pro (12.9-inch) (5th generation),Tablet (Apple)
+J523XAP,Apple,iPad Pro (12.9-inch) (5th generation),Tablet (Apple)
+J537AP,Apple,iPad Air 13-inch (M2),Tablet (Apple)
+J538AP,Apple,iPad Air 13-inch (M2),Tablet (Apple)
+J575CAP,Apple,Mac Studio (2025),Computer
+J575DAP,Apple,Mac Studio (2025),Computer
 J5_EEA,JUSYEA,J5_EEA,
 J5_M,JUSYEA,J5_M,
+J604AP,Apple,"MacBook Pro (14-inch, 2024)",Computer
+J607AP,Apple,iPad Air 11-inch (M3),Tablet (Apple)
+J608AP,Apple,iPad Air 11-inch (M3),Tablet (Apple)
+J613AP,Apple,"MacBook Air (13-inch, M3, 2024)",Computer
+J614CAP,Apple,"MacBook Pro (14-inch, 2024)",Computer
+J614SAP,Apple,"MacBook Pro (14-inch, 2024)",Computer
+J615AP,Apple,"MacBook Air (15-inch, M3, 2024)",Computer
+J616CAP,Apple,"MacBook Pro (16-inch, 2024)",Computer
+J616SAP,Apple,"MacBook Pro (16-inch, 2024)",Computer
+J617AP,Apple,iPad Pro (11-inch) (4th generation),Tablet (Apple)
+J618AP,Apple,iPad Pro (11-inch) (4th generation),Tablet (Apple)
+J620AP,Apple,iPad Pro (12.9-inch) (6th generation),Tablet (Apple)
+J621AP,Apple,iPad Pro (12.9-inch) (6th generation),Tablet (Apple)
+J623AP,Apple,"iMac (24-inch, 2024, Two ports)",Computer
+J624AP,Apple,"iMac (24-inch, 2024, Four ports)",Computer
 J630,TCT (Alcatel),TCL J630,
+J637AP,Apple,iPad Air 13-inch (M3),Tablet (Apple)
+J638AP,Apple,iPad Air 13-inch (M3),Tablet (Apple)
 J6_EEA,JUSYEA,J6_EEA,
 J6_US,JUSYEA,J6_US,
 J7 PRO,QMobile,J7 PRO,
+J700AP,Apple,MacBook Neo,Computer
+J704AP,Apple,"MacBook Pro (14-inch, M5)",Computer
+J707AP,Apple,"iPad Air 11-inch (M4, WiFi)",Tablet (Apple)
+J708AP,Apple,"iPad Air 11-inch (M4, Cellular)",Tablet (Apple)
+J713AP,Apple,"MacBook Air (13-inch, M4, 2025)",Computer
+J714CAP,Apple,"MacBook Pro (14-inch, M5 Max)",Computer
+J714SAP,Apple,"MacBook Pro (14-inch, M5 Pro)",Computer
+J715AP,Apple,"MacBook Air (15-inch, M4, 2025)",Computer
+J716CAP,Apple,"MacBook Pro (16-inch, M5 Max)",Computer
+J716SAP,Apple,"MacBook Pro (16-inch, M5 Pro)",Computer
+J717AP,Apple,iPad Pro 11-inch (M4),Tablet (Apple)
+J718AP,Apple,iPad Pro 11-inch (M4),Tablet (Apple)
+J71AP,Apple,iPad Air,Tablet (Apple)
+J71BAP,Apple,iPad (6th generation),Tablet (Apple)
+J71SAP,Apple,iPad (5th generation),Tablet (Apple)
+J71TAP,Apple,iPad (5th generation),Tablet (Apple)
+J720AP,Apple,iPad Pro 13-inch (M4),Tablet (Apple)
+J721AP,Apple,iPad Pro 13-inch (M4),Tablet (Apple)
+J72AP,Apple,iPad Air,Tablet (Apple)
+J72BAP,Apple,iPad (6th generation),Tablet (Apple)
+J72SAP,Apple,iPad (5th generation),Tablet (Apple)
+J72TAP,Apple,iPad (5th generation),Tablet (Apple)
 J730U,TCT (Alcatel),730U,
+J737AP,Apple,"iPad Air 13-inch (M4, WiFi)",Tablet (Apple)
+J738AP,Apple,"iPad Air 13-inch (M4, Cellular)",Tablet (Apple)
+J73AP,Apple,iPad Air,Tablet (Apple)
 J73G,Acer,J73G,
+J773GAP,Apple,Mac mini (2024),Computer
+J773SAP,Apple,Mac mini (2024),Computer
+J775CAP,Apple,Mac Studio (M5 Max),Computer
+J775DAP,Apple,Mac Studio (M5 Ultra),Computer
 J7Pro,HAPPRUN,J7Pro,
 J8110,Sony,Xperia 1,Mobile (Android)
+J813AP,Apple,"MacBook Air (13-inch, M5)",Computer
+J815AP,Apple,"MacBook Air (15-inch, M5)",Computer
 J8170,Sony,Xperia 1,Mobile (Android)
+J817AP,Apple,iPad Pro 11-inch (M5),Tablet (Apple)
+J818AP,Apple,iPad Pro 11-inch (M5),Tablet (Apple)
+J81AP,Apple,iPad Air 2,Tablet (Apple)
+J820AP,Apple,iPad Pro 13-inch (M5),Tablet (Apple)
 J8210,Sony,Xperia 5,Mobile (Android)
+J821AP,Apple,iPad Pro 13-inch (M5),Tablet (Apple)
 J8270,Sony,Xperia 5,Mobile (Android)
+J82AP,Apple,iPad Air 2,Tablet (Apple)
+J85AP,Apple,iPad mini 2,Tablet (Apple)
+J85MAP,Apple,iPad mini 3,Tablet (Apple)
+J86AP,Apple,iPad mini 2,Tablet (Apple)
+J86MAP,Apple,iPad mini 3,Tablet (Apple)
+J873GAP,Apple,Mac mini (M6),Computer
+J873SAP,Apple,Mac mini (M5 Pro),Computer
+J87AP,Apple,iPad mini 2,Tablet (Apple)
+J87MAP,Apple,iPad mini 3,Tablet (Apple)
 J8_EEA,JUSYEA,J8_EEA_T,
 J8_US,JUSYEA,J8_T,
 J9110,Sony,Xperia 1,Mobile (Android)
@@ -17326,6 +17557,10 @@ J9150,Sony,Xperia 1 Professional Edition,Mobile (Android)
 J9180,Sony,Xperia 1,Mobile (Android)
 J9210,Sony,Xperia 5,Mobile (Android)
 J9260,Sony,Xperia 5,Mobile (Android)
+J96AP,Apple,iPad mini 4,Tablet (Apple)
+J97AP,Apple,iPad mini 4,Tablet (Apple)
+J98AAP,Apple,iPad Pro (12.9-inch),Tablet (Apple)
+J99AAP,Apple,iPad Pro (12.9-inch),Tablet (Apple)
 J9_EEA,JUSYEA,J9_EEA,
 J9_US,JUSYEA,J9_US,
 JA2-SMP0601,Aiwa,JA2-SMP0601,
@@ -17758,6 +17993,7 @@ K4-02 4G,Kalley,Klic,
 K400,,SPURT_K400,
 K405,EPIKONE,K405,
 K406,EPIKONE,K406,
+K48AP,Apple,iPad,Tablet (Apple)
 K50-R,Rebecco,K50-R,
 K500,,SPURT_K500,
 K5000,Oukitel,K5000,
@@ -17798,6 +18034,7 @@ K605,EPIKONE,K605,
 K610AO,JMGO,N1S SE,
 K626,UNIWA,K626_EEA,
 K62A,JMGO,K62A,
+K66AP,Apple,Apple TV (2nd generation),Smart TV / Media Device
 K6Pro,Easymer,K6Pro_EEA,
 K7 Kids,Supertab,K7_KIDS,
 K7 Power,Oukitel,K7_Power,
@@ -17868,6 +18105,10 @@ K919,MTN Group,K919,
 K92A,JMGO,N1S Infinity,
 K931AO,JMGO,JMGO N3 Ultimate,
 K93A,JMGO,N1S Pro,
+K93AAP,Apple,iPad 2,Tablet (Apple)
+K93AP,Apple,iPad 2,Tablet (Apple)
+K94AP,Apple,iPad 2,Tablet (Apple)
+K95AP,Apple,iPad 2,Tablet (Apple)
 K95L,ZTE,K95L,Mobile (Android)
 K99J,ZTE,nubia Pad SE,Tablet (Android)
 K9_Smart_Plus,Karbonn,K9_Smart_Plus,
@@ -22127,6 +22368,7 @@ M675M4,Ruio,Cola Plus 4G,
 M685Y4,Yes,Altitude 3,
 M686-EEA,DEEMWOLF,M686-EEA,
 M68_Plus,Timmy,M68_Plus,
+M68AP,Apple,iPhone,Mobile (Apple)
 M6_EEA,Meberry,M6_V_EEA,
 M6APro,Horion,M6APro,
 M6AProV2,Horion,M6AProV2,
@@ -22322,7 +22564,107 @@ MA768,Hoozo,MA768,
 MA8000,Korea Telecom,MA8000,
 MAA-AN00,Honor,HONOR 100,Mobile (Android)
 MAA-AN10,Honor,HONOR 100 Pro,Mobile (Android)
+"Mac13,1",Apple,Mac Studio (2022),Computer
+"Mac13,2",Apple,Mac Studio (2022),Computer
+"Mac14,10",Apple,"MacBook Pro (16-inch, 2023)",Computer
+"Mac14,12",Apple,Mac mini (2023),Computer
+"Mac14,13",Apple,Mac Studio (2023),Computer
+"Mac14,14",Apple,Mac Studio (2023),Computer
+"Mac14,15",Apple,"MacBook Air (15-inch, M2, 2023)",Computer
+"Mac14,2",Apple,"MacBook Air (M2, 2022)",Computer
+"Mac14,3",Apple,Mac mini (2023),Computer
+"Mac14,5",Apple,"MacBook Pro (14-inch, 2023)",Computer
+"Mac14,6",Apple,"MacBook Pro (16-inch, 2023)",Computer
+"Mac14,7",Apple,"MacBook Pro (13-inch, M2, 2022)",Computer
+"Mac14,8",Apple,Mac Pro (2023),Computer
+"Mac14,9",Apple,"MacBook Pro (14-inch, 2023)",Computer
+"Mac15,10",Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+"Mac15,11",Apple,"MacBook Pro (16-inch, Nov 2023)",Computer
+"Mac15,12",Apple,"MacBook Air (13-inch, M3, 2024)",Computer
+"Mac15,13",Apple,"MacBook Air (15-inch, M3, 2024)",Computer
+"Mac15,14",Apple,Mac Studio (2025),Computer
+"Mac15,3",Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+"Mac15,4",Apple,"iMac (24-inch, 2023, Two ports)",Computer
+"Mac15,5",Apple,"iMac (24-inch, 2023, Four ports)",Computer
+"Mac15,6",Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+"Mac15,7",Apple,"MacBook Pro (16-inch, Nov 2023)",Computer
+"Mac15,8",Apple,"MacBook Pro (14-inch, Nov 2023)",Computer
+"Mac15,9",Apple,"MacBook Pro (16-inch, Nov 2023)",Computer
+"Mac16,1",Apple,"MacBook Pro (14-inch, 2024)",Computer
+"Mac16,10",Apple,Mac mini (2024),Computer
+"Mac16,11",Apple,Mac mini (2024),Computer
+"Mac16,12",Apple,"MacBook Air (13-inch, M4, 2025)",Computer
+"Mac16,13",Apple,"MacBook Air (15-inch, M4, 2025)",Computer
+"Mac16,2",Apple,"iMac (24-inch, 2024, Two ports)",Computer
+"Mac16,3",Apple,"iMac (24-inch, 2024, Four ports)",Computer
+"Mac16,5",Apple,"MacBook Pro (16-inch, 2024)",Computer
+"Mac16,6",Apple,"MacBook Pro (14-inch, 2024)",Computer
+"Mac16,7",Apple,"MacBook Pro (16-inch, 2024)",Computer
+"Mac16,8",Apple,"MacBook Pro (14-inch, 2024)",Computer
+"Mac16,9",Apple,Mac Studio (2025),Computer
+"Mac17,2",Apple,"MacBook Pro (14-inch, M5)",Computer
 MACARON,Wiko,MACARON,
+"MacBook10,1",Apple,"MacBook (Retina, 12-inch, 2017)",Computer
+"MacBook5,2",Apple,"MacBook (13-inch, Early 2009)",Computer
+"MacBook6,1",Apple,"MacBook (13-inch, Late 2009)",Computer
+"MacBook7,1",Apple,"MacBook (13-inch, Mid 2010)",Computer
+"MacBook8,1",Apple,"MacBook (Retina, 12-inch, Early 2015)",Computer
+"MacBook9,1",Apple,"MacBook (Retina, 12-inch, Early 2016)",Computer
+"MacBookAir10,1",Apple,"MacBook Air (M1, 2020)",Computer
+"MacBookAir2,1",Apple,MacBook Air (Mid 2009),Computer
+"MacBookAir3,1",Apple,"MacBook Air (11-inch, Late 2010)",Computer
+"MacBookAir3,2",Apple,"MacBook Air (13-inch, Late 2010)",Computer
+"MacBookAir4,1",Apple,"MacBook Air (11-inch, Mid 2011)",Computer
+"MacBookAir4,2",Apple,"MacBook Air (13-inch, Mid 2011)",Computer
+"MacBookAir5,1",Apple,"MacBook Air (11-inch, Mid 2012)",Computer
+"MacBookAir5,2",Apple,"MacBook Air (13-inch, Mid 2012)",Computer
+"MacBookAir6,1",Apple,"MacBook Air (11-inch, Early 2014)",Computer
+"MacBookAir6,2",Apple,"MacBook Air (13-inch, Early 2014)",Computer
+"MacBookAir7,1",Apple,"MacBook Air (11-inch, Early 2015)",Computer
+"MacBookAir7,2",Apple,"MacBook Air (13-inch, 2017)",Computer
+"MacBookAir8,1",Apple,"MacBook Air (Retina, 13-inch, 2018)",Computer
+"MacBookAir8,2",Apple,"MacBook Air (Retina, 13-inch, 2019)",Computer
+"MacBookAir9,1",Apple,"MacBook Air (Retina, 13-inch, 2020)",Computer
+"MacBookPro10,1",Apple,"MacBook Pro (Retina, 15-inch, Early 2013)",Computer
+"MacBookPro10,2",Apple,"MacBook Pro (Retina, 13-inch, Early 2013)",Computer
+"MacBookPro11,1",Apple,"MacBook Pro (Retina, 13-inch, Late 2013)",Computer
+"MacBookPro11,2",Apple,"MacBook Pro (Retina, 15-inch, Late 2013)",Computer
+"MacBookPro11,3",Apple,"MacBook Pro (Retina, 15-inch, Late 2013)",Computer
+"MacBookPro11,4",Apple,"MacBook Pro (Retina, 15-inch, Mid 2015)",Computer
+"MacBookPro11,5",Apple,"MacBook Pro (Retina, 15-inch, Mid 2015)",Computer
+"MacBookPro12,1",Apple,"MacBook Pro (Retina, 13-inch, Early 2015)",Computer
+"MacBookPro13,1",Apple,"MacBook Pro (13-inch, 2016, Two Thunderbolt 3 ports)",Computer
+"MacBookPro13,2",Apple,"MacBook Pro (13-inch, 2016, Four Thunderbolt 3 ports)",Computer
+"MacBookPro13,3",Apple,"MacBook Pro (15-inch, 2016)",Computer
+"MacBookPro14,1",Apple,"MacBook Pro (13-inch, 2017, Two Thunderbolt 3 ports)",Computer
+"MacBookPro14,2",Apple,"MacBook Pro (13-inch, 2017, Four Thunderbolt 3 ports)",Computer
+"MacBookPro14,3",Apple,"MacBook Pro (15-inch, 2017)",Computer
+"MacBookPro15,1",Apple,"MacBook Pro (15-inch, 2018)",Computer
+"MacBookPro15,2",Apple,"MacBook Pro (13-inch, 2018, Four Thunderbolt 3 ports)",Computer
+"MacBookPro15,3",Apple,"MacBook Pro (15-inch, 2019)",Computer
+"MacBookPro15,4",Apple,"MacBook Pro (13-inch, 2019, Two Thunderbolt 3 ports)",Computer
+"MacBookPro16,1",Apple,"MacBook Pro (16-inch, 2019)",Computer
+"MacBookPro16,2",Apple,"MacBook Pro (13-inch, 2020, Four Thunderbolt 3 ports)",Computer
+"MacBookPro16,3",Apple,"MacBook Pro (13-inch, 2020, Two Thunderbolt 3 ports)",Computer
+"MacBookPro16,4",Apple,"MacBook Pro (16-inch, 2019)",Computer
+"MacBookPro17,1",Apple,"MacBook Pro (13-inch, M1, 2020)",Computer
+"MacBookPro18,1",Apple,"MacBook Pro (16-inch, 2021)",Computer
+"MacBookPro18,2",Apple,"MacBook Pro (16-inch, 2021)",Computer
+"MacBookPro18,3",Apple,"MacBook Pro (14-inch, 2021)",Computer
+"MacBookPro18,4",Apple,"MacBook Pro (14-inch, 2021)",Computer
+"MacBookPro4,1",Apple,"MacBook Pro (15-inch, Early 2008)",Computer
+"MacBookPro5,1",Apple,"MacBook Pro (15-inch, Late 2008)",Computer
+"MacBookPro5,2",Apple,"MacBook Pro (17-inch, Early 2009)",Computer
+"MacBookPro5,3",Apple,"MacBook Pro (15-inch, 2.53GHz, Mid 2009)",Computer
+"MacBookPro5,5",Apple,"MacBook Pro (13-inch, Mid 2009)",Computer
+"MacBookPro6,1",Apple,"MacBook Pro (17-inch, Mid 2010)",Computer
+"MacBookPro6,2",Apple,"MacBook Pro (15-inch, Mid 2010)",Computer
+"MacBookPro7,1",Apple,"MacBook Pro (13-inch, Mid 2010)",Computer
+"MacBookPro8,1",Apple,"MacBook Pro (13-inch, Early 2011)",Computer
+"MacBookPro8,2",Apple,"MacBook Pro (15-inch, Early 2011)",Computer
+"MacBookPro8,3",Apple,"MacBook Pro (17-inch, Early 2011)",Computer
+"MacBookPro9,1",Apple,"MacBook Pro (15-inch, Mid 2012)",Computer
+"MacBookPro9,2",Apple,"MacBook Pro (13-inch, Mid 2012)",Computer
 Mach,Cellon,Mach,
 MACH-W19,Huawei,HUAWEI MateBook X Pro i5,
 MACH-W29,Huawei,HUAWEI MateBook X Pro i7,
@@ -22339,6 +22681,19 @@ MACHR-W19,Huawei,HUAWEI MateBook X Pro 2019 i5,
 MACHR-W19L,Huawei,HUAWEI MateBook X Pro 2019 i5 Linux 版,
 MACHR-W29,Huawei,HUAWEI MateBook X Pro 2019 i7,
 MACHR-W29BL,Huawei,HUAWEI MateBook X Pro 2019 i7 Linux 版,
+"Macmini3,1",Apple,Mac mini (Early 2009),Computer
+"Macmini4,1",Apple,Mac mini (Mid 2010),Computer
+"Macmini5,1",Apple,Mac mini (Mid 2011),Computer
+"Macmini5,2",Apple,Mac mini (Mid 2011),Computer
+"Macmini6,1",Apple,Mac mini (Late 2012),Computer
+"Macmini6,2",Apple,Mac mini (Late 2012),Computer
+"Macmini7,1",Apple,Mac mini (Late 2014),Computer
+"Macmini8,1",Apple,Mac mini (2018),Computer
+"Macmini9,1",Apple,"Mac mini (M1, 2020)",Computer
+"MacPro4,1",Apple,Mac Pro (Early 2009),Computer
+"MacPro5,1",Apple,Mac Pro (Mid 2010),Computer
+"MacPro6,1",Apple,Mac Pro (Late 2013),Computer
+"MacPro7,1",Apple,Mac Pro (2019),Computer
 Mad Catz M.O.J.O.,Mad Catz,M.O.J.O.,
 Madrid,Starlight,Madrid,
 MAG-AN00,Honor,HONOR 90 GT,Mobile (Android)
@@ -24732,11 +25087,26 @@ N10-EEA,YUMKEM,N10-EEA,
 N100,Doogee,N100,
 N101B,CONSUNG,N101B,
 N101C,VICKUN,N101C,
+N102AP,Apple,iPod touch (6th generation),
+N104AP,Apple,iPhone 11,Mobile (Apple)
 N107,BMXC,N107,
 N107-EEA,BMXC,N107_EEA,
 N10_EEA,Doogee,N10_EEA,
+N111BAP,Apple,"Apple Watch Series 3 (42mm, LTE)",
+N111SAP,Apple,"Apple Watch Series 3 (38mm, LTE)",
+N112AP,Apple,iPod touch (7th generation),
 N11A,Nextbook,N11A,
+N121BAP,Apple,Apple Watch Series 3 (42mm),
+N121SAP,Apple,Apple Watch Series 3 (38mm),
+N131BAP,Apple,Apple Watch Series 4 (44mm),
+N131SAP,Apple,Apple Watch Series 4 (40mm),
 N1374DL,Nokia,Nokia G300,Mobile (Android)
+N141BAP,Apple,"Apple Watch Series 4 (44mm, LTE)",
+N141SAP,Apple,"Apple Watch Series 4 (40mm, LTE)",
+N144BAP,Apple,Apple Watch Series 5 (44mm),
+N144SAP,Apple,Apple Watch Series 5 (40mm),
+N146BAP,Apple,"Apple Watch Series 5 (44mm, LTE)",
+N146SAP,Apple,"Apple Watch Series 5 (40mm, LTE)",
 N150DL,Nokia,Nokia G100,Mobile (Android)
 N151DL,Nokia,Nokia C200,Mobile (Android)
 N152DL,Nokia,Nokia C100,Mobile (Android)
@@ -24745,6 +25115,7 @@ N156DL,Nokia,Nokia C110,Mobile (Android)
 N159V,HMD,HMD Vibe,Mobile (Android)
 N169,DEXP,DEXP Ursus N169,
 N180i,DEXP,N180i,
+N18AP,Apple,iPod touch (3rd generation),
 N1_550_Cruiser,Bravis,N1_550_Cruiser,
 N20Pro,Doogee,N20Pro,
 N210,DEXP,N210,
@@ -24753,11 +25124,17 @@ N2301,NIO,N2301,
 N2401,NIO,N2401,
 N2500,ETELPREMIUM,NOTE 25 ULTRA,
 N271,G-Tab,N271,
+N27AAP,Apple,Apple Watch (38mm),
+N27DAP,Apple,Apple Watch Series 1 (38mm),
 N28 Pro,NEXG,NEXG N28 Pro,
 N280,DEXP,N280,
 N280i,DEXP,N280i,
 N281,G-Tab,N281,
+N28AAP,Apple,Apple Watch (42mm),
+N28DAP,Apple,Apple Watch Series 1 (42mm),
 N3-2200,Acer,N3-2200,
+N301AAP,Apple,Apple Vision Pro (M5),
+N301AP,Apple,Apple Vision Pro,
 N30E,Doogee,N30E,
 N310,DEXP,N310,
 N36s,NEMO,N36s,
@@ -24768,7 +25145,12 @@ N380i,DEXP,N380i,
 N405,newsan,N405,
 N40Pro,Doogee,N40Plus,
 N410,DEXP,N410,
+N41AP,Apple,iPhone 5,Mobile (Apple)
+N42AP,Apple,iPhone 5,Mobile (Apple)
+N45AP,Apple,iPod touch,
 N470,DEXP,N470,
+N48AP,Apple,iPhone 5c,Mobile (Apple)
+N49AP,Apple,iPhone 5c,Mobile (Apple)
 N4MAX,naomicase,N4MAX,
 N4plus,Win (VE),N4plus,
 N50 Plus,Doogee,N50 Plus,
@@ -24784,9 +25166,11 @@ N5110,OPPO,N5110,Mobile (Android)
 N5111,OPPO,N1 mimi,Mobile (Android)
 N5116,OPPO,N1 mimi,Mobile (Android)
 N5117,OPPO,N5117,Mobile (Android)
+N51AP,Apple,iPhone 5s,Mobile (Apple)
 N5206,OPPO,N3,Mobile (Android)
 N5207,OPPO,N3,Mobile (Android)
 N5209,OPPO,N3,Mobile (Android)
+N53AP,Apple,iPhone 5s,Mobile (Apple)
 N55 Plus,Doogee,N55 Plus,
 N55 Pro,Doogee,N56 Plus,
 N5501L,Nuu,A5L,
@@ -24797,6 +25181,7 @@ N55S,Doogee,N55S,
 N56 Max,Doogee,N56 Max,
 N56 Plus,Doogee,N56 Plus,
 N56 Pro,Doogee,N56 Pro,
+N56AP,Apple,iPhone 6 Plus,Mobile (Apple)
 N570,DEXP,N570,
 N5702L,Nuu,NUU G3,
 N5704L,Nuu,G1,
@@ -24805,6 +25190,7 @@ N6000 SE,Blackview,N6000 SE,
 N6001L,Nuu,N6001L,
 N601,Noblex,N601,
 N60Pro,Doogee,N60Pro,
+N61AP,Apple,iPhone 6,Mobile (Apple)
 N6201L,Nuu,G4,
 N630,MiTAC,N630,
 N635,MiTAC,N635,
@@ -24814,16 +25200,26 @@ N6501L,Nuu,B20,
 N6504L,Nuu,N21,
 N6505L,Nuu,N21,
 N651,MiTAC,N651,
+N66AP,Apple,iPhone 6s Plus,Mobile (Apple)
+N66MAP,Apple,iPhone 6s Plus,Mobile (Apple)
 N672,MiTAC,hera_pro,
 N6801X,Nuu,B50,
 N685,COOL,N685,
+N69AP,Apple,iPhone SE (1st generation),Mobile (Apple)
+N69UAP,Apple,iPhone SE (1st generation),Mobile (Apple)
+N71AP,Apple,iPhone 6s,Mobile (Apple)
+N71MAP,Apple,iPhone 6s,Mobile (Apple)
 N720,ZTE,N720,
 N721,ZTE,,
 N722,MiTAC,phaeton,
+N72AP,Apple,iPod touch (2nd generation),
+N74AP,Apple,Apple Watch Series 2 (38mm),
 N7526,Next Technologies,N7526,
+N75AP,Apple,Apple Watch Series 2 (42mm),
 N762,ZTE,N762,Mobile (Android)
 N765_APT,ZTE,N765_APT,Mobile (Android)
 N788_BASHA,ZTE,,
+N78AP,Apple,iPod touch (5th generation),
 N790,ZTE,N790,Mobile (Android)
 N799D,ZTE,N799D,Mobile (Android)
 N8 KIDS,Topsand,N8_KIDS,
@@ -24838,9 +25234,12 @@ N810 i7,NESO,N810 i7,
 N817,ZTE,N817,Mobile (Android)
 N818,ZTE,N818,Mobile (Android)
 N818S,ZTE,Sapphire 3G,Mobile (Android)
+N81AP,Apple,iPod touch (4th generation),
+N82AP,Apple,iPhone 3G,Mobile (Apple)
 N8300_Reliance,ZTE,N8300_Reliance,Mobile (Android)
 N8301,Micromax,Infinity N Series N12,
 N8303,ZTE,N8303,Mobile (Android)
+N841AP,Apple,iPhone XR,Mobile (Apple)
 N850,ZTE,N850,
 N850L,ZTE,N850L,Mobile (Android)
 N855D,ZTE,N855D,
@@ -24854,8 +25253,11 @@ N8730-41101,NEC,AGT10,
 N8730-41102,NEC,AGT10,
 N880,ZTE,Blade,Mobile (Android)
 N880E,ZTE,,
+N88AP,Apple,iPhone 3GS,Mobile (Apple)
 N8_EEA,VUCATIMES,N8_EEA,
 N8_Plus,Topsand,N8_Plus,
+N90AP,Apple,iPhone 4,Mobile (Apple)
+N90BAP,Apple,iPhone 4,Mobile (Apple)
 N9100,ZTE,N9100,Mobile (Android)
 N9101,ZTE,N9101,Mobile (Android)
 N9106H-B,truevisions,N9106H-B,
@@ -24871,8 +25273,10 @@ N9137,ZTE,ZTE Tempo X,Mobile (Android)
 N9180,ZTE,N9180,Mobile (Android)
 N918St,ZTE,N918St,Mobile (Android)
 N919D,ZTE,N919D,Mobile (Android)
+N92AP,Apple,iPhone 4,Mobile (Apple)
 N930,Coolpad,,
 N940Sc,ZTE,N940Sc,Mobile (Android)
+N94AP,Apple,iPhone 4s,Mobile (Apple)
 N950,Newland,N950,
 N9500,ZTE,N9500,Mobile (Android)
 N9510,ZTE,N9510,Mobile (Android)
@@ -26546,14 +26950,20 @@ P100S,CHAINWAY,P100S,
 P101,,Panasonic P101,
 P101-EEA,TOSCIDO,P101-EEA,
 P1010002,MyXMS,P1010002,
+P101AP,Apple,iPad (4th generation),Tablet (Apple)
+P102AP,Apple,iPad (4th generation),Tablet (Apple)
 P102G,Gigabyte,P102g,
 P1032X,Medion,P1032X,
 P1035X,Medion,P1035X,
+P103AP,Apple,iPad (4th generation),Tablet (Apple)
 P1040X,Medion,P1050X,
 P1050X,Medion,P1050X,
+P105AP,Apple,iPad mini,Tablet (Apple)
 P1060X,Medion,P1060X,
 P1061X,Medion,P1061X,
+P106AP,Apple,iPad mini,Tablet (Apple)
 P107-EEA,PIXPEAK,P107-EEA,
+P107AP,Apple,iPad mini,Tablet (Apple)
 P108,SVITOO,P108_EEA,
 P108_R,SVITOO,P108_R_EEA,
 P108_S,SVITOO,P108_S_US,
@@ -39679,6 +40089,7 @@ V141,Symphony,V141,
 V142,Symphony,V142,
 V145,Symphony,V145,
 V155,Symphony,V155,
+V159AP,Apple,iPhone 17e,Mobile (Apple)
 V15_LITE,Ovion,V15_LITE,
 V1730EA,vivo,V1730EA,Mobile (Android)
 V1731CA,vivo,V1731CA,Mobile (Android)
@@ -40368,12 +40779,16 @@ V50LTE,Vortex,V50LTE,
 V511,Virzo,V511,
 V51A,Klipad,V51A,
 V51B,Klipad,V51B,
+V53AP,Apple,iPhone 17 Pro,Mobile (Apple)
 V540_Level,Ergo,V540_Level,
+V54AP,Apple,iPhone 17 Pro Max,Mobile (Apple)
 V550_Vision,Ergo,V550_Vision,
 V551 Aura,Ergo,ERGO V551 Aura,
 V555K,Vida,V555K,
 V55C,Elevate,V55C,
 V570_BIG_BEN,Ergo,V570_BIG_BEN,
+V57AP,Apple,iPhone 17,Mobile (Apple)
+V59AP,Apple,iPhone 16e,Mobile (Apple)
 V5_Nano,Evertek,V5 Nano,
 V5_Plus,,V5Plus,
 V5_Plus_,Venus,V5_Plus_,
@@ -40385,6 +40800,9 @@ V6 Lite,Morep,V6_Lite,
 V6020_Claro,ZTE,,
 V608C,Virzo,V608C,
 V62A,JMGO,V62A,
+V63AP,Apple,iPhone 18 Pro,Mobile (Apple)
+V64AP,Apple,iPhone 18 Pro Max (US),Mobile (Apple)
+V64SAP,Apple,iPhone 18 Pro Max,Mobile (Apple)
 V6_Metal,QMobile,V6 Metal,
 V6_Pro,Raylandz,V6_Pro,
 V7 Zyro,V7,Zyro,
@@ -41199,6 +41617,7 @@ VM3A,Honeywell,Thor VM3A,
 VM5021,Vulcan,VM5021,
 VM670,LGE,Optimus One,Mobile (Android)
 VM_MD_001,TellyTablet,VM_MD_001,
+VMA2MACOSAP,Apple,Apple Virtual Machine 1,Computer
 VMD1029,Envizen Digital,VMD1029,
 VMD9002,Envizen,VMD9002,
 VNA-LX2,Honor,HONOR X5,Mobile (Android)

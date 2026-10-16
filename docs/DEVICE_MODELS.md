@@ -46,7 +46,9 @@ python appliance/build_device_models.py D:\GP-DATA\datasets
 ```
 
 Layout expected by the script: `supported_devices.csv`,
-`apple_ios-device-identifiers.json`, `apple_tvos-device-identifiers.json`, and
+`apple_ios-device-identifiers.json`, `apple_tvos-device-identifiers.json`,
+`apple_mac-device-identifiers.json`, `ipsw_devices.json` (the JSON body of
+`https://api.ipsw.me/v4/devices`), and
 `mobilemodels/{huawei_cn,huawei_global_en,honor_cn,honor_global_en}.md`.
 
 ## Build rules
@@ -65,6 +67,17 @@ Layout expected by the script: `supported_devices.csv`,
   A phone family with a TV tuner ("Galaxy S2 Duos TV", "DTV") gets no type.
 - **Other brands**: vendor and name only; a type only when the name itself says
   Tab/Pad/Tablet/TV. Never a default phone.
+- **Apple board IDs and Mac identifiers** (additive, Apple only; the rules above
+  are unchanged and run first). Every Apple board ID (`J271AP`, `D74AP`, `J720AP`,
+  ...) from `api.ipsw.me/v4/devices` becomes its own code row, resolved
+  board ID -> identifier -> name; it takes its identifier's form factor
+  (iPhone = Mobile (Apple), iPad = Tablet (Apple), Apple TV = Smart TV, a Mac =
+  `Computer`, anything else = no type). Board IDs with no real marketing name
+  (iBridge coprocessors) are skipped. Every Mac identifier
+  (`MacBookPro9,2`, `iMac13,1`, ...) from `apple_mac-device-identifiers.json`
+  becomes a row with the `Computer` type classification.py already uses for
+  Macs. These rows are additive: a code already produced by the datasets above
+  is left untouched.
 - A code listed with different types gets no type; a code shared by unrelated
   brands gets no brand (Huawei + Honor is kept as Huawei).
 - Display name: English preferred, then a real name over a bare code, then
@@ -75,7 +88,8 @@ Layout expected by the script: `supported_devices.csv`,
 | Source | Used for | License |
 |---|---|---|
 | Google Play supported devices, <https://storage.googleapis.com/play_public/supported_devices.csv> (linked from <https://support.google.com/googleplay/answer/1727131>) | Android devices, all brands | No license stated; published by Google for reference. Subject to the Google Play Terms of Service. |
-| kyle-seongwoo-jun/apple-device-identifiers, <https://github.com/kyle-seongwoo-jun/apple-device-identifiers> | iOS / tvOS identifiers | MIT, Copyright (c) 2021 Kyle Seongwoo Jun |
+| kyle-seongwoo-jun/apple-device-identifiers, <https://github.com/kyle-seongwoo-jun/apple-device-identifiers> | iOS / tvOS / Mac identifiers | MIT, Copyright (c) 2021 Kyle Seongwoo Jun |
+| ipsw.me device API, <https://api.ipsw.me/v4/devices> | Apple board IDs (board ID -> identifier) | Facts (board ID ↔ identifier), served for public reference. |
 | KHwang9883/MobileModels, <https://github.com/KHwang9883/MobileModels> (`brands/huawei_cn.md`, `huawei_global_en.md`, `honor_cn.md`, `honor_global_en.md`) | Huawei and Honor model codes | CC BY-NC-SA 4.0. Used here for a non-commercial university project, with attribution. Data derived from it (Huawei/Honor rows of `device_models.csv`) is shared under the same license. |
 | Manual rows | Newest Apple devices missing from the datasets | Facts (identifier ↔ name), each row cites its source: EveryMac (<https://everymac.com>) and ipsw.me (<https://ipsw.me>) |
 
@@ -85,7 +99,7 @@ contributors, licensed under
 
 ## Cost
 
-About 44,000 codes and 1.6 MB on disk. Loaded on the first lookup, not at
+About 44,700 codes and 1.6 MB on disk. Loaded on the first lookup, not at
 startup. Measured on a development PC: about 0.15 s and 13 MB resident (25 MB
 peak while loading). A Raspberry Pi is expected to be several times slower on
 load (not measured). Lookups are
