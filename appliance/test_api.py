@@ -162,13 +162,13 @@ class HealthzHeartbeatTests(_SeededDBTest):
 
 
 class OnlineOnlyConsistencyTests(_SeededDBTest):
-    def test_online_only_matches_status_column(self):
+    def test_online_only_matches_displayed_presence(self):
         self.insert(mac="a", status="online", discovered_current=1)
         self.insert(mac="b", status="observed")
         self.insert(mac="c", status="offline")
         self.insert(mac="d", status="online", ap_associated=1)
         res = api.list_devices(conn=self.conn, online_only=True, limit=100, offset=0)
-        self.assertEqual(sorted(x.mac for x in res), ["a", "d"])
+        self.assertEqual(sorted(x.mac for x in res), ["a", "b", "d"])
 
 
 class MonitoredStateTests(_SeededDBTest):

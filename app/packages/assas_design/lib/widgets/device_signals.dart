@@ -43,7 +43,7 @@ class DeviceSignal {
   bool get online => device.isOnline;
   bool get needsAttention => hasAlert || unrec || notMonitored;
 
-  /// Priority: Critical > High > Medium > Low > Unrecognized > Not monitored > rest.
+  /// Attention priority within the same connection state.
   int get score =>
       (alertSev != null ? sevRank(alertSev!) * 1000 : 0) +
       (unrec ? 82 : 0) +
@@ -77,9 +77,14 @@ class DeviceSignal {
               : 'ALL CLEAR';
 
   static int compare(DeviceSignal a, DeviceSignal b) {
+    // Presence takes precedence even over an offline device's open alerts.
+    if (a.online != b.online) return a.online ? -1 : 1;
     final s = b.score - a.score;
     if (s != 0) return s;
-    return a.device.displayName.toLowerCase().compareTo(b.device.displayName.toLowerCase());
+    final name = a.device.displayName.toLowerCase().compareTo(b.device.displayName.toLowerCase());
+    if (name != 0) return name;
+    // Multiple unnamed devices must retain a stable order between refreshes.
+    return a.device.mac.compareTo(b.device.mac);
   }
 }
 

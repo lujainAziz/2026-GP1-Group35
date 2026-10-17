@@ -13,19 +13,16 @@ One file per app:
 - `mobile/lib/config/data_source.dart`
 - `display/lib/config/data_source.dart`
 
-Comment the DEMO block, uncomment the REAL BACKEND block. Nothing else changes.
+Both apps use the real backend by default. For a demo build, pass
+`--dart-define=ASSAS_DEMO=true`; no source edits are needed.
 The list of endpoints the app expects is at the top of
 `packages/assas_core/lib/data/api_repository.dart`.
 
 ## First time
-1. Copy the old images: `app/assets/images/` -> `app/mobile/assets/images/` and `app/display/assets/images/`
-   (uses `logo_eye.png`).
-2. Generate the platform folders:
-   ```
-   cd app/mobile  && flutter create --platforms=android,ios .  && rm -f test/widget_test.dart
-   cd app/display && flutter create --platforms=linux .        && rm -f test/widget_test.dart
-   ```
-3. `flutter pub get` in `mobile/` and in `display/`, then `flutter analyze`.
+Platform folders and assets are already committed. Run `flutter pub get` in
+`mobile/` and `display/`, then `flutter analyze` and `flutter test` in each app.
+Do not regenerate platform folders as an installation step: they contain the
+network permissions, secure-storage configuration and Linux kiosk setup.
 
 ## Phone permissions (needed for the real backend + QR)
 - iOS `ios/Runner/Info.plist`:
@@ -46,9 +43,8 @@ cd app/display && flutter run -d linux
 
 The `display/` app runs natively on the Pi as a fullscreen Linux kiosk, launched
 automatically by the existing labwc graphical session after autologin. It stays a
-read-only status screen; **DEMO is the active data source** (the real-backend
-switch in `display/lib/config/data_source.dart` is intentionally left for later —
-not enabled here).
+status screen. The default data source is the local API at
+`http://127.0.0.1:8000`. Demo mode requires `--dart-define=ASSAS_DEMO=true`.
 
 ### Fullscreen
 `display/linux/runner/my_application.cc` is committed to open fullscreen with no

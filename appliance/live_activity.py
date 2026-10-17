@@ -2,6 +2,7 @@
 import json
 import time
 from scapy.all import ARP, DHCP, DNS, Ether, UDP, TCP
+from packet_metadata import network_transport
 
 
 class LiveActivity:
@@ -16,26 +17,27 @@ class LiveActivity:
         bucket = self.buckets.setdefault(key, [0, set()])
         bucket[0] += 1
         tags = set()
+        _, transport, _ = network_transport(packet)
         if ARP in packet:
             tags.add('ARP')
-        if DHCP in packet:
+        if transport is not None and DHCP in transport:
             tags.add('DHCP')
-        if DNS in packet:
-            udp = packet.getlayer(UDP)
+        if transport is not None and DNS in transport:
+            udp = transport if isinstance(transport, UDP) else None
             ports = {int(udp.sport), int(udp.dport)} if udp else set()
             tags.add('MDNS' if 5353 in ports else 'DNS')
         if Ether in packet and int(packet[Ether].type) == 0x88cc:
             tags.add('LLDP')
         # These labels describe traffic on the corresponding service ports,
         # not a verified hardware identity or an application-content claim.
-        if UDP in packet:
-            ports = {int(packet[UDP].sport), int(packet[UDP].dport)}
+        if isinstance(transport, UDP):
+            ports = {int(transport.sport), int(transport.dport)}
             for port, name in ((1900, 'SSDP'), (137, 'NBNS'), (5355, 'LLMNR')):
                 if port in ports:
                     tags.add(name)
-        if TCP in packet:
+        if isinstance(transport, TCP):
             tags.add('TCP')
-        elif UDP in packet:
+        elif isinstance(transport, UDP):
             tags.add('UDP')
         for name in tags:
             self.protocol_seen[name] = now

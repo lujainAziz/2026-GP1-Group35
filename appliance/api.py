@@ -306,8 +306,8 @@ class DeviceSummary(BaseModel):
     vendor: Optional[str] = None
     vendor_source: Optional[str] = None
     status: Optional[str] = None
-    # User-facing presence derived from the stored status column: "online" only
-    # when status == "online"; observed/candidate/offline all map to "offline"
+    # User-facing presence includes fresh online/observed records; stale,
+    # candidate and offline records are shown as offline.
     # (matches the Flutter client contract). status itself is left unchanged.
     presence: str = "offline"
     # Last-confirmed SPAN coverage; not current traffic activity.
@@ -545,7 +545,7 @@ def _resolve_ipv6(last_ipv4, ipv6_global, ipv6_ll, legacy_ip):
     return addrs or None
 
 
-def row_to_summary(row) -> DeviceSummary:
+def row_to_summary(row, now=None) -> DeviceSummary:
     # presence is not a SQL column; it is derived from status below.
     data = {k: row[k] for k in DeviceSummary.model_fields if k != "presence"}
     # Replace the flip-prone legacy `ip` with one stable resolved address.
@@ -558,7 +558,7 @@ def row_to_summary(row) -> DeviceSummary:
     )
     data["monitored"] = bool(data["monitored"])
     data["trusted"] = bool(data["trusted"])
-    data["presence"] = _presence_from_status(data.get("status"), data.get("last_seen"))
+    data["presence"] = _presence_from_status(data.get("status"), data.get("last_seen"), now)
     for key in ("first_seen", "last_seen"):
         if data.get(key):
             try:
@@ -625,7 +625,7 @@ def healthz(conn: sqlite3.Connection = Depends(get_connection)):
     if last_write:
         try:
             seconds_since_write = int(
-                (datetime.now() - datetime.fromisoformat(last_write)).total_seconds()
+                (datetime.now().astimezone() - datetime.fromisoformat(last_write).astimezone()).total_seconds()
             )
         except ValueError:
             last_write = None
@@ -653,17 +653,18 @@ def list_devices(
     status: Optional[str] = None,
     device_type: Optional[str] = None,
     online_only: bool = False,
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
     clauses = []
     params: list = []
+    now = datetime.now().astimezone()
 
     if online_only:
-        # Filter on the status column so the API can never disagree with the
-        # 'status' each device reports. 'online' is written by the daemon
-        # exactly when discovered_current=1 OR ap_associated=1.
-        clauses.append("status = 'online'")
+        # Share the displayed presence rules and filter before pagination.
+        conn.create_function('assas_presence', 2,
+                             lambda state, seen: _presence_from_status(state, seen, now))
+        clauses.append("assas_presence(status, last_seen) = 'online'")
     if status:
         clauses.append("status = ?")
         params.append(status)
@@ -679,7 +680,7 @@ def list_devices(
         "ORDER BY mac LIMIT ? OFFSET ?",
         params,
     ).fetchall()
-    return [row_to_summary(r) for r in rows]
+    return [row_to_summary(r, now) for r in rows]
 
 
 @app.get('/activity')
@@ -814,7 +815,9 @@ def get_settings(conn: sqlite3.Connection = Depends(get_connection)):
         row = conn.execute(
             "SELECT active_probes FROM app_settings WHERE id = 1"
         ).fetchone()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
+        if 'no such table: app_settings' not in str(exc):
+            raise HTTPException(status_code=503, detail="Settings database is unavailable.") from exc
         row = None  # table not created yet -> default
     active = bool(row["active_probes"]) if row is not None else False
     return SettingsState(active_probes=active)
@@ -1065,8 +1068,12 @@ def _session_exists(token: str) -> bool:
             "SELECT 1 FROM paired_sessions WHERE token_hash = ?",
             (_hash_token(token),),
         ).fetchone()
-    except sqlite3.OperationalError:
-        row = None  # no sessions table yet -> nobody is paired
+    except sqlite3.OperationalError as exc:
+        if 'no such table: paired_sessions' in str(exc):
+            row = None  # no sessions table yet -> nobody is paired
+        else:
+            # A temporary storage failure must not revoke a valid phone session.
+            raise HTTPException(status_code=503, detail="Session database is unavailable.") from exc
     finally:
         conn.close()
     return row is not None

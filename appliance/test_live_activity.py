@@ -5,12 +5,18 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
-from scapy.all import Ether, ARP, IP, UDP, DNS, DNSQR
+from scapy.all import Ether, ARP, IP, ICMP, UDP, DNS, DNSQR
 from flows import FlowStore
-from live_activity import read_activity
+from live_activity import LiveActivity, read_activity
 
 
 class LiveActivityTests(unittest.TestCase):
+    def test_quoted_dns_in_icmp_is_not_counted_as_live_dns(self):
+        activity = LiveActivity()
+        activity.add(IP()/ICMP(type=3)/IP()/UDP(dport=53)/DNS(qd=DNSQR(qname='example.test')))
+        self.assertEqual(activity.protocol_seen, {})
+        self.assertEqual(sum(v[0] for v in activity.buckets.values()), 1)
+
     def test_real_capture_counts_idle_decay_stale_and_restart(self):
         with tempfile.TemporaryDirectory() as tmp, patch('live_activity.time.time', return_value=100) as clock:
             path = str(Path(tmp)/'db')

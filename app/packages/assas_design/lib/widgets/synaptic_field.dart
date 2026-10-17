@@ -26,7 +26,7 @@ const _slots = [
 ];
 
 /// `.assas-synaptic` (330 x 330): the eye with the top 6 devices around it,
-/// ordered by priority (Critical > High > Medium > Low > Unrecognized > Not monitored).
+/// Online first, then attention priority within each connection state.
 class SynapticField extends StatelessWidget {
   const SynapticField({super.key, required this.top, required this.onOpen});
 

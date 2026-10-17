@@ -46,7 +46,15 @@ class SessionStore {
   // treat the phone as unpaired. A failed migration keeps the legacy values.
   static Future<Map<String, dynamic>?> _readOrNull() async {
     try {
-      return await _read();
+      final record = await _read();
+      if (record == null) return null;
+      final token = record['token'];
+      final identity = record['appliance_id'];
+      if (token is! String || token.trim().isEmpty ||
+          (identity != null && identity is! String)) {
+        return null;
+      }
+      return record;
     } catch (_) {
       return null;
     }

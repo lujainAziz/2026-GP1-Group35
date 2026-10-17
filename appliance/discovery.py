@@ -40,6 +40,7 @@ ASSAS_ACTIVE_PROBE, ASSAS_MDNS_PROBE, and ASSAS_NBNS_PROBE unset.
 """
 
 import argparse
+from packet_metadata import network_transport
 import base64
 import hashlib
 import ipaddress
@@ -2268,9 +2269,20 @@ def deployment_model_override(hostname, model):
     return None
 
 
+class _LocalMetadataRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Device descriptions may redirect, but never to another host.
+        if (not is_local_metadata_url(newurl) or
+                urllib.parse.urlparse(newurl).hostname != urllib.parse.urlparse(req.full_url).hostname):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def enrich_upnp_metadata(mac, ip, url, span_confirmed=False):
     """Optional local-only UPnP description lookup for richer model metadata."""
     if not probe_target_current(mac, ip, "ENABLE_UPNP_ENRICHMENT"):
+        return
+    if not is_local_metadata_url(url) or urllib.parse.urlparse(url).hostname != ip:
         return
     try:
         request = urllib.request.Request(
@@ -2278,7 +2290,9 @@ def enrich_upnp_metadata(mac, ip, url, span_confirmed=False):
             headers={"User-Agent": "ASSAS/1.0"},
             method="GET",
         )
-        with urllib.request.urlopen(request, timeout=UPNP_TIMEOUT_SECONDS) as resp:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _LocalMetadataRedirectHandler())
+        with opener.open(request, timeout=UPNP_TIMEOUT_SECONDS) as resp:
             data = resp.read(UPNP_MAX_BYTES + 1)
         if len(data) > UPNP_MAX_BYTES:
             return
@@ -3115,12 +3129,11 @@ def handle(packet):
     upnp_location = None
     candidate = None
 
+    network, transport, _ = network_transport(packet)
     if ARP in packet:
         observed_ip = packet[ARP].psrc
-    elif IP in packet:
-        observed_ip = packet[IP].src
-    elif IPv6 in packet:
-        observed_ip = packet[IPv6].src
+    elif network is not None:
+        observed_ip = network.src
 
     ip = local_monitored_ip(observed_ip)
     # Routed internet traffic carries a local router MAC, not the sender MAC.
@@ -3145,7 +3158,7 @@ def handle(packet):
         if lldp_name and not hostname:
             hostname = lldp_name
 
-    if DHCP in packet:
+    if isinstance(transport, UDP) and DHCP in transport:
         hostname, dhcp_sig, vendor_class, dhcp_candidate = handle_dhcp(packet)
         if dhcp_candidate:
             candidate = merge_candidate(candidate, *dhcp_candidate)
@@ -3174,7 +3187,7 @@ def handle(packet):
                 model, model_score = vc_model, SCORES["dhcp_vendor"]
                 model_source = "Huawei DHCP vendor class"
 
-    if UDP in packet:
+    if isinstance(transport, UDP):
         sport = int(packet[UDP].sport)
         dport = int(packet[UDP].dport)
 
@@ -3411,7 +3424,7 @@ def handle(packet):
                     "LLMNR name",
                 )
 
-    if TCP in packet:
+    if isinstance(transport, TCP):
         flags = int(packet[TCP].flags)
         is_syn_ack = (flags & 0x12) == 0x12
         is_pure_syn = (flags & 0x12) == 0x02
@@ -4035,6 +4048,18 @@ def reevaluate_stale_classifications(verbose=True):
     return changed
 
 
+def process_capture(packet, flow_store):
+    # Flow persistence and device discovery must fail independently on a lock.
+    try:
+        flow_store.add(packet)
+    except sqlite3.Error as exc:
+        print(f"[!] Flow packet could not be recorded: {exc}")
+    try:
+        handle(packet)
+    except sqlite3.Error as exc:
+        print(f"[!] Device observation could not be recorded: {exc}")
+
+
 def main():
     args = parse_args()
     init_db()
@@ -4167,10 +4192,6 @@ def main():
             except sqlite3.Error as exc:
                 print(f"[!] Flow persistence failed: {exc}")
 
-    def process_capture(packet):
-        flow_store.add(packet)
-        handle(packet)  # New source devices still enter the existing inventory.
-
     flow_thread = threading.Thread(target=flush_flows, daemon=True)
     flow_thread.start()
 
@@ -4185,7 +4206,7 @@ def main():
         sniff(
             iface=CAPTURE_INTERFACE,
             filter=bpf,
-            prn=process_capture,
+            prn=lambda packet: process_capture(packet, flow_store),
             store=False,
         )
     except KeyboardInterrupt:

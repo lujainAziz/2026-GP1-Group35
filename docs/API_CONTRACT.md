@@ -105,8 +105,10 @@ Each device row carries a `status`, written by the daemon:
 - `offline`  — not currently present and no live traffic.
 - `candidate`— inserted from a weak signal, never confirmed present.
 
-The API treats `status` as authoritative: `/devices?online_only=true` returns
-exactly the rows with `status = 'online'`.
+`/devices?online_only=true` uses the displayed `presence`: fresh `online` and
+`observed` records are included, and records older than 120 seconds are excluded.
+Legacy records without `last_seen` retain their stored presence. Use
+`status=online` when an exact raw-status match is required.
 
 ---
 
@@ -147,8 +149,8 @@ List devices (summary rows).
 Query params:
 - `status` (str) — exact match on the status column.
 - `device_type` (str) — exact match.
-- `online_only` (bool, default false) — only `status = 'online'`.
-- `limit` (int, default 100, max 500), `offset` (int, default 0). Ordered by `mac`.
+- `online_only` (bool, default false) — only displayed `presence = 'online'`, filtered before pagination.
+- `limit` (int, default 100, min 1, max 500), `offset` (int, default 0). Ordered by `mac`.
 
 Example element:
 ```json

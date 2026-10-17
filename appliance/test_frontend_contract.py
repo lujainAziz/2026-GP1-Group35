@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import MagicMock
 from contextlib import closing
 from unittest.mock import patch
 from fastapi.testclient import TestClient
@@ -108,6 +109,65 @@ class FrontendContractTests(unittest.TestCase):
         device = self.local.get('/devices').json()[0]
         self.assertEqual(device['presence'], 'offline')
         self.assertTrue(device['monitored'])
+
+    def test_device_page_size_is_bounded(self):
+        for limit in (-1, 0, 501):
+            response = self.local.get('/devices', params={'limit': limit})
+            self.assertEqual(response.status_code, 422, response.text)
+        for limit in (1, 500):
+            response = self.local.get('/devices', params={'limit': limit})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertLessEqual(len(response.json()), limit)
+
+    def test_session_database_failure_is_unavailable_not_revoked(self):
+        self.pair()
+        connection = MagicMock()
+        connection.execute.side_effect = sqlite3.OperationalError('database is locked')
+        with patch.object(api.sqlite3, 'connect', return_value=connection):
+            response = self.phone.get('/devices')
+        self.assertEqual(response.status_code, 503, response.text)
+        connection.close.assert_called_once()
+        self.assertEqual(self.phone.get('/devices').status_code, 200)
+
+    def test_missing_session_table_still_requires_pairing(self):
+        self.phone.headers['Authorization'] = 'Bearer unknown'
+        self.assertEqual(self.phone.get('/devices').status_code, 401)
+
+    def test_online_filter_uses_presence_before_pagination(self):
+        from datetime import datetime, timedelta
+        now = datetime.now().astimezone()
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute('DELETE FROM devices')
+            conn.executemany('INSERT INTO devices (mac,status,last_seen) VALUES (?,?,?)', [
+                ('a', 'online', (now-timedelta(seconds=121)).isoformat()),
+                ('b', 'observed', now.isoformat()),
+                ('c', 'offline', now.isoformat()),
+                ('d', 'online', now.isoformat()),
+                ('e', 'observed', 'invalid'),
+            ])
+        all_devices = self.local.get('/devices').json()
+        expected = [d['mac'] for d in all_devices if d['presence'] == 'online']
+        actual = self.local.get('/devices?online_only=true').json()
+        self.assertEqual([d['mac'] for d in actual], expected)
+        self.assertEqual(expected, ['b', 'd'])
+        for offset, mac in enumerate(expected):
+            page = self.local.get(f'/devices?online_only=true&limit=1&offset={offset}').json()
+            self.assertEqual([d['mac'] for d in page], [mac])
+
+    def test_health_accepts_timezone_aware_device_timestamps(self):
+        from datetime import datetime, timezone
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute('UPDATE devices SET last_seen=?', (datetime.now(timezone.utc).isoformat(),))
+        response = self.local.get('/healthz')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertLess(response.json()['seconds_since_write'], 5)
+
+    def test_settings_read_failure_is_not_reported_as_probes_disabled(self):
+        connection = MagicMock()
+        connection.execute.side_effect = sqlite3.OperationalError('database is locked')
+        with self.assertRaises(api.HTTPException) as caught:
+            api.get_settings(connection)
+        self.assertEqual(caught.exception.status_code, 503)
 
 
 if __name__ == '__main__':

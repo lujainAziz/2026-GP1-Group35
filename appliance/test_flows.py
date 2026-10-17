@@ -3,10 +3,37 @@ import tempfile
 import unittest
 from pathlib import Path
 from contextlib import closing
-from scapy.all import Ether, IP, IPv6, UDP, TCP, ARP, wrpcap, PcapReader
+from scapy.all import Ether, IP, IPv6, UDP, TCP, ARP, ICMP, wrpcap, PcapReader
+from scapy.layers.inet6 import IPv6ExtHdrHopByHop, IPv6ExtHdrFragment
 from flows import FlowStore
 
 class FlowTests(unittest.TestCase):
+    def test_outer_protocol_is_not_replaced_by_quoted_or_tunneled_transport(self):
+        cases = [
+            (IP(src='192.0.2.1', dst='192.0.2.2')/ICMP(type=3)/
+             IP(src='198.51.100.1', dst='198.51.100.2')/UDP(sport=1234, dport=53), 1),
+            (IPv6(src='2001:db8::1', dst='2001:db8::2')/
+             IP(src='198.51.100.1', dst='198.51.100.2')/TCP(sport=1234, dport=443), 4),
+        ]
+        for packet, protocol in cases:
+            with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as directory:
+                store = FlowStore(str(Path(directory)/'flows.db'))
+                store.add(packet)
+                key = next(iter(store.pending))
+                self.assertEqual(key[1:3], (packet.src, packet.dst))
+                self.assertEqual(key[3:], (protocol, -1, -1))
+
+    def test_ipv6_extensions_keep_transport_and_noninitial_fragments_have_no_ports(self):
+        packets = [
+            (IPv6()/IPv6ExtHdrHopByHop()/UDP(sport=1234, dport=53), (17, 1234, 53)),
+            (IPv6()/IPv6ExtHdrFragment(nh=17, offset=1)/b'fragment', (17, -1, -1)),
+        ]
+        for packet, expected in packets:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                store = FlowStore(str(Path(directory)/'flows.db'))
+                store.add(packet)
+                self.assertEqual(next(iter(store.pending))[3:], expected)
+
     def test_recorded_capture_counts_directions_ports_and_windows(self):
         with tempfile.TemporaryDirectory() as directory:
             db = str(Path(directory) / 'flows.db')

@@ -4,11 +4,26 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
-from unittest.mock import patch
-from scapy.all import Ether, IP, IPv6, TCP, UDP
+from unittest.mock import patch, Mock
+from scapy.all import Ether, IP, IPv6, TCP, UDP, ICMP
 import discovery as d
 
 class DiscoverySafetyTests(unittest.TestCase):
+    def test_flow_storage_failure_does_not_stop_device_observation(self):
+        store = Mock()
+        store.add.side_effect = sqlite3.OperationalError('database is locked')
+        packet = self.frame(IP(src=self.ip)/UDP())
+        with patch.object(d, 'handle') as handle:
+            d.process_capture(packet, store)
+            handle.assert_called_once_with(packet)
+
+    def test_inventory_storage_failure_does_not_escape_capture_callback(self):
+        store = Mock()
+        packet = self.frame(IP(src=self.ip)/UDP())
+        with patch.object(d, 'handle', side_effect=sqlite3.OperationalError('database is locked')):
+            d.process_capture(packet, store)
+        store.add.assert_called_once_with(packet)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -118,6 +133,34 @@ class DiscoverySafetyTests(unittest.TestCase):
 
     def frame(self, payload):
         return Ether(src=self.mac,dst='00:11:22:33:44:66')/payload
+
+    def test_icmp_quote_does_not_classify_sender_as_a_printer(self):
+        d.handle(self.frame(IP(src=self.ip)/ICMP(type=3)/
+                            IP(src='192.168.1.99')/TCP(sport=9100, flags='SA')))
+        row = self.row()
+        self.assertEqual(row['ip'], self.ip)
+        self.assertIsNone(row['device_type'])
+        self.assertTrue(row['is_monitored'])
+
+    def test_tunneled_ipv4_does_not_replace_outer_ipv6_source(self):
+        d.handle(self.frame(IPv6(src='fe80::1234')/
+                            IP(src='192.168.1.99')/TCP(sport=9100, flags='SA')))
+        self.assertEqual(self.row()['ip'], 'fe80::1234')
+        self.assertIsNone(self.row()['device_type'])
+
+    def test_upnp_rejects_description_on_a_different_device(self):
+        with patch.object(d, 'probe_target_current', return_value=True), \
+                patch.object(d.urllib.request, 'build_opener') as opener:
+            d.enrich_upnp_metadata(self.mac, self.ip, 'http://192.168.1.99/device.xml')
+            opener.assert_not_called()
+
+    def test_upnp_redirect_cannot_leave_the_device(self):
+        handler = d._LocalMetadataRedirectHandler()
+        request = d.urllib.request.Request(f'http://{self.ip}/device.xml')
+        for url in ('http://8.8.8.8/device.xml', 'http://192.168.1.99/device.xml'):
+            self.assertIsNone(handler.redirect_request(request, None, 302, 'Found', {}, url))
+        allowed = handler.redirect_request(request, None, 302, 'Found', {}, f'http://{self.ip}/new.xml')
+        self.assertEqual(allowed.full_url, f'http://{self.ip}/new.xml')
 
     def test_unknown_syn_and_rate_limit_still_refresh_inventory(self):
         packet=self.frame(IP(src=self.ip,dst='1.1.1.1')/TCP(flags='S'))

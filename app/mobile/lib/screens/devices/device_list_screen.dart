@@ -42,7 +42,7 @@ extension on DeviceFilter {
 }
 
 /// Device inventory (PBI-04, PBI-06, PBI-07): all discovered devices,
-/// online and offline, with search and filters. Attention first.
+/// online and offline, with search and filters. Online first, then attention.
 class DeviceListScreen extends StatefulWidget {
   const DeviceListScreen({super.key, required this.state, this.filterRequest});
 
@@ -60,6 +60,7 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
   final _menu = OverlayPortalController();
   final _menuLink = LayerLink();
   DeviceFilter _filter = DeviceFilter.all;
+  bool _filterChanged = false;
 
   @override
   void initState() {
@@ -69,6 +70,7 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
       UiMemory.setDeviceSearch(_search.text);
     });
     widget.filterRequest?.addListener(_onFilterRequest);
+    _onFilterRequest();
     _restore();
   }
 
@@ -78,14 +80,25 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
     final q = await UiMemory.deviceSearch();
     if (!mounted) return;
     for (final f in DeviceFilter.values) {
-      if (f.name == name && widget.filterRequest?.value == null) setState(() => _filter = f);
+      if (f.name == name && !_filterChanged) setState(() => _filter = f);
     }
     if (_search.text.isEmpty && q.isNotEmpty) _search.text = q;
   }
 
   void _setFilter(DeviceFilter f) {
+    _filterChanged = true;
     setState(() => _filter = f);
     UiMemory.setDeviceFilter(f.name);
+  }
+
+  @override
+  void didUpdateWidget(covariant DeviceListScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.filterRequest != widget.filterRequest) {
+      oldWidget.filterRequest?.removeListener(_onFilterRequest);
+      widget.filterRequest?.addListener(_onFilterRequest);
+      _onFilterRequest();
+    }
   }
 
   @override

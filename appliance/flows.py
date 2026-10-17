@@ -8,8 +8,8 @@ import threading
 import time
 from contextlib import closing
 from datetime import datetime, timezone
-from scapy.all import IP, IPv6, TCP, UDP
 from live_activity import LiveActivity
+from packet_metadata import network_transport
 
 
 class FlowStore:
@@ -36,13 +36,10 @@ class FlowStore:
             self._add(packet)
 
     def _add(self, packet):
-        layer = packet.getlayer(IP) or packet.getlayer(IPv6)
+        layer, transport, protocol = network_transport(packet)
         if layer is None:
             return
         stamp = float(packet.time)
-        transport = layer.getlayer(TCP) or layer.getlayer(UDP)
-        protocol = (6 if isinstance(transport, TCP) else 17) if transport else int(
-            layer.proto if isinstance(layer, IP) else layer.nh)
         # -1 represents an unavailable port, including noninitial fragments.
         src_port = int(transport.sport) if transport else -1
         dst_port = int(transport.dport) if transport else -1
