@@ -30,6 +30,12 @@ class Device {
   final BaselineStatus baseline;
   final DateTime? lastSeen;
 
+  /// Where vendor / device_type / model came from (backend vendor_source,
+  /// class_source, model_source). null = not reported.
+  final String? vendorSource;
+  final String? classSource;
+  final String? modelSource;
+
   const Device({
     required this.mac,
     this.ip,
@@ -44,6 +50,9 @@ class Device {
     this.monitored,
     this.baseline = BaselineStatus.insufficientData,
     this.lastSeen,
+    this.vendorSource,
+    this.classSource,
+    this.modelSource,
   });
 
   // ---------- Display values (one place, so every screen shows the same text) ----------
@@ -72,6 +81,17 @@ class Device {
   bool get isUnrecognized => !trusted;
   bool get isNotMonitored => monitored == false;
 
+  /// True when the value was derived from the hostname rather than observed.
+  bool get typeInferred =>
+      (classSource ?? '').toLowerCase().contains('hostname');
+  bool get modelInferred =>
+      (modelSource ?? '').toLowerCase().contains('hostname');
+  bool get vendorInferred {
+    final s = (vendorSource ?? '').trim().toLowerCase();
+    return s.startsWith('inferred: hostname') ||
+        (s == 'inferred: model' && modelInferred);
+  }
+
   String get onlineLabel => isOnline ? 'Online' : 'Offline';
   String get recognitionLabel => trusted ? 'Trusted' : 'Unrecognized';
   String get baselineLabel =>
@@ -92,6 +112,9 @@ class Device {
         monitored: monitored,
         baseline: baseline,
         lastSeen: lastSeen,
+        vendorSource: vendorSource,
+        classSource: classSource,
+        modelSource: modelSource,
       );
 
   // ---------- From the real API ----------
@@ -125,6 +148,9 @@ class Device {
           ? BaselineStatus.established
           : BaselineStatus.insufficientData,
       lastSeen: _parseTime(j['last_seen']),
+      vendorSource: j['vendor_source']?.toString(),
+      classSource: j['class_source']?.toString(),
+      modelSource: j['model_source']?.toString(),
     );
   }
 
