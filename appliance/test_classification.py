@@ -327,6 +327,38 @@ class VendorInferenceTests(unittest.TestCase):
     def test_hostname_no_match_returns_none(self):
         self.assertIsNone(vendor_from_model_in_hostname("random-device-name"))
 
+    def test_hostname_expanded_brand_needles(self):
+        expected = {
+            "Z-Flip3-alkhas-b-noura": "Samsung Electronics",
+            "Galaxy-S23-Ultra": "Samsung Electronics",
+            "Fold5-Noura": "Samsung Electronics",
+            "HUAWEI_P30": "Huawei",
+            "MatePad-Pro": "Huawei",
+            "POCO-F5": "Xiaomi",
+            "OnePlus-12": "OnePlus",
+            "OPPO-A78": "OPPO",
+            "realme-GT": "realme",
+            "iQOO-Neo9": "vivo",
+            "motorola-edge": "Motorola",
+            "razr-40": "Motorola",
+            "moto-g-power": "Motorola",
+            "Nokia-G42": "Nokia",
+            "Xperia-1-V": "Sony",
+            "Infinix-Note-30": "Infinix",
+            "CAMON-20": "TECNO",
+            "ZenFone-10": "ASUS",
+            "nubia-Z60": "ZTE",
+        }
+        for hostname, vendor in expected.items():
+            with self.subTest(hostname=hostname):
+                self.assertEqual(vendor_from_model_in_hostname(hostname), vendor)
+        for hostname in ("Bader-s-A52s", "Android-2", "honorato-pc",
+                         "tecnologia-pc", "vivo-fibra", "reno-pc", "pocopc",
+                         "flip-phone", "LAPTOP-A6CMND2G", "ultra-pc",
+                         "note-12"):
+            with self.subTest(hostname=hostname):
+                self.assertIsNone(vendor_from_model_in_hostname(hostname))
+
     def test_domain_vendor_apple_os_endpoint(self):
         self.assertIsNone(vendor_from_domain_needle("captive.apple.com"))
         self.assertIsNone(vendor_from_domain_needle("mesu.apple.com"))
