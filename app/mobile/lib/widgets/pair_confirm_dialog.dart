@@ -1,4 +1,4 @@
-import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'dart:ui' as ui;
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -8,21 +8,24 @@ import '../theme/assas_ui.dart';
 import 'ui_kit.dart';
 
 /// Fallback when the phone's name cannot be read.
-String defaultPhoneName() => Platform.isIOS ? 'iPhone' : 'Android phone';
+String defaultPhoneName() {
+  if (kIsWeb) return 'Web browser';
+  return defaultTargetPlatform == TargetPlatform.iOS ? 'iPhone' : 'Android phone';
+}
 
 /// The phone's own name (e.g. "Maraheb's iPhone", "Galaxy S23"), max 40.
 Future<String> readPhoneName() async {
   var name = '';
   try {
     final info = DeviceInfoPlugin();
-    if (Platform.isAndroid) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       final a = await info.androidInfo;
       name = a.name.trim();
       if (name.isEmpty) {
         final brand = a.brand.isEmpty ? '' : '${a.brand[0].toUpperCase()}${a.brand.substring(1)} ';
         name = '$brand${a.model}'.trim();
       }
-    } else if (Platform.isIOS) {
+    } else if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
       final i = await info.iosInfo;
       name = i.name.trim();
       // iOS 16+ only returns "iPhone" without a special permission: use the model.
