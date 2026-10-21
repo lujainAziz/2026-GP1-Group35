@@ -182,11 +182,23 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                   SpecList(
                     railColor: hero,
                     rows: [
-                      ('Vendor', d.vendorLabel, Ui.ink),
-                      ('Type', d.typeLabel, Ui.ink),
+                      ('Vendor',
+                          d.vendorInferred
+                              ? '${d.vendorLabel} (inferred)'
+                              : d.vendorLabel,
+                          Ui.ink),
+                      ('Type',
+                          d.typeInferred
+                              ? '${d.typeLabel} (inferred)'
+                              : d.typeLabel,
+                          Ui.ink),
                       if ((d.model?.trim() ?? '').isNotEmpty &&
                           d.model!.trim() != d.displayName)
-                        ('Model', d.model!.trim(), Ui.ink),
+                        ('Model',
+                            d.modelInferred
+                                ? '${d.model!.trim()} (inferred)'
+                                : d.model!.trim(),
+                            Ui.ink),
                       ('Last seen', TimeFormat.lastSeen(d.lastSeen), Ui.ink),
                       d.monitored == null
                           ? ('Monitoring', 'Unknown', Ui.mute)
@@ -343,6 +355,9 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
       monitored: fromList.monitored ?? detail.monitored,
       baseline: detail.baseline,
       lastSeen: fromList.lastSeen,
+      vendorSource: fromList.vendorSource ?? detail.vendorSource,
+      classSource: detail.classSource,
+      modelSource: detail.modelSource,
     );
   }
 }
