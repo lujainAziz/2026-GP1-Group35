@@ -577,6 +577,61 @@ MODEL_VENDOR_HINTS = [
     # Mobile / consumer electronics
     ("xiaomi", "Xiaomi"),
     ("redmi", "Xiaomi"),
+    ("poco", "Xiaomi"),
+
+    # Samsung (hostname model families)
+    ("samsung", "Samsung Electronics"),
+    ("zflip", "Samsung Electronics"),
+    ("z-flip", "Samsung Electronics"),
+    ("z_flip", "Samsung Electronics"),
+    ("zfold", "Samsung Electronics"),
+    ("z-fold", "Samsung Electronics"),
+    ("z_fold", "Samsung Electronics"),
+    ("flip3", "Samsung Electronics"),
+    ("flip4", "Samsung Electronics"),
+    ("flip5", "Samsung Electronics"),
+    ("flip6", "Samsung Electronics"),
+    ("flip7", "Samsung Electronics"),
+    ("fold3", "Samsung Electronics"),
+    ("fold4", "Samsung Electronics"),
+    ("fold5", "Samsung Electronics"),
+    ("fold6", "Samsung Electronics"),
+    ("fold7", "Samsung Electronics"),
+
+    # Huawei
+    ("huawei", "Huawei"),
+    ("matepad", "Huawei"),
+    ("matebook", "Huawei"),
+
+    # OnePlus / OPPO / realme / vivo
+    ("oneplus", "OnePlus"),
+    ("oppo", "OPPO"),
+    ("findx", "OPPO"),
+    ("realme", "realme"),
+    ("narzo", "realme"),
+    ("iqoo", "vivo"),
+
+    # Motorola
+    ("motorola", "Motorola"),
+    ("razr", "Motorola"),
+    ("moto-g", "Motorola"),
+    ("moto-edge", "Motorola"),
+
+    # Other phone / consumer brands
+    ("nokia", "Nokia"),
+    ("xperia", "Sony"),
+    ("infinix", "Infinix"),
+    ("camon", "TECNO"),
+    ("pova", "TECNO"),
+    ("lenovo", "Lenovo"),
+    ("asus", "ASUS"),
+    ("zenfone", "ASUS"),
+    ("zte", "ZTE"),
+    ("nubia", "ZTE"),
+    ("meizu", "Meizu"),
+    ("fairphone", "Fairphone"),
+    ("tcl", "TCL"),
+    ("hisense", "Hisense"),
 ]
 
 
