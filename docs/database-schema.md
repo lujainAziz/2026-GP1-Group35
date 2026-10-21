@@ -48,7 +48,7 @@ No indexes exist besides the primary keys.
 | `class_source` | TEXT | Reason for `device_type` (evidence needle, e.g. `default gateway`). |
 | `model_score` | INTEGER, default 0 | Weight of the winning model evidence. |
 | `model_source` | TEXT | Reason for `model` (evidence needle). |
-| `is_monitored` | INTEGER (0/1), default 0 | Traffic from this device has been seen on the mirrored (SPAN) port, so Assas can monitor it. 0 = present on the network but its traffic does not pass the monitored port ("Not Monitored" in the app). |
+| `is_monitored` | INTEGER (0/1), default 0 | Unicast traffic sent by this device has been seen on the mirrored (SPAN) port, so Assas can monitor it. Broadcast and multicast frames do not count, because the switch floods them to every port, including the mirrored one. 0 = present on the network but its traffic does not pass the monitored port ("Not Monitored" in the app). Once set to 1 it stays 1. |
 | `last_span_seen` | TEXT | Last time seen via mirrored (SPAN) traffic. |
 | `session_seen` | INTEGER (0/1), default 0 | Seen with live traffic during the current daemon run. |
 | `traffic_seen` | INTEGER (0/1), default 0 | Ever seen carrying traffic on the mirror. |
