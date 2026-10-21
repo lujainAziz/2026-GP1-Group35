@@ -2336,6 +2336,7 @@ def enrich_upnp_metadata(mac, ip, url, span_confirmed=False):
             upnp_location=url,
             mark_current=False,
             seen_on_span=span_confirmed,
+            monitored_evidence=False,
         )
     except Exception:
         # Metadata enrichment is best-effort and must never break sniffing.
@@ -2371,7 +2372,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                   model=None, model_score=0, model_source=None, dhcp_sig=None,
                   vendor_class=None, upnp_location=None,
                   candidate=None, seen_on_span=False, seen_in_discovery=False,
-                  mark_current=False):
+                  mark_current=False, monitored_evidence=None):
     """Merge device identity while keeping discovery/traffic/AP state separate."""
     mac = mac.lower()
     if not is_valid_host_mac(mac):
@@ -2379,12 +2380,22 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
     if is_self_device(mac=mac, ip=ip):
         return
 
+    # Only frames addressed to one device prove its traffic crosses the
+    # mirrored port; broadcasts are flooded to every port. Callers that do not
+    # say keep the old meaning (any SPAN sighting counts).
+    if monitored_evidence is None:
+        monitored_evidence = seen_on_span
+
     now = datetime.now()
     cached = write_cache.get(mac)
     first_span_confirmation = seen_on_span and not (cached and cached.get("span_seen"))
+    first_monitored_confirmation = monitored_evidence and not (
+        cached and cached.get("monitored_seen")
+    )
     has_new_info = bool(
         vendor or hostname or model or dhcp_sig or vendor_class or upnp_location or candidate
-        or first_span_confirmation or seen_in_discovery or mark_current
+        or first_span_confirmation or first_monitored_confirmation
+        or seen_in_discovery or mark_current
     )
 
     if (cached and not has_new_info and ip == cached.get("ip") and
@@ -2494,7 +2505,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 model_score if model else 0,
                 model_source if model else None,
                 dhcp_sig, vendor_class, score, source,
-                traffic_ever, span_seen, session_traffic, upnp_location,
+                1 if monitored_evidence else 0, span_seen, session_traffic, upnp_location,
                 now_str, now_str, status,
                 discovered, discovery_seen,
                 traffic_ever, span_seen,
@@ -2649,7 +2660,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 new_type,
                 new_type, new_score,
                 new_type, new_source,
-                1 if seen_on_span else 0,
+                1 if monitored_evidence else 0,
                 1 if seen_on_span else 0, now_str,
                 1 if seen_on_span else 0,
                 1 if seen_on_span else 0,
@@ -2711,10 +2722,12 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
         conn.close()
 
     previous_span = cached.get("span_seen", False) if cached else False
+    previous_monitored = cached.get("monitored_seen", False) if cached else False
     write_cache[mac] = {
         "time": now,
         "ip": ip,
         "span_seen": previous_span or seen_on_span,
+        "monitored_seen": previous_monitored or monitored_evidence,
     }
 
 
@@ -3473,6 +3486,7 @@ def handle(packet):
         seen_on_span=True,
         seen_in_discovery=False,
         mark_current=False,
+        monitored_evidence=not (int(ether_dst.split(":", 1)[0], 16) & 0x01),
     )
     # Optional enrichment may be triggered by traffic for any local device; this
     # does not change subnet discovery or Assas-Test association state.

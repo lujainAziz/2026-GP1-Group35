@@ -236,4 +236,23 @@ class DiscoverySafetyTests(unittest.TestCase):
             self.assertEqual(len(calls),3)
             self.assertFalse(pending)
 
+    def test_broadcast_and_multicast_frames_do_not_mark_monitored(self):
+        for dst in ('ff:ff:ff:ff:ff:ff', '01:00:5e:00:00:fb', '33:33:00:00:00:fb'):
+            d.handle(Ether(src=self.mac, dst=dst)/IP(src=self.ip, dst='255.255.255.255')/ICMP())
+        row = self.row()
+        self.assertIsNotNone(row)
+        self.assertFalse(row['is_monitored'])
+
+    def test_unicast_frame_marks_monitored_after_broadcast(self):
+        d.handle(Ether(src=self.mac, dst='ff:ff:ff:ff:ff:ff')/IP(src=self.ip, dst='255.255.255.255')/ICMP())
+        self.assertFalse(self.row()['is_monitored'])
+        d.handle(self.frame(IP(src=self.ip, dst='192.168.1.1')/ICMP()))
+        self.assertTrue(self.row()['is_monitored'])
+
+    def test_span_sighting_without_monitored_evidence_stays_unmonitored(self):
+        d.update_device(self.mac, ip=self.ip, seen_on_span=True, monitored_evidence=False)
+        self.assertFalse(self.row()['is_monitored'])
+        d.update_device(self.mac, ip=self.ip, seen_on_span=True)
+        self.assertTrue(self.row()['is_monitored'])
+
 if __name__=='__main__':unittest.main()
