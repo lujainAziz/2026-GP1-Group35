@@ -29,9 +29,11 @@ class _PairingQrPanelState extends State<PairingQrPanel> {
     super.initState();
     _load();
     // Tick every second for the countdown; fetch a new code when it expires.
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+    // Also check every 3 s: the backend drops a code once it is used or after
+    // too many wrong tries, so the screen must not keep showing a dead code.
+    _ticker = Timer.periodic(const Duration(seconds: 1), (t) {
       final c = _code;
-      if (c == null || c.secondsLeft(DateTime.now()) == 0) {
+      if (c == null || c.secondsLeft(DateTime.now()) == 0 || t.tick % 3 == 0) {
         _load();
       } else {
         setState(() {});
@@ -52,8 +54,11 @@ class _PairingQrPanelState extends State<PairingQrPanel> {
       final c = await (widget.repo ?? repository).getCurrentPairingCode();
       if (mounted) {
         setState(() {
-          _code = c;
-          _cycleSeconds = c.secondsLeft(DateTime.now()).clamp(1, 86400);
+          // Same code as on screen: keep the countdown ring where it is.
+          if (c.code != _code?.code) {
+            _code = c;
+            _cycleSeconds = c.secondsLeft(DateTime.now()).clamp(1, 86400);
+          }
           _error = false;
         });
       }

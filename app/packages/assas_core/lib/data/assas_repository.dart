@@ -50,6 +50,17 @@ abstract class AssasRepository {
   /// [deviceName] is optional, max 40 characters (backend: "Unnamed phone").
   Future<String> pair(String code, {String? deviceName});
 
+  /// Phone, step 1 of two-step pairing: checks the code before the phone name
+  /// is asked. Returns a short-lived, single-use ticket for [pairWithTicket].
+  /// Throws [PairingException] if the code is invalid or expired.
+  /// null = the appliance has no /pair/verify yet; use [pair] instead.
+  Future<String?> verifyPairingCode(String code);
+
+  /// Phone, step 2: sends the ticket and the phone's name, returns the token.
+  /// Throws [PairingException] ([PairingException.ticketExpired]) if the
+  /// ticket is invalid, expired or already used.
+  Future<String> pairWithTicket(String ticket, {String? deviceName});
+
   /// Phone: ends this phone's session (Settings > Unpair).
   Future<void> unpair();
 
@@ -72,6 +83,10 @@ class PairingException implements Exception {
   /// Shown when the code is wrong or expired (the code changes every minute).
   static const String wrongCode =
       'The code is wrong or has expired. Check the current code on the ASSAS screen and try again.';
+
+  /// Shown when the ticket from step 1 expired or was already used.
+  static const String ticketExpired =
+      'Pairing took too long. Enter the new code shown on the ASSAS screen and try again.';
   @override
   String toString() => message;
 }

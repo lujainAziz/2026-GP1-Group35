@@ -47,27 +47,24 @@ class _PairingScreenState extends State<PairingScreen> {
       setState(() => _error = 'Enter the pairing code shown on your Assas device.');
       return;
     }
-    // Confirm first; Cancel sends nothing.
-    setState(() => _error = null);
-    final name = await showPairConfirm(context);
-    if (name == null || !mounted) return;
-    setState(() => _busy = true);
+    setState(() {
+      _error = null;
+      _busy = true;
+    });
     try {
-      final token = await repository.pair(code, deviceName: name);
-      await SessionStore.saveToken(token, applianceId: repository is ApiRepository
-          ? (repository as ApiRepository).applianceId : null);
-      repository.setAuthToken(token);
+      // Check the code first, so a wrong code never reaches the name dialog.
+      // null = older appliance without /pair/verify: pair with the code below.
+      final ticket = await repository.verifyPairingCode(code);
       if (!mounted) return;
-      // Accepted page, then the app.
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (ctx) => PairingResultScreen.accepted(
-            onContinue: () => Navigator.of(ctx).pushReplacement(
-              MaterialPageRoute(builder: (_) => const MainShell()),
-            ),
-          ),
-        ),
-      );
+      setState(() => _busy = false);
+      // Confirm; Cancel sends nothing more (an unused ticket just expires).
+      final name = await showPairConfirm(context);
+      if (name == null || !mounted) return;
+      setState(() => _busy = true);
+      final token = ticket == null
+          ? await repository.pair(code, deviceName: name)
+          : await repository.pairWithTicket(ticket, deviceName: name);
+      await _finishPairing(token);
     } on PairingException catch (e) {
       _showRejected(e.message);
     } catch (_) {
@@ -75,6 +72,23 @@ class _PairingScreenState extends State<PairingScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Save the token, then the accepted page, then the app.
+  Future<void> _finishPairing(String token) async {
+    await SessionStore.saveToken(token, applianceId: repository is ApiRepository
+        ? (repository as ApiRepository).applianceId : null);
+    repository.setAuthToken(token);
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (ctx) => PairingResultScreen.accepted(
+          onContinue: () => Navigator.of(ctx).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MainShell()),
+          ),
+        ),
+      ),
+    );
   }
 
   /// Rejected page with the reason; Try again comes back here.
