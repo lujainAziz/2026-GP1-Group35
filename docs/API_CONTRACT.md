@@ -56,8 +56,8 @@ it on the Pi with the commands in that file's README section below (see
 
 Every endpoint needs a paired token, except:
 - requests from the appliance itself (`127.0.0.1` / `::1`), e.g. the 7-inch display;
-- `GET /healthz`, `POST /pair` and `GET /pairing/code` (the last one answers the
-  appliance only).
+- `GET /healthz`, `POST /pair/verify`, `POST /pair` and `GET /pairing/code` (the
+  last one answers the appliance only).
 
 Send the token on every request:
 ```
@@ -75,13 +75,46 @@ old one has expired and someone asks for it.
 {"code": "K7MQ3X", "expires_at": "2026-10-10T15:46:30"}
 ```
 
-### POST /pair
+A code works only once: as soon as it is accepted (by `/pair/verify` or `/pair`)
+it is dropped and the display shows a new one.
+
+### POST /pair/verify
+Step 1 of pairing: checks the code, so the app can say it is wrong before it asks
+for the phone name. No token needed.
+
 Body: `{"code": "K7MQ3X"}` (letter case and surrounding spaces are ignored).
-- `200` → `{"token": "..."}`. The app must store it: it is never shown again.
-- `401` → invalid or expired code. After 5 wrong codes the current code is dropped
-  and the display shows a new one, so guessing is useless.
+- `200` → `{"ticket": "...", "expires_at": "2026-10-10T15:50:30+03:00"}`. The code
+  is used up.
+- `401` → invalid or expired code (same `detail` as `/pair`). Counts toward the
+  same 5 failed attempts as `/pair`.
 - `422` → the `code` field is missing.
-- `503` → the database is not available yet.
+
+Ticket rules:
+- Valid for 180 seconds (env `ASSAS_PAIRING_TICKET_TTL_SECONDS`).
+- Single use: `/pair` consumes it.
+- Only one ticket is active at a time: a new successful verify replaces the old one.
+- Kept only in memory (as a SHA-256 hash); a restart of the API drops it.
+
+### POST /pair
+Step 2 of pairing. The body takes one of two forms:
+- `{"ticket": "...", "device_name": "Sara's phone"}` (two-step pairing, preferred);
+- `{"code": "K7MQ3X", "device_name": "Sara's phone"}` (one step, still supported;
+  letter case and surrounding spaces in the code are ignored).
+
+`device_name` is optional (at most 40 characters, trimmed; missing or blank means
+"Unnamed phone").
+
+- `200` → `{"token": "...", "appliance_id": "..."}`. The app must store the token:
+  it is never shown again. The ticket or code is used up.
+- `401` with a ticket → `"Pairing ticket is invalid or expired. Start pairing
+  again."` (also for a ticket that was already used). A bad ticket does **not**
+  count toward the 5 failed attempts.
+- `401` with a code → invalid or expired code. After 5 wrong codes (from
+  `/pair/verify` and `/pair` together) the current code is dropped and the display
+  shows a new one, so guessing is useless.
+- `422` → both `code` and `ticket` are sent, or neither.
+- `503` → the database is not available yet. The ticket or code is already used
+  up, so the app must start pairing again.
 
 Only a SHA-256 hash of the token is stored (table `paired_sessions`, see
 [database-schema.md](database-schema.md)), so a copy of the database cannot be used

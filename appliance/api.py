@@ -19,7 +19,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, StrictBool, field_validator
+from pydantic import BaseModel, StrictBool, field_validator, model_validator
 
 import model_db
 
@@ -874,6 +874,12 @@ _pairing_expires_at: Optional[datetime] = None
 _pairing_failed_attempts = 0
 MAX_FAILED_PAIRING_ATTEMPTS = 5
 
+# A correct code sent to /pair/verify buys a short-lived, single-use ticket that
+# /pair then accepts with the phone name. Only its hash is kept, in memory.
+PAIRING_TICKET_TTL_SECONDS = int(os.getenv("ASSAS_PAIRING_TICKET_TTL_SECONDS", "180"))
+_pairing_ticket_hash: Optional[str] = None
+_pairing_ticket_expires_at: Optional[datetime] = None
+
 
 def _new_pairing_code() -> str:
     return "".join(
@@ -941,11 +947,12 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _check_pairing_code(code: str) -> bool:
+def _check_pairing_code(code: str, consume: bool = False) -> bool:
     """True if code matches the current, unexpired code.
 
     Every wrong guess counts; after MAX_FAILED_PAIRING_ATTEMPTS the code is
     dropped, so the display fetches a new one and guessing becomes useless.
+    With consume=True a matching code is dropped too, so it works only once.
     """
     global _pairing_code, _pairing_failed_attempts
     with _pairing_lock:
@@ -954,6 +961,8 @@ def _check_pairing_code(code: str) -> bool:
             and datetime.now() < _pairing_expires_at
             and secrets.compare_digest(code.encode(), _pairing_code.encode())
         )
+        if valid and consume:
+            _pairing_code = None
         if not valid and _pairing_code is not None:
             _pairing_failed_attempts += 1
             if _pairing_failed_attempts >= MAX_FAILED_PAIRING_ATTEMPTS:
@@ -961,9 +970,74 @@ def _check_pairing_code(code: str) -> bool:
         return valid
 
 
-class PairRequest(BaseModel):
+def _issue_pairing_ticket() -> tuple[str, datetime]:
+    """Make a new ticket; it replaces any older one."""
+    global _pairing_ticket_hash, _pairing_ticket_expires_at
+    ticket = secrets.token_urlsafe(32)
+    with _pairing_lock:
+        _pairing_ticket_hash = _hash_token(ticket)
+        _pairing_ticket_expires_at = datetime.now() + timedelta(
+            seconds=PAIRING_TICKET_TTL_SECONDS
+        )
+        return ticket, _pairing_ticket_expires_at
+
+
+def _consume_pairing_ticket(ticket: str) -> bool:
+    """True (and the ticket is used up) if ticket is the current, unexpired one.
+
+    A bad ticket does not count toward MAX_FAILED_PAIRING_ATTEMPTS: tickets are
+    long random strings, so guessing them is not a concern.
+    """
+    global _pairing_ticket_hash, _pairing_ticket_expires_at
+    with _pairing_lock:
+        valid = (
+            _pairing_ticket_hash is not None
+            and datetime.now() < _pairing_ticket_expires_at
+            and secrets.compare_digest(
+                _hash_token(ticket).encode(), _pairing_ticket_hash.encode()
+            )
+        )
+        if valid:
+            _pairing_ticket_hash = None
+            _pairing_ticket_expires_at = None
+        return valid
+
+
+class PairVerifyRequest(BaseModel):
     code: str
+
+
+class PairVerifyResponse(BaseModel):
+    ticket: str
+    expires_at: str
+
+
+@app.post(
+    "/pair/verify",
+    response_model=PairVerifyResponse,
+    responses={401: {"description": "Invalid or expired pairing code."}},
+)
+def pair_verify(body: PairVerifyRequest):
+    """Step 1 of pairing: check the code before the app asks for a phone name."""
+    code = body.code.strip().upper()
+    if not _check_pairing_code(code, consume=True):
+        raise HTTPException(status_code=401, detail="Invalid or expired pairing code.")
+    ticket, expires_at = _issue_pairing_ticket()
+    return PairVerifyResponse(
+        ticket=ticket, expires_at=expires_at.astimezone().isoformat(timespec="seconds")
+    )
+
+
+class PairRequest(BaseModel):
+    code: Optional[str] = None
+    ticket: Optional[str] = None
     device_name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _code_or_ticket(self):
+        if (self.code is None) == (self.ticket is None):
+            raise ValueError("Send exactly one of 'code' or 'ticket'.")
+        return self
 
     @field_validator("device_name")
     @classmethod
@@ -1006,14 +1080,21 @@ def list_sessions(request: Request, conn: sqlite3.Connection = Depends(get_conne
     "/pair",
     response_model=PairResponse,
     responses={
-        401: {"description": "Invalid or expired pairing code."},
+        401: {"description": "Invalid or expired pairing code or ticket."},
         503: {"description": "Device database is not available yet."},
     },
 )
 def pair(body: PairRequest):
-    code = body.code.strip().upper()
-    if not _check_pairing_code(code):
-        raise HTTPException(status_code=401, detail="Invalid or expired pairing code.")
+    if body.ticket is not None:
+        if not _consume_pairing_ticket(body.ticket):
+            raise HTTPException(
+                status_code=401,
+                detail="Pairing ticket is invalid or expired. Start pairing again.",
+            )
+    else:
+        code = body.code.strip().upper()
+        if not _check_pairing_code(code, consume=True):
+            raise HTTPException(status_code=401, detail="Invalid or expired pairing code.")
 
     token = secrets.token_urlsafe(32)
     try:
@@ -1044,7 +1125,7 @@ def pair(body: PairRequest):
 
 # Reachable without a token. /pairing/code is listed because it guards itself:
 # it only answers the appliance (403 for everyone else, paired or not).
-PUBLIC_PATHS = {"/healthz", "/pair", "/pairing/code"}
+PUBLIC_PATHS = {"/healthz", "/pair", "/pair/verify", "/pairing/code"}
 
 
 def _bearer_token(request: Request) -> Optional[str]:
