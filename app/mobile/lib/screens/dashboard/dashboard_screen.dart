@@ -32,6 +32,10 @@ class DashboardScreen extends StatelessWidget {
   /// Devices tab with the Unrecognized filter (falls back to [onOpenDevices]).
   final VoidCallback? onOpenUnrecognized;
 
+  /// Online card bars, attention first. 10 keeps each bar at least as wide as
+  /// its 5px gap on the narrowest layout (320 px phone, Largest text).
+  static const _maxBars = 10;
+
   void _openAlert(BuildContext context, SecurityAlert a) => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => AlertDetailsScreen(state: state, alertId: a.id)),
       );
@@ -90,7 +94,12 @@ class DashboardScreen extends StatelessWidget {
                   ),
                   Transform.translate(
                     offset: const Offset(0, -8),
-                    child: Center(child: _ribbon(attention)),
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: FittedBox(fit: BoxFit.scaleDown, child: _ribbon(attention)),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 14),
                   _risk(),
@@ -277,23 +286,28 @@ class DashboardScreen extends StatelessWidget {
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.baseline,
-                              textBaseline: TextBaseline.alphabetic,
-                              children: [
-                                Text('${state.onlineCount}', style: UiText.onlineNumber),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '/${state.totalCount}',
-                                  style: UiText.sans(22, 600, color: Ui.mute),
-                                ),
-                              ],
+                            // Shrinks for 3-digit counts (the appliance keeps old devices).
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.baseline,
+                                textBaseline: TextBaseline.alphabetic,
+                                children: [
+                                  Text('${state.onlineCount}', style: UiText.onlineNumber),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '/${state.totalCount}',
+                                    style: UiText.sans(22, 600, color: Ui.mute),
+                                  ),
+                                ],
+                              ),
                             ),
                             if (signals.isNotEmpty) ...[
                               const SizedBox(height: 12),
                               Row(
                                 children: [
-                                  for (var i = 0; i < signals.length; i++) ...[
+                                  for (var i = 0; i < math.min(signals.length, _maxBars); i++) ...[
                                     if (i > 0) const SizedBox(width: 5),
                                     Expanded(
                                       child: Container(
@@ -337,7 +351,7 @@ class DashboardScreen extends StatelessWidget {
                     child: _CardX(
                       radius: UiRadius.card,
                       stripes: Ui.mix(Ui.med, .14, Ui.surf),
-                      child: _statInner('Unrecog-\nnized', '${state.unrecognizedCount}', Ui.med),
+                      child: _statInner('Unrecognized', '${state.unrecognizedCount}', Ui.med),
                     ),
                   ),
                 ],
@@ -367,7 +381,14 @@ class DashboardScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         children: [
-          Expanded(child: Text(label, style: UiText.sans(13, 600, height: 1.2))),
+          // Shrinks instead of breaking a word ("Unrecognized") across lines.
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(label, style: UiText.sans(13, 600, height: 1.2)),
+            ),
+          ),
           Text(value, style: UiText.statNumber.copyWith(color: color)),
         ],
       ),
