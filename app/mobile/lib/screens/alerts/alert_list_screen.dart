@@ -111,17 +111,26 @@ class _AlertListScreenState extends State<AlertListScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Released.alerts
-                    ? Text(
-                        state.unresolvedCount?.toString() ?? '–',
-                        style: UiText.alertsHero.copyWith(color: Ui.high),
-                      )
-                    // A 120px dash looks like a block, so the word is shown instead.
-                    : Text('Soon', style: UiText.devicesHero.copyWith(color: Ui.mute)),
+              // Takes the free space (was a Spacer) and shrinks the word if it does not fit.
+              Expanded(
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.bottomLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Released.alerts
+                          ? Text(
+                              state.unresolvedCount?.toString() ?? '–',
+                              style: UiText.alertsHero.copyWith(color: Ui.high),
+                            )
+                          // A 120px dash looks like a block, so the word is shown instead.
+                          : Text('Soon', style: UiText.devicesHero.copyWith(color: Ui.mute)),
+                    ),
+                  ),
+                ),
               ),
-              const Spacer(),
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text(

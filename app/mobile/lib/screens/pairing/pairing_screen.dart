@@ -219,8 +219,12 @@ class _PairingScreenState extends State<PairingScreen> {
         cursorColor: Ui.acc,
         textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
-          hintText: 'PAIRING CODE',
-          hintStyle: UiText.codeInput.copyWith(color: Ui.mute),
+          // Shrinks instead of "…" at large text sizes.
+          hint: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text('PAIRING CODE', style: UiText.codeInput.copyWith(color: Ui.mute)),
+          ),
           contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
         ),
       ),

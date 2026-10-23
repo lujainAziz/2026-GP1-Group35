@@ -381,8 +381,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       decoration: glassCard(UiRadius.settingsCard),
       child: Column(
         children: [
-          SizedBox(
-            height: 58,
+          // At least 58 high; grows when the title wraps at large text sizes.
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 58),
             child: Row(
               children: [
                 Expanded(
