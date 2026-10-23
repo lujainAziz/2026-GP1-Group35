@@ -191,6 +191,29 @@ class DemoRepository implements AssasRepository {
     return 'demo-token';
   }
 
+  /// Demo: same rule as [pair]; a good code buys a ticket.
+  @override
+  Future<String?> verifyPairingCode(String code) async {
+    await Future.delayed(const Duration(milliseconds: 600));
+    final c = code.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z0-9]{6}$').hasMatch(c)) {
+      throw const PairingException(PairingException.wrongCode);
+    }
+    return 'demo-ticket';
+  }
+
+  @override
+  Future<String> pairWithTicket(String ticket, {String? deviceName}) async {
+    await Future.delayed(const Duration(milliseconds: 600));
+    final name = deviceName?.trim() ?? '';
+    _phones.add(PairedPhone(
+      id: _phones.length + 1,
+      deviceName: name.isEmpty ? 'Unnamed phone' : name,
+      createdAt: DateTime.now(),
+    ));
+    return 'demo-token';
+  }
+
   /// Demo phones: one paired before, and a "new" one that appears about
   /// 20 seconds after the display starts, so the new-phone banner can be seen.
   final List<PairedPhone> _phones = [

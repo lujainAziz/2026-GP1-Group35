@@ -17,7 +17,9 @@ import 'assas_repository.dart';
 //    GET  /devices/{mac}
 //
 //  PROPOSED endpoints (backend still needs to build them):
+//    POST /pair/verify          {"code": "ABC123"}  -> {"ticket": "..."}  401 = invalid or expired, 404 = older appliance
 //    POST /pair                 {"code": "ABC123"}  -> {"token": "..."}   400/401 = invalid or expired
+//                               {"ticket": "..."}   -> {"token": "..."}   401 = ticket invalid or expired
 //    POST /unpair               (Bearer token)      -> 204               ends this phone's session
 //    GET  /pairing/code         -> {"code","expires_at"}   LOCALHOST ONLY (the 7-inch display)
 //    PUT  /devices/{mac}/trust  {"trusted": true}   -> 204               saved in DB (survives restart)
@@ -176,6 +178,46 @@ class ApiRepository implements AssasRepository {
     });
     if (r.statusCode == 400 || r.statusCode == 401 || r.statusCode == 403) {
       throw const PairingException(PairingException.wrongCode);
+    }
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      throw const PairingException('Pairing failed. Try again.');
+    }
+    final result = ApiClient.decodeObject(r);
+    applianceId = result['appliance_id']?.toString();
+    final token = result['token']?.toString();
+    if (token == null || token.isEmpty) {
+      throw const PairingException('Pairing failed. Try again.');
+    }
+    return token;
+  }
+
+  @override
+  Future<String?> verifyPairingCode(String code) async {
+    final r = await _api.post('/pair/verify', {'code': code.trim().toUpperCase()});
+    if (r.statusCode == 404) return null; // older appliance: use pair(code)
+    if (r.statusCode == 400 || r.statusCode == 401 || r.statusCode == 403) {
+      throw const PairingException(PairingException.wrongCode);
+    }
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      throw const PairingException('Pairing failed. Try again.');
+    }
+    final ticket = ApiClient.decodeObject(r)['ticket']?.toString();
+    if (ticket == null || ticket.isEmpty) {
+      throw const PairingException('Pairing failed. Try again.');
+    }
+    return ticket;
+  }
+
+  @override
+  Future<String> pairWithTicket(String ticket, {String? deviceName}) async {
+    var name = deviceName?.trim() ?? '';
+    if (name.length > 40) name = name.substring(0, 40);
+    final r = await _api.post('/pair', {
+      'ticket': ticket,
+      if (name.isNotEmpty) 'device_name': name,
+    });
+    if (r.statusCode == 401) {
+      throw const PairingException(PairingException.ticketExpired);
     }
     if (r.statusCode < 200 || r.statusCode >= 300) {
       throw const PairingException('Pairing failed. Try again.');
