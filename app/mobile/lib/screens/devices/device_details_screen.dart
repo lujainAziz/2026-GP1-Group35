@@ -305,7 +305,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
       return const EmptyDashed(
         padding: EdgeInsets.all(26),
         title: 'Coming soon',
-        hint: 'Alerts for this device arrive with threat detection.',
+        hint: 'Alerts for this device arrive in Sprint 2.',
         action: SoonTag(2),
       );
     }

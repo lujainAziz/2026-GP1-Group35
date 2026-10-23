@@ -63,9 +63,9 @@ class ObservedProtocols extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('OBSERVED · LAST 60s', style: UiText.watchLead.copyWith(color: Ui.acc)),
+        Text('NOW WATCHING · LAST 60s', style: UiText.watchLead.copyWith(color: Ui.acc)),
         const SizedBox(height: 8),
-        if (tags.isEmpty) Text(ready ? 'No protocols observed recently' : 'Waiting for capture data',
+        if (tags.isEmpty) Text(ready ? 'No protocols seen recently' : 'Waiting for capture data',
           style: UiText.watchTag.copyWith(color: Ui.mute)),
         Wrap(spacing: 7, runSpacing: 7, children: [for (final tag in tags)
           Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
