@@ -1045,6 +1045,8 @@ class PairingTests(unittest.TestCase):
         api._pairing_code = None
         api._pairing_expires_at = None
         api._pairing_failed_attempts = 0
+        api._pairing_ticket_hash = None
+        api._pairing_ticket_expires_at = None
 
     def tearDown(self):
         api.DB_PATH = self._orig_db_path
@@ -1099,15 +1101,126 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(self._pair(code).status, 401)
 
     def test_each_pairing_gets_its_own_token(self):
-        code = self._code()
-        t1 = json.loads(self._pair(code).body)["token"]
-        t2 = json.loads(self._pair(code).body)["token"]
+        t1 = json.loads(self._pair(self._code()).body)["token"]
+        t2 = json.loads(self._pair(self._code()).body)["token"]
         self.assertNotEqual(t1, t2)
         self.assertEqual(len(self._stored_hashes()), 2)
 
     def test_missing_code_field_is_422(self):
         r = _asgi_request("POST", "/pair", self.JSON, body="{}")
         self.assertEqual(r.status, 422)
+
+    def test_same_code_cannot_pair_twice(self):
+        code = self._code()
+        self.assertEqual(self._pair(code).status, 200)
+        self.assertEqual(self._pair(code).status, 401)
+        self.assertEqual(len(self._stored_hashes()), 1)
+
+    def test_code_and_ticket_together_is_422(self):
+        body = json.dumps({"code": self._code(), "ticket": "x", "device_name": "P"})
+        r = _asgi_request("POST", "/pair", self.JSON, body=body)
+        self.assertEqual(r.status, 422)
+
+    def test_only_device_name_is_422(self):
+        r = _asgi_request("POST", "/pair", self.JSON, body=json.dumps({"device_name": "P"}))
+        self.assertEqual(r.status, 422)
+
+    # Two-step pairing: POST /pair/verify trades the code for a ticket, then
+    # POST /pair trades the ticket and the phone name for a token.
+
+    def _verify(self, code, client=("127.0.0.1", 12345)):
+        return _asgi_request(
+            "POST", "/pair/verify", self.JSON, body=json.dumps({"code": code}), client=client
+        )
+
+    def _ticket(self):
+        return json.loads(self._verify(self._code()).body)["ticket"]
+
+    def _pair_ticket(self, ticket, device_name="Sara's phone"):
+        body = json.dumps({"ticket": ticket, "device_name": device_name})
+        return _asgi_request("POST", "/pair", self.JSON, body=body)
+
+    def _stored_names(self):
+        con = sqlite3.connect(self.path)
+        try:
+            return [r[0] for r in con.execute("SELECT device_name FROM paired_sessions")]
+        finally:
+            con.close()
+
+    def test_correct_code_returns_ticket_and_burns_the_code(self):
+        code = self._code()
+        r = self._verify(code)
+        self.assertEqual(r.status, 200)
+        data = json.loads(r.body)
+        self.assertGreater(len(data["ticket"]), 30)
+        datetime.fromisoformat(data["expires_at"])
+        self.assertEqual(api._pairing_ticket_hash, api._hash_token(data["ticket"]))
+        self.assertEqual(self._verify(code).status, 401)
+        self.assertEqual(self._pair(code).status, 401)
+        self.assertNotEqual(self._code(), code)
+
+    def test_wrong_code_is_401_and_counts(self):
+        code = self._code()
+        r = self._verify("WRONG1")
+        self.assertEqual(r.status, 401)
+        self.assertEqual(json.loads(r.body)["detail"], "Invalid or expired pairing code.")
+        for _ in range(api.MAX_FAILED_PAIRING_ATTEMPTS - 1):
+            self.assertEqual(self._verify("WRONG1").status, 401)
+        self.assertEqual(self._verify(code).status, 401)
+
+    def test_wrong_verify_and_wrong_pair_share_the_counter(self):
+        code = self._code()
+        for i in range(api.MAX_FAILED_PAIRING_ATTEMPTS):
+            r = self._verify("WRONG1") if i % 2 else self._pair("WRONG1")
+            self.assertEqual(r.status, 401)
+        self.assertEqual(self._verify(code).status, 401)
+
+    def test_valid_ticket_returns_token_and_stores_name(self):
+        r = self._pair_ticket(self._ticket(), "Sara's phone")
+        self.assertEqual(r.status, 200)
+        token = json.loads(r.body)["token"]
+        self.assertEqual(self._stored_hashes(), [api._hash_token(token)])
+        self.assertEqual(self._stored_names(), ["Sara's phone"])
+
+    def test_ticket_works_only_once(self):
+        ticket = self._ticket()
+        self.assertEqual(self._pair_ticket(ticket).status, 200)
+        r = self._pair_ticket(ticket)
+        self.assertEqual(r.status, 401)
+        self.assertEqual(
+            json.loads(r.body)["detail"],
+            "Pairing ticket is invalid or expired. Start pairing again.",
+        )
+        self.assertEqual(len(self._stored_hashes()), 1)
+
+    def test_expired_ticket_is_401(self):
+        ticket = self._ticket()
+        api._pairing_ticket_expires_at = datetime.now() - timedelta(seconds=1)
+        self.assertEqual(self._pair_ticket(ticket).status, 401)
+        self.assertEqual(self._stored_hashes(), [])
+
+    def test_second_verify_replaces_first_ticket(self):
+        first = self._ticket()
+        second = self._ticket()
+        self.assertEqual(self._pair_ticket(first).status, 401)
+        self.assertEqual(self._pair_ticket(second).status, 200)
+
+    def test_bad_ticket_does_not_count_as_failed_attempt(self):
+        code = self._code()
+        for _ in range(api.MAX_FAILED_PAIRING_ATTEMPTS + 1):
+            self.assertEqual(self._pair_ticket("made-up").status, 401)
+        self.assertEqual(api._pairing_failed_attempts, 0)
+        self.assertEqual(self._verify(code).status, 200)
+
+    def test_verify_needs_no_token(self):
+        self._code()  # created by the display
+        r = self._verify("WRONG1", client=("192.168.1.50", 5555))
+        self.assertEqual(r.status, 401)
+        self.assertNotIn("www-authenticate", r.headers)
+        api._pairing_failed_attempts = 0
+        code = self._code()
+        r = self._verify(code, client=("192.168.1.50", 5555))
+        self.assertEqual(r.status, 200)
 
 
 class AuthTests(unittest.TestCase):
@@ -1128,6 +1241,8 @@ class AuthTests(unittest.TestCase):
         api._pairing_code = None
         api._pairing_expires_at = None
         api._pairing_failed_attempts = 0
+        api._pairing_ticket_hash = None
+        api._pairing_ticket_expires_at = None
 
     def tearDown(self):
         api.DB_PATH = self._orig_db_path
