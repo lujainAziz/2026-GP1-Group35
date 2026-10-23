@@ -692,7 +692,7 @@ class SpecList extends StatelessWidget {
                             child: Text(
                               r.$2,
                               textAlign: TextAlign.right,
-                              maxLines: 1,
+                              maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                               style: UiText.specValue.copyWith(color: r.$3),
                             ),

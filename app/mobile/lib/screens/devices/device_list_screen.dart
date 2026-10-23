@@ -264,8 +264,12 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
                           enabledBorder: InputBorder.none,
                           focusedBorder: InputBorder.none,
                           contentPadding: EdgeInsets.zero,
-                          hintText: 'Search name, IP or MAC',
-                          hintStyle: UiText.input.copyWith(color: Ui.mute),
+                          // Shrinks instead of "…" at large text sizes.
+                          hint: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text('Search name, IP or MAC', style: UiText.input.copyWith(color: Ui.mute)),
+                          ),
                         ),
                       ),
                     ),
@@ -555,7 +559,7 @@ class _DeviceRow extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           '${d.ipLabel} · ${d.macLabel}',
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: meta,
                         ),
