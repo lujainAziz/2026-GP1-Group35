@@ -207,6 +207,12 @@ is reported as `"inferred: private MAC"` rather than presented as an OUI fact.
 `user_name` is the user-chosen label set via `PUT /devices/{mac}/name`; it is
 `null` until a name is set.
 
+`monitored` (bool, in both `/devices` and `/devices/{mac}`) means unicast
+traffic from the device was seen on the mirrored (SPAN) port **recently**:
+within the last 120 seconds by default (env `ASSAS_MONITORED_WINDOW_SECONDS`).
+It is not "ever seen": a device that leaves the monitored network turns
+`false` once the window passes, and a device never seen that way is `false`.
+
 ---
 
 ## GET /devices/{mac}
