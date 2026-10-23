@@ -28,6 +28,10 @@ DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 # Above this many seconds without a daemon write, /healthz flags the daemon stale.
 HEARTBEAT_STALE_SECONDS = int(os.getenv("ASSAS_HEARTBEAT_STALE_SECONDS", "120"))
 
+# A device counts as monitored only if unicast traffic from it was seen on the
+# mirrored port within this many seconds (same default as the presence window).
+MONITORED_WINDOW_SECONDS = int(os.getenv("ASSAS_MONITORED_WINDOW_SECONDS", "120"))
+
 # Matches http/https on localhost or 127.0.0.1 at any port (e.g. the port the
 # Flutter Web dev server picks). Anchored so lookalikes like
 # "http://localhost.evil.com" do not match.
@@ -136,6 +140,26 @@ def ensure_ip_columns() -> None:
         conn.close()
 
 
+def ensure_last_monitored_seen_column() -> None:
+    """Deployment safety: guarantee devices.last_monitored_seen exists before any
+    endpoint SELECTs it, without waiting for discovery.py to be restarted.
+
+    Discovery owns and writes this column; this guard only mirrors its shape
+    (plain TEXT). Idempotent and a no-op if the DB or devices table is absent.
+    """
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError:
+        return  # DB not created yet; discovery.init_db() will build it fresh.
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+        if cols and "last_monitored_seen" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN last_monitored_seen TEXT")
+            conn.commit()
+    finally:
+        conn.close()
+
+
 # Kept textually identical to discovery.init_db()'s app_settings DDL so the two
 # processes never create diverging schemas for the same table.
 _APP_SETTINGS_DDL = (
@@ -174,6 +198,7 @@ async def lifespan(_app: "FastAPI"):
     ensure_trusted_column()
     ensure_user_name_column()
     ensure_ip_columns()
+    ensure_last_monitored_seen_column()
     ensure_settings_table()
     yield
 
@@ -310,8 +335,8 @@ class DeviceSummary(BaseModel):
     # candidate and offline records are shown as offline.
     # (matches the Flutter client contract). status itself is left unchanged.
     presence: str = "offline"
-    # Last-confirmed SPAN coverage; not current traffic activity.
-    # May remain true after a topology change outside SPAN coverage.
+    # Recent SPAN coverage: unicast traffic seen on the mirrored port within
+    # MONITORED_WINDOW_SECONDS (derived from last_monitored_seen).
     monitored: bool = False
     # User recognition state, independent of classification/monitoring. Stored
     # as 0/1; surfaced here as a real JSON boolean. Old rows default to false.
@@ -438,7 +463,7 @@ class SummaryStats(BaseModel):
 
 SUMMARY_COLUMNS = (
     "mac, ip, hostname, device_type, model, vendor, vendor_source, "
-    "status, COALESCE(is_monitored, 0) AS monitored, trusted, user_name, first_seen, last_seen")
+    "status, last_monitored_seen, trusted, user_name, first_seen, last_seen")
 
 # Additive: also fetch the per-family IP columns so row_to_summary/row_to_detail
 # can resolve one stable display address (see _resolve_display_ip) and expose
@@ -475,6 +500,23 @@ def _presence_from_status(status, last_seen=None, now=None) -> str:
             return "offline"
     # Legacy records without a timestamp retain their stored presence.
     return "online"
+
+
+def _is_monitored(last_monitored_seen, now=None) -> bool:
+    """Monitored only if unicast SPAN traffic was seen within the window.
+
+    discovery writes server-local naive ISO-8601; like _presence_from_status,
+    both sides are read as local time. No timestamp (or an unparsable one) is
+    not monitored.
+    """
+    if not last_monitored_seen:
+        return False
+    try:
+        seen = datetime.fromisoformat(last_monitored_seen).astimezone()
+    except ValueError:
+        return False
+    current = now or datetime.now().astimezone()
+    return (current - seen).total_seconds() <= MONITORED_WINDOW_SECONDS
 
 
 def _shown_model(model):
@@ -546,8 +588,9 @@ def _resolve_ipv6(last_ipv4, ipv6_global, ipv6_ll, legacy_ip):
 
 
 def row_to_summary(row, now=None) -> DeviceSummary:
-    # presence is not a SQL column; it is derived from status below.
-    data = {k: row[k] for k in DeviceSummary.model_fields if k != "presence"}
+    # presence and monitored are not SQL columns; they are derived below.
+    data = {k: row[k] for k in DeviceSummary.model_fields
+            if k not in ("presence", "monitored")}
     # Replace the flip-prone legacy `ip` with one stable resolved address.
     data["ip"] = _resolve_display_ip(
         row["last_ipv4"], row["last_ipv6_global"], row["last_ipv6_ll"], row["ip"]
@@ -556,7 +599,7 @@ def row_to_summary(row, now=None) -> DeviceSummary:
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
-    data["monitored"] = bool(data["monitored"])
+    data["monitored"] = _is_monitored(row["last_monitored_seen"], now)
     data["trusted"] = bool(data["trusted"])
     data["presence"] = _presence_from_status(data.get("status"), data.get("last_seen"), now)
     for key in ("first_seen", "last_seen"):
@@ -584,8 +627,9 @@ def row_to_detail(row) -> DeviceDetail:
     data["model"] = _shown_model(data.get("model"))
     for flag in (
         "is_ap_client", "ap_associated", "discovered_current",
-    "traffic_seen", "session_seen", "trusted", "monitored",    ):
+    "traffic_seen", "session_seen", "trusted",    ):
         data[flag] = bool(data[flag])
+    data["monitored"] = _is_monitored(data.get("last_monitored_seen"))
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )

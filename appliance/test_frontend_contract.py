@@ -105,7 +105,7 @@ class FrontendContractTests(unittest.TestCase):
         self.assertEqual(api._presence_from_status('observed', (now-timedelta(seconds=120)).isoformat(), now), 'online')
         self.assertEqual(api._presence_from_status('observed', (now-timedelta(seconds=121)).isoformat(), now), 'offline')
         with closing(sqlite3.connect(self.db)) as conn, conn:
-            conn.execute("UPDATE devices SET status='observed', is_monitored=1, last_seen=?", ((now-timedelta(seconds=121)).isoformat(),))
+            conn.execute("UPDATE devices SET status='observed', is_monitored=1, last_seen=?, last_monitored_seen=?", ((now-timedelta(seconds=121)).isoformat(), now.isoformat()))
         device = self.local.get('/devices').json()[0]
         self.assertEqual(device['presence'], 'offline')
         self.assertTrue(device['monitored'])

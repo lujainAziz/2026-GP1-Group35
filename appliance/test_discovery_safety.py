@@ -249,6 +249,17 @@ class DiscoverySafetyTests(unittest.TestCase):
         d.handle(self.frame(IP(src=self.ip, dst='192.168.1.1')/ICMP()))
         self.assertTrue(self.row()['is_monitored'])
 
+    def test_unicast_frame_sets_last_monitored_seen(self):
+        d.handle(self.frame(IP(src=self.ip, dst='192.168.1.1')/ICMP()))
+        self.assertIsNotNone(self.row()['last_monitored_seen'])
+
+    def test_broadcast_frame_does_not_set_last_monitored_seen(self):
+        for dst in ('ff:ff:ff:ff:ff:ff', '01:00:5e:00:00:fb', '33:33:00:00:00:fb'):
+            d.handle(Ether(src=self.mac, dst=dst)/IP(src=self.ip, dst='255.255.255.255')/ICMP())
+        row = self.row()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row['last_monitored_seen'])
+
     def test_span_sighting_without_monitored_evidence_stays_unmonitored(self):
         d.update_device(self.mac, ip=self.ip, seen_on_span=True, monitored_evidence=False)
         self.assertFalse(self.row()['is_monitored'])

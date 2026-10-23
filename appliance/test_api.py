@@ -28,6 +28,7 @@ _DEVICES_SCHEMA = (
     "traffic_seen INTEGER, last_traffic_seen TEXT, vendor_source TEXT, "
     "user_name TEXT, "
     "last_ipv4 TEXT, last_ipv6_global TEXT, last_ipv6_ll TEXT, "
+    "last_monitored_seen TEXT, "
     "trusted INTEGER NOT NULL DEFAULT 0"
 )
 
@@ -171,11 +172,18 @@ class OnlineOnlyConsistencyTests(_SeededDBTest):
         self.assertEqual(sorted(x.mac for x in res), ["a", "b", "d"])
 
 
+def _seconds_ago(seconds):
+    """A timestamp in the format discovery writes (server-local naive ISO)."""
+    return (datetime.now() - timedelta(seconds=seconds)).isoformat(timespec="seconds")
+
+
 class MonitoredStateTests(_SeededDBTest):
-    """The API exposes last-confirmed capture coverage, not presence."""
+    """The API exposes recent capture coverage (last_monitored_seen within the
+    window), not presence and not the never-reset is_monitored flag."""
 
     def test_monitored_true_in_device_list(self):
-        self.insert(mac="aa:bb:cc:dd:ee:01", status="online", is_monitored=1)
+        self.insert(mac="aa:bb:cc:dd:ee:01", status="online", is_monitored=1,
+                    last_monitored_seen=_seconds_ago(5))
         devices = api.list_devices(conn=self.conn, limit=100, offset=0)
         self.assertEqual(len(devices), 1)
         self.assertIs(devices[0].monitored, True)
@@ -189,7 +197,8 @@ class MonitoredStateTests(_SeededDBTest):
         self.assertEqual(devices[0].status, "online")
 
     def test_monitored_true_in_device_detail(self):
-        self.insert(mac="aa:bb:cc:dd:ee:03", status="offline", is_monitored=1)
+        self.insert(mac="aa:bb:cc:dd:ee:03", status="offline", is_monitored=1,
+                    last_monitored_seen=_seconds_ago(5))
         device = api.get_device("aa:bb:cc:dd:ee:03", self.conn)
         self.assertIs(device.monitored, True)
         self.assertEqual(device.status, "offline")
@@ -199,6 +208,41 @@ class MonitoredStateTests(_SeededDBTest):
         device = api.get_device("aa:bb:cc:dd:ee:04", self.conn)
         self.assertIs(device.monitored, False)
         self.assertEqual(device.status, "online")
+
+    def test_monitored_false_when_older_than_window(self):
+        old = _seconds_ago(api.MONITORED_WINDOW_SECONDS + 60)
+        self.insert(mac="aa:bb:cc:dd:ee:06", status="online", is_monitored=1,
+                    last_monitored_seen=old)
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertIs(devices[0].monitored, False)
+        device = api.get_device("aa:bb:cc:dd:ee:06", self.conn)
+        self.assertIs(device.monitored, False)
+
+    def test_monitored_false_when_never_seen_even_if_flag_set(self):
+        # Legacy row: is_monitored=1 but no last_monitored_seen yet.
+        self.insert(mac="aa:bb:cc:dd:ee:07", status="online", is_monitored=1)
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertIs(devices[0].monitored, False)
+        device = api.get_device("aa:bb:cc:dd:ee:07", self.conn)
+        self.assertIs(device.monitored, False)
+
+    def test_default_window_is_120_seconds(self):
+        self.assertEqual(api.MONITORED_WINDOW_SECONDS, 120)
+
+    def test_window_comes_from_env_setting(self):
+        import importlib
+        from unittest.mock import patch
+        self.addCleanup(importlib.reload, api)  # restore the default window
+        with patch.dict(os.environ, {"ASSAS_MONITORED_WINDOW_SECONDS": "600"}):
+            importlib.reload(api)
+        self.assertEqual(api.MONITORED_WINDOW_SECONDS, 600)
+        # 300s ago: outside the 120s default, inside the configured 600s.
+        self.insert(mac="aa:bb:cc:dd:ee:08", status="online", is_monitored=1,
+                    last_monitored_seen=_seconds_ago(300))
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertIs(devices[0].monitored, True)
+        device = api.get_device("aa:bb:cc:dd:ee:08", self.conn)
+        self.assertIs(device.monitored, True)
 
 
 class PresenceStateTests(_SeededDBTest):
@@ -243,7 +287,7 @@ class PresenceJSONResponseTests(_SeededDBTest):
 
     def test_presence_in_json_responses(self):
         self.insert(mac="aa:bb:cc:dd:ee:16", status="online",
-                    trusted=1, is_monitored=1)
+                    trusted=1, is_monitored=1, last_monitored_seen=_seconds_ago(5))
         self.insert(mac="aa:bb:cc:dd:ee:17", status="observed",
                     trusted=0, is_monitored=0)
         original_path = api.DB_PATH
@@ -572,7 +616,8 @@ class MonitoredJSONResponseTests(_SeededDBTest):
     """Check actual serialized GET responses and existing trusted/status fields."""
 
     def test_monitored_in_json_responses(self):
-        self.insert(mac="aa:bb:cc:dd:ee:05", status="online", trusted=1, is_monitored=1)
+        self.insert(mac="aa:bb:cc:dd:ee:05", status="online", trusted=1, is_monitored=1,
+                    last_monitored_seen=_seconds_ago(5))
         original_path = api.DB_PATH
         api.DB_PATH = self.path
         try:
