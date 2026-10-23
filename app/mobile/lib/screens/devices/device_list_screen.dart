@@ -180,10 +180,17 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
               Text('${state.totalCount}', style: UiText.devicesHero),
               const SizedBox(width: 10),
               Text('devices', style: UiText.heroSuffix),
-              const Spacer(),
-              Text(
-                '● ${state.onlineCount} online',
-                style: UiText.mono(12, 500, color: Ui.low),
+              const SizedBox(width: 10),
+              // Shrinks instead of going off screen with 3-digit counts.
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    '● ${state.onlineCount} online',
+                    style: UiText.mono(12, 500, color: Ui.low),
+                  ),
+                ),
               ),
             ],
           ),
@@ -391,8 +398,15 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 7),
       child: Row(
         children: [
-          Text('DEVICE INDEX · $shown / $total', style: style),
-          const Spacer(),
+          // Shrinks at narrow widths with 3-digit counts.
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text('DEVICE INDEX · $shown / $total', style: style),
+            ),
+          ),
+          const SizedBox(width: 10),
           Text('ATTENTION FIRST', style: style.copyWith(color: Ui.acc)),
         ],
       ),
