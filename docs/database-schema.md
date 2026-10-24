@@ -49,7 +49,7 @@ No indexes exist besides the primary keys.
 | `model_score` | INTEGER, default 0 | Weight of the winning model evidence. |
 | `model_source` | TEXT | Reason for `model` (evidence needle). |
 | `is_monitored` | INTEGER (0/1), default 0 | Unicast traffic sent by this device has been seen on the mirrored (SPAN) port, so Assas can monitor it. Broadcast and multicast frames do not count, because the switch floods them to every port, including the mirrored one. 0 = never seen that way. Once set to 1 it stays 1, so the API does **not** use it for `monitored` (see `last_monitored_seen`). |
-| `last_monitored_seen` | TEXT | Last time unicast traffic sent by this device was seen on the mirrored (SPAN) port (same rule as `is_monitored`; broadcast/multicast do not count). The API reports `monitored = true` only while this is within the monitored window (default 120 s, env `ASSAS_MONITORED_WINDOW_SECONDS`); `NULL` or older = "Not Monitored" in the app. |
+| `last_monitored_seen` | TEXT | Last time unicast traffic sent by this device was seen on the mirrored (SPAN) port (same rule as `is_monitored`; broadcast/multicast do not count). The API reports `monitored = true` only while this is within the monitored window (default 120 s, env `ASSAS_MONITORED_WINDOW_SECONDS`); `NULL` or older = "Not Monitored" in the app. For an Offline device the window is measured from its `last_seen` instead (see below). |
 | `last_span_seen` | TEXT | Last time seen via mirrored (SPAN) traffic. |
 | `session_seen` | INTEGER (0/1), default 0 | Seen with live traffic during the current daemon run. |
 | `traffic_seen` | INTEGER (0/1), default 0 | Ever seen carrying traffic on the mirror. |
@@ -78,7 +78,9 @@ No indexes exist besides the primary keys.
 - **Monitored in the API**: `monitored` is true only if `last_monitored_seen` is
   within the monitored window (default 120 seconds, env
   `ASSAS_MONITORED_WINDOW_SECONDS`). A device that leaves the mirrored port's
-  coverage becomes "Not Monitored" once the window passes.
+  coverage becomes "Not Monitored" once the window passes. For an Offline
+  device the window is measured back from its `last_seen` instead of now, so it
+  keeps the state it had when it was last online (no usable `last_seen`: now).
 - **IP shown by the API**: `last_ipv4`, then `last_ipv6_global`, then
   `last_ipv6_ll` as a last resort.
 

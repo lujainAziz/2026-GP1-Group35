@@ -226,6 +226,33 @@ class MonitoredStateTests(_SeededDBTest):
         device = api.get_device("aa:bb:cc:dd:ee:07", self.conn)
         self.assertIs(device.monitored, False)
 
+    def test_offline_keeps_monitored_when_seen_close_to_last_seen(self):
+        # PBI-04: measured from last_seen, not now, once the device is Offline.
+        self.insert(mac="aa:bb:cc:dd:ee:09", status="online", is_monitored=1,
+                    last_seen=_seconds_ago(600), last_monitored_seen=_seconds_ago(605))
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertEqual(devices[0].presence, "offline")
+        self.assertIs(devices[0].monitored, True)
+        device = api.get_device("aa:bb:cc:dd:ee:09", self.conn)
+        self.assertIs(device.monitored, True)
+
+    def test_offline_stays_not_monitored_when_seen_long_before_last_seen(self):
+        old = _seconds_ago(600 + api.MONITORED_WINDOW_SECONDS + 60)
+        self.insert(mac="aa:bb:cc:dd:ee:0a", status="offline", is_monitored=1,
+                    last_seen=_seconds_ago(600), last_monitored_seen=old)
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertIs(devices[0].monitored, False)
+        device = api.get_device("aa:bb:cc:dd:ee:0a", self.conn)
+        self.assertIs(device.monitored, False)
+
+    def test_offline_without_last_monitored_seen_is_not_monitored(self):
+        self.insert(mac="aa:bb:cc:dd:ee:0b", status="offline", is_monitored=1,
+                    last_seen=_seconds_ago(600))
+        devices = api.list_devices(conn=self.conn, limit=100, offset=0)
+        self.assertIs(devices[0].monitored, False)
+        device = api.get_device("aa:bb:cc:dd:ee:0b", self.conn)
+        self.assertIs(device.monitored, False)
+
     def test_default_window_is_120_seconds(self):
         self.assertEqual(api.MONITORED_WINDOW_SECONDS, 120)
 

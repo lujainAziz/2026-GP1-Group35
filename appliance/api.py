@@ -502,12 +502,14 @@ def _presence_from_status(status, last_seen=None, now=None) -> str:
     return "online"
 
 
-def _is_monitored(last_monitored_seen, now=None) -> bool:
+def _is_monitored(last_monitored_seen, status=None, last_seen=None, now=None) -> bool:
     """Monitored only if unicast SPAN traffic was seen within the window.
 
     discovery writes server-local naive ISO-8601; like _presence_from_status,
     both sides are read as local time. No timestamp (or an unparsable one) is
-    not monitored.
+    not monitored. An Offline device (same rule as _presence_from_status) is
+    measured from its last_seen instead of now, so it keeps the state it had
+    when it left (PBI-04); without a usable last_seen it falls back to now.
     """
     if not last_monitored_seen:
         return False
@@ -516,6 +518,11 @@ def _is_monitored(last_monitored_seen, now=None) -> bool:
     except ValueError:
         return False
     current = now or datetime.now().astimezone()
+    if last_seen and _presence_from_status(status, last_seen, current) == "offline":
+        try:
+            current = datetime.fromisoformat(last_seen).astimezone()
+        except ValueError:
+            pass
     return (current - seen).total_seconds() <= MONITORED_WINDOW_SECONDS
 
 
@@ -599,7 +606,8 @@ def row_to_summary(row, now=None) -> DeviceSummary:
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
-    data["monitored"] = _is_monitored(row["last_monitored_seen"], now)
+    data["monitored"] = _is_monitored(row["last_monitored_seen"], row["status"],
+                                      row["last_seen"], now)
     data["trusted"] = bool(data["trusted"])
     data["presence"] = _presence_from_status(data.get("status"), data.get("last_seen"), now)
     for key in ("first_seen", "last_seen"):
@@ -629,7 +637,8 @@ def row_to_detail(row) -> DeviceDetail:
         "is_ap_client", "ap_associated", "discovered_current",
     "traffic_seen", "session_seen", "trusted",    ):
         data[flag] = bool(data[flag])
-    data["monitored"] = _is_monitored(data.get("last_monitored_seen"))
+    data["monitored"] = _is_monitored(data.get("last_monitored_seen"), data.get("status"),
+                                      data.get("last_seen"))
     data["vendor_source"] = _effective_vendor_source(
         data.get("mac"), data.get("vendor"), data.get("vendor_source")
     )
