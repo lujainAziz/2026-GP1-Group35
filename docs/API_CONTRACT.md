@@ -212,6 +212,10 @@ traffic from the device was seen on the mirrored (SPAN) port **recently**:
 within the last 120 seconds by default (env `ASSAS_MONITORED_WINDOW_SECONDS`).
 It is not "ever seen": a device that leaves the monitored network turns
 `false` once the window passes, and a device never seen that way is `false`.
+For an Offline device (same Online/Offline rule as `presence`) the window is
+measured back from its `last_seen` instead of now, so it keeps the monitoring
+state it had when it was last online; being idle or offline alone never makes
+it `false`. If an Offline device has no usable `last_seen`, now is used.
 
 ---
 
