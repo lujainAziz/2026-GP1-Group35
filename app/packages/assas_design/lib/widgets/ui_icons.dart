@@ -38,6 +38,7 @@ class UiIcons {
       '${_cc(12, 12, 9)}M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.8M12 17.2h.01';
   static final String laptop = '${_rr(4.5, 5, 15, 10, 1.5)}M2.5 19h19';
   static final String phone = '${_rr(7, 2.5, 10, 19, 2.5)}M11 18.5h2';
+  static final String tablet = '${_rr(4.5, 3, 15, 18, 2.5)}M11 18h2';
   static final String speaker = '${_rr(6, 2.5, 12, 19, 3)}${_cc(12, 14, 3.2)}M12 7h.01';
   static final String qr = '${_rr(3.5, 3.5, 6.5, 6.5, 1)}${_rr(14, 3.5, 6.5, 6.5, 1)}'
       '${_rr(3.5, 14, 6.5, 6.5, 1)}M14 14h2.5v2.5M20.5 14v.01M14 20.5h.01'
@@ -60,7 +61,8 @@ class UiIcons {
     if (t.contains('laptop') || t.contains('computer') || t.contains('pc') || t.contains('desktop')) {
       return 'laptop';
     }
-    if (t.contains('mobile') || t.contains('phone') || t.contains('tablet')) return 'phone';
+    if (t.contains('tablet')) return 'tablet';
+    if (t.contains('mobile') || t.contains('phone')) return 'phone';
     if (t.contains('plug') || t.contains('smart') || t.contains('iot')) return 'plug';
     if (t.contains('speaker') || t.contains('audio')) return 'speaker';
     return 'other';
@@ -71,6 +73,7 @@ class UiIcons {
         'camera' => camera,
         'laptop' => laptop,
         'phone' => phone,
+        'tablet' => tablet,
         'plug' => plug,
         'speaker' => speaker,
         'unknown' => unknown,
@@ -83,6 +86,7 @@ class UiIcons {
         'camera' => 'Camera',
         'laptop' => 'Laptop',
         'phone' => 'Phone',
+        'tablet' => 'Tablet',
         'plug' => 'Plug',
         'speaker' => 'Speaker',
         'unknown' => 'Unknown',
