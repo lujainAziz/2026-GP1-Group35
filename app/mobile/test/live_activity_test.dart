@@ -31,14 +31,14 @@ void main() {
       ObservedProtocols(activity: state.activity, connected: true),
     ])));
     await tester.pumpWidget(screen());
-    expect(find.text('LIVE SIGNAL · 8.4 pkt/s'), findsOneWidget);
+    expect(find.text('SOON · SPRINT 5'), findsOneWidget);
     expect(find.text('ARP'), findsOneWidget);
     expect(find.text('MDNS'), findsOneWidget);
     expect(find.text('CAMERA'), findsNothing);
     fail = true;
     await state.refresh();
     await tester.pumpWidget(screen());
-    expect(find.text('WAITING FOR TRAFFIC DATA'), findsOneWidget);
+    expect(find.text('SOON · SPRINT 5'), findsOneWidget);
     expect(find.text('ARP'), findsNothing);
   });
 
@@ -46,11 +46,11 @@ void main() {
     for (final stale in [false, true]) {
       final data = LiveActivity(samples: [0, 0], protocols: [], stale: stale);
       await tester.pumpWidget(MaterialApp(home: ActivityTrace(activity: data, connected: true)));
-      expect(find.text(stale ? 'SIGNAL STALE' : 'LIVE SIGNAL · 0.0 pkt/s'), findsOneWidget);
+      expect(find.text('SOON · SPRINT 5'), findsOneWidget);
     }
     await tester.pumpWidget(const MaterialApp(home: ActivityTrace(
       activity: LiveActivity(samples: [8], protocols: ['ARP'], stale: false), connected: false)));
-    expect(find.text('SIGNAL UNAVAILABLE'), findsOneWidget);
+    expect(find.text('SOON · SPRINT 5'), findsOneWidget);
   });
 
   test('demo has no fabricated live traffic', () async {
