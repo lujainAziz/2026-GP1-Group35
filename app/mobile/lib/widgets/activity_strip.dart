@@ -58,6 +58,7 @@ class ObservedProtocols extends StatelessWidget {
   const ObservedProtocols({super.key, required this.activity, required this.connected});
   final LiveActivity? activity;
   final bool connected;
+  static bool get _released => false; // Sprint 5
   @override
   Widget build(BuildContext context) {
     final data = activity;
@@ -65,7 +66,8 @@ class ObservedProtocols extends StatelessWidget {
     final tags = ready ? data.protocols : const <String>[];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: !_released ? const Align(alignment: Alignment.centerLeft, child: SoonTag(5))
+        : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('NOW WATCHING · LAST 60s', style: UiText.watchLead.copyWith(color: Ui.acc)),
         const SizedBox(height: 8),
         if (tags.isEmpty) Text(ready ? 'No protocols seen recently' : 'Waiting for capture data',
