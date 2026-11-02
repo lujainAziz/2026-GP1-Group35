@@ -24,19 +24,28 @@ failed — see `README.md`). Record the rules date/version with every test run b
 does not exist (seen in the test: "cannot statx … No such file"). The ingester must tolerate a
 transient missing/!-existent `eve.json` (retry, don't error).
 
-## Part B — Alert ingester (`appliance/test_alerts.py`)  ☐ Planned
-Offline fixtures only: small PCAP → `suricata -r <pcap> -c <test-conf> -l <tmp>` → eve.json → feed
-the ingester. Unit cases:
-- severity map 1→Critical, 2→High, 3→Medium, ≥4→Low.
-- device linking: src-only, dst-only, both (→source, other IP retained), neither (→NULL).
+## Part B — Alert ingester (`appliance/test_alerts.py`)  ☑ unit-tested (22 passed)
+Run: `cd appliance && ../.venv/bin/python -m pytest test_alerts.py -q` → **22 passed in 0.11s**
+(full suite `pytest -q` → **497 passed**, no Sprint-1 regressions). Offline, deterministic: eve
+events are synthesised as JSON lines so file identity/rotation/offsets are controllable (no Suricata
+binary needed in CI). Covered:
+- severity map 1→Critical, 2→High, 3→Medium, ≥4/0/unknown→Low.
+- `local_naive_iso` tz→local-naive-seconds; `parse_alert_event` with and without addresses
+  (decoder-event alerts → NULL addresses/ports); `split_complete_lines` leaves a partial line.
+- device linking: src-only, dst-only, both (→source), neither, None.
 - dedup: same rule+device within window merges (`occurrence_count`++, `last_event_time` bumped,
-  `event_time` kept); NULL-device grouped by rule+src+dst (unknown hosts not merged).
-- resume: checkpoint written in same txn; restart → no duplicate rows.
-- **multi-rotation restart recovery**: several `eve.json-<ts>` present at startup → every event
-  ingested exactly once, in order.
-- **reaper preserves unread files**: rotated file not yet fully consumed survives a reaper pass.
-- truncation/gap logged explicitly.
-Run: `cd appliance && ../.venv/bin/python -m pytest test_alerts.py -v` → record output path.
+  `event_time` kept); outside window → new row; NULL-device grouped by rule+src+dst (unknown hosts
+  not merged).
+- resume: offset persisted in the same txn; re-run and **restart on a fresh DB connection** →
+  no double-ingest; partial trailing line waits for completion.
+- **multi-rotation restart recovery**: two `eve.json-<ts>` + live file at startup → every event
+  ingested exactly once, in order; second pass adds nothing.
+- **reaper preserves unread files** (unconsumed rotated file survives `reap`), deletes consumed,
+  and keeps the most recent `keep` consumed; live file never reaped.
+- truncation (size < stored offset) is logged (`TRUNCATION/GAP`) and re-read; missing eve.json
+  (post-rotation window) tolerated.
+- *Live end-to-end* (`assas-alerts.service` reading the real eve.json): recorded after the service
+  is enabled (`evidence/partB-*`).
 
 ## Part C — API (`test_api.py`, `test_frontend_contract.py`)  ☐ Planned
 - endpoints: `GET /alerts`, `GET /alerts/{id}`, `GET /devices/{mac}/alerts` ordered by

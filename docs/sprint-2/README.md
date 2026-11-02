@@ -139,10 +139,36 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 
 ---
 
-## Parts B–E
-Tracked in `PLAN.md` (approach) and in `TESTING.md` / `EVALUATION.md` (evidence). Still ☐ Planned at
-this point; see those files. `REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint
-end.
+## Part B — Threat alert ingestion (PBI-14)  ◐ code done & unit-tested; live enable pending
+
+New daemon `appliance/alerts.py` + `appliance/systemd/assas-alerts.service` (runs as `root`, like
+`assas-discovery`). It reads Suricata `alert` events from `eve.json` (+ rotated `eve.json-<ts>`) and
+writes Threat Alerts into SQLite. Tests: `appliance/test_alerts.py` (22 passed).
+
+**New tables (created by the ingester; API reads them read-only):**
+- `alerts` — ER columns (`alert_id, device_mac, alert_type, title, rule_id, event_time, src_ip,
+  dst_ip, src_port, dst_port, severity, state, explanation, model_version, anomaly_score,
+  threshold`) **plus** additive `occurrence_count`, `last_event_time`. This sprint: `alert_type`
+  constant `"Threat"`, `state` constant `"New"`; `explanation`/`model_version`/`anomaly_score`/
+  `threshold` stay NULL. Indexes on `last_event_time`, `(device_mac,last_event_time)`,
+  `(rule_id,device_mac)`.
+- `alert_ingest_state` — `(st_dev, st_ino)` PK + `offset, size_at_eof, consumed, path` — the read
+  checkpoint, written in the **same transaction** as the alert upserts.
+
+**Behaviour** (per PBI-14): severity from rule priority (1→Critical … ≥4→Low); device linking
+(one→that device, both→source keeping the other IP, neither→NULL); dedup within a window (default
+300 s, `ASSAS_ALERT_DEDUP_WINDOW`, measured from `last_event_time`; NULL-device key = rule+src+dst);
+resume-safe checkpointing; follows the Part A rotation (drains `eve.json-<ts>` by inode); reaper
+deletes only fully-consumed rotated files (keeps `ASSAS_ALERT_KEEP_ROTATED`, default 3); logs
+truncation/gaps. Configurable via env (`ASSAS_DB_PATH`, `ASSAS_EVE_PATH`,
+`ASSAS_ALERT_DEDUP_WINDOW`, `ASSAS_ALERT_POLL_SECONDS`, `ASSAS_ALERT_KEEP_ROTATED`).
+
+### Commits (Part B)
+- (this commit) feat(alerts): Suricata eve.json ingestion into alerts table.
+
+## Parts C–E
+Tracked in `PLAN.md` (approach) and in `TESTING.md` / `EVALUATION.md` (evidence). Still ☐ Planned;
+see those files. `REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint end.
 
 ## Documentation discipline
 - Software/package versions, final configs, file/service paths, changes vs Sprint 1, and commit

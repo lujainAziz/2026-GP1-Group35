@@ -1,0 +1,19 @@
+[Unit]
+Description=ASSAS Threat Alert ingestion (Suricata eve.json -> SQLite, PBI-14)
+Wants=network-online.target
+After=network-online.target assas-suricata.service assas-discovery.service
+
+[Service]
+Type=simple
+# root: reads root-owned eve.json, writes assas.db, and reaps rotated eve files
+# in /var/log/suricata (root-owned dir) — same model as assas-discovery.
+User=root
+WorkingDirectory=/home/assas/assas/appliance
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/assas/assas/appliance/alerts.py
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
