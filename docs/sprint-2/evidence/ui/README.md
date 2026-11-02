@@ -21,4 +21,17 @@ flutter run -d chrome  # web
 ```
 Save PNGs here as `alerts-tab.png`, `alert-details.png`, `device-alerts.png`.
 
-Status: **pending owner review** (do not mark Part D visually verified until then).
+## Supplying alert data for the screenshots — isolated, never touch live logs/DB
+Do **not** write test data into the live pipeline. Specifically: do **not** run `suricata -r` into
+`/var/log/suricata/eve.json`, and do **not** overwrite the live `eve.json`, rotated eve files, or
+`assas.db`. Use one of:
+- **Demo mode (simplest):** point the app at `DemoRepository` (the app's built-in sample alerts); no
+  appliance data is touched.
+- **Isolated test backend:** run a throwaway ingester + API against a separate DB and eve path, e.g.
+  `suricata -r <pcap> -l <tmpdir>` → `tmpdir/eve.json`, then run `alerts.py`/`api.py` with
+  `ASSAS_EVE_PATH=<tmpdir>/eve.json` and `ASSAS_DB_PATH=/tmp/assas-ui-test.db`. This leaves
+  `/var/log/suricata/` and the production `assas.db` untouched.
+
+Either way the live appliance services and logs are not modified for UI capture.
+
+Status: **pending owner review** (do not mark the Mobile Alert Screens visually verified until then).

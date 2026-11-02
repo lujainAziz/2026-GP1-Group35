@@ -12,10 +12,14 @@ downloaded only after explicit approval.
 ---
 
 ## 1. Datasets (selection for approval) — ☐ HOLD, nothing downloaded
-Metadata gathered 2026-11-02 from the official sources (no dataset files fetched). **Available disk:**
-`/` (and `/home`) = 235 GB total, **214 GB free (5% used)** — ample for either dataset.
-Per-file sizes are taken from the publisher autoindex where shown; SHA-256 is computed only after
-download.
+Metadata gathered 2026-11-02 from the official sources (no dataset files fetched). SHA-256 is
+computed only after download; publisher checksums are recorded where available.
+
+**Download target is the replay host, not the Pi.** Datasets are downloaded onto the dedicated
+replay host (§2); the appliance only ever sees the mirrored replayed traffic on `eth1`. Disk is
+therefore sized on the replay host (recorded in §2 once finalized), not on the Pi.
+
+**First approval covers IoT-23 only; CICIoT2023 remains on hold.**
 
 ### IoT-23 (Stratosphere Laboratory, CTU)
 - **Source:** `https://www.stratosphereips.org/datasets-iot23` · Zenodo record 4743746
@@ -26,17 +30,19 @@ download.
   `https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/<capture>/` with a
   directly downloadable `.pcap` (size shown in the autoindex), a publisher `.capinfos` (capture
   metadata), and a README stating the label. Confirmed 2026-11-02.
-- **Proposed selection** (small, labelled; filenames are the dataset's own public artifact names):
+- **Proposed selection** (small, labelled; exact direct URLs; filenames are the dataset's own public
+  artifact names). Base = `https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/`:
 
-  | Capture | Label (per dataset docs) | PCAP file | Size (autoindex) |
+  | Capture | Label | Direct PCAP URL (under base) | Size |
   |---|---|---|---|
-  | CTU-IoT-Malware-Capture-34-1 | Mirai | `2018-12-21-15-50-14-…195.pcap` | **120 MB** |
-  | CTU-IoT-Malware-Capture-8-1 | Hakai | `2018-07-31-15-15-09-…113.pcap` | **2.0 MB** |
-  | CTU-IoT-Malware-Capture-20-1 | Torii | `2018-10-02-13-12-30-…103.pcap` | **3.9 MB** |
-  | CTU-Honeypot-Capture-7-1 | benign (Somfy device) | under `Somfy-0X/` subfolders | TBD at approval |
+  | Malware-34-1 | Mirai | `CTU-IoT-Malware-Capture-34-1/2018-12-21-15-50-14-192.168.1.195.pcap` | **120 MB** |
+  | Malware-8-1 | Hakai | `CTU-IoT-Malware-Capture-8-1/2018-07-31-15-15-09-192.168.100.113.pcap` | **2.0 MB** |
+  | Malware-20-1 | Torii | `CTU-IoT-Malware-Capture-20-1/2018-10-02-13-12-30-192.168.100.103.pcap` | **3.9 MB** |
+  | Honeypot-7-1 | benign (Somfy) | `CTU-Honeypot-Capture-7-1/Somfy-01/2019-07-03-15-15-47-first_start_somfy_gateway.pcap` | **2.0 MB** |
 
-  Rejected `CTU-IoT-Malware-Capture-60-1` — its pcap is **21 GB**. The three malware captures total
-  ≈ **126 MB** (trivially within 214 GB free).
+  Total ≈ **128 MB** (all four sizes confirmed from the publisher autoindex 2026-11-02). Rejected
+  `CTU-IoT-Malware-Capture-60-1` (pcap is **21 GB**). IP strings in the filenames are the dataset's
+  own published lab addresses, not Assas-network data.
 - **Full archive — only if per-capture proves insufficient:** `iot_23_datasets_full.tar.gz` =
   21,510,801,277 B (~20.0 GiB), **publisher `md5:7132e603f9750b8580b6cebdbcd43e9c`**. Use of the
   archive requires separate approval and an expected extracted size (not published; estimated from
@@ -44,7 +50,7 @@ download.
 - **Checksums:** record publisher-provided values where available (the archive md5 above; per-capture
   `.capinfos` is capture metadata, not a hash). **SHA-256 is computed after download, never before.**
 
-### CICIoT2023 (Canadian Institute for Cybersecurity, UNB)
+### CICIoT2023 (Canadian Institute for Cybersecurity, UNB) — ON HOLD (not in the first approval)
 - **Source:** `https://www.unb.ca/cic/datasets/iotdataset-2023.html` → files under
   `http://cicresearch.ca/IOTDataset/CIC_IOT_Dataset2023/` (`PCAP/`, `CSV/`).
   **Licence:** CIC terms — free for research, **citation required**.
@@ -58,17 +64,22 @@ download.
   HTTP `HEAD` at download captures them. The raw PCAP set is large (multi-GB per attack).
 
 ### Download procedure
-Each selected file's exact size (`HEAD`) and extracted size are recorded first and this section is
-updated and verified against the source; SHA-256 is computed after download; replay follows.
+The replay host and isolated network (§2) are finalized **first**. On approval, the selected files
+are downloaded **onto the replay host** (not the Pi); each file's size is confirmed against the
+autoindex, SHA-256 is computed after download and recorded here, then replay follows.
 
 ---
 
-## 2. Replay environment and method — ☐ Planned
-- **Goal:** traffic must reach the monitored interface `eth1` (the SPAN/mirror port), exactly like
-  live monitoring — not injected into the appliance's own stack.
-- **Proposed method:** `tcpreplay` from a second host into a switch port that is mirrored to the
-  port Suricata watches, so replayed packets appear on `eth1`. (Alternative, if no managed switch:
-  replay onto the mirror source segment.) Final wiring recorded here once set up.
+## 2. Replay environment and method — ☐ to finalize BEFORE any download
+This setup is fixed before datasets are downloaded.
+- **Goal:** replayed traffic must reach the monitored interface `eth1` (the SPAN/mirror port),
+  exactly like live monitoring — not injected into the appliance's own stack.
+- **Replay host:** a dedicated second machine on an **isolated lab network** (no bridge to the
+  production LAN). **Datasets are downloaded and stored on this host**, which runs `tcpreplay`. The
+  Pi downloads nothing and only receives the mirrored copy on `eth1`.
+- **Wiring:** replay host → a switch port that is mirrored (SPAN) to the port Suricata watches, so
+  replayed packets appear on `eth1`. (If no managed switch: replay onto the mirror source segment.)
+  Final host spec, OS, disk free, and switch mirror config recorded here once set up.
 - To record per run: replay host + OS, `tcpreplay` version and exact command (incl. `--intf`,
   pps/`--mbps`, loop), switch mirror config, start/stop timestamps, the pcap(s) and their SHA-256,
   and the **ET Open rules date/version** in use.
@@ -123,14 +134,18 @@ Suricata ~1.06, display ~0.20, discovery ~0.13, API ~0.08, alerts ~0.02). The ta
 **not yet validly judged** — a representative run without the development agent is required before a
 pass/fail on memory is claimed.
 
-**Representative run without the development agent (to validly judge the memory target):**
+**This baseline is retained.** The clean run below is **additive** — it writes to
+`evidence/resources/clean/` and does **not** replace or erase the baseline results above
+(CPU target met, memory target not met, zero drops under light traffic).
+
+**Representative run without the development agent (to validly judge the memory target):** use
+`appliance/tools/clean_resource_run.sh`. It refuses to start while a Claude Code agent is present,
+samples only after that precheck passes, and records agent presence every 30 s to
+`clean/agent-guard.log`; the result is valid only if that log shows **zero `PRESENT`** entries.
 ```
-# stop the co-resident dev agent (the Claude Code session on the Pi), then:
-cd /home/assas/assas
-ASSAS_CAPTURE_IFACE=eth1 nohup python3 appliance/tools/resource_sampler.py 7200 10 \
-  >> docs/sprint-2/evidence/resources/resource-2h-clean.run.log 2>&1 &
-# outputs resource-2h.csv/-summary.json in the same dir (rename to *-clean before starting,
-# or set ASSAS_RES_OUTDIR to a clean subdir). Record total-device memory from that run as the
-# acceptance figure.
+# After the Pi's Claude Code session has fully exited:
+/home/assas/assas/appliance/tools/clean_resource_run.sh
+# -> evidence/resources/clean/resource-2h-summary.json + clean/agent-guard.log
 ```
-Run it when the appliance is operated normally (no dev agent); record the result here.
+Record the clean run's total-device memory here as the memory acceptance figure once it shows the
+agent absent throughout.
