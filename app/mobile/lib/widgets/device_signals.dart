@@ -18,12 +18,17 @@ class Signals {
     return out;
   }
 
+  /// Alert-severity source for device rows/hero. Gated by alertSeverityBadges
+  /// (a later sprint): until then device rows look exactly like Sprint 1.
+  static List<SecurityAlert>? _badgeSource(AppState s) =>
+      Released.alertSeverityBadges ? Released.alertsOf(s) : null;
+
   static List<DeviceSignal> all(AppState s) {
-    final worst = worstByMac(Released.alertsOf(s));
+    final worst = worstByMac(_badgeSource(s));
     return [for (final d in s.devices) DeviceSignal(d, worst[d.mac])];
   }
 
-  static DeviceSignal of(AppState s, Device d) => DeviceSignal(d, worstByMac(Released.alertsOf(s))[d.mac]);
+  static DeviceSignal of(AppState s, Device d) => DeviceSignal(d, worstByMac(_badgeSource(s))[d.mac]);
 
   /// Sorted by priority, then name.
   static List<DeviceSignal> sorted(AppState s) => all(s)..sort(DeviceSignal.compare);

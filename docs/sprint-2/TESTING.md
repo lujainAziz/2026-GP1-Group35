@@ -61,11 +61,23 @@ Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_co
   `explanation`/`anomaly_score` = `null`; `/alerts/{id}` and `/devices/{mac}/alerts` return the row;
   unknown id → 404.
 
-## Part D — Mobile (`app/mobile`)  ☐ Planned
-- `flutter test` for the alerts list and detail widgets (title, severity, device, last time,
-  occurrence count; hidden explanation/anomaly block).
-- Screenshots of the finished Alerts tab, Alert detail, and Device-details alerts section saved to
-  `evidence/ui/`.
+## Part D — Mobile (`app/mobile`)  ☑ analyzed & unit-tested · ◐ screenshots pending
+Run (Flutter SDK at `~/flutter`): `flutter analyze` (mobile) → **No issues found**;
+`flutter test` → **63 passed, 1 skipped** (incl. new `test/alerts_test.dart` **7 passed**);
+display `flutter analyze` → **No issues found**.
+- `test/alerts_test.dart`: `SecurityAlert.fromApi` parses the full contract + Sprint-2 fields
+  (occurrence_count, rule_id, ports, first/last event time) with safe defaults and casing; copyWith
+  preserves them; **Sprint-2 gating** locked (`alerts` true; `alertsHome`, `alertSeverityBadges`,
+  `alertDisplay`, `alertExplanations`, `alertManagement`, `risk` all false); **device-list badges
+  stay hidden** (`Signals.all` yields no severity while the gate is off, even with alerts present).
+- Regression: `dashboard_layout_test` still asserts Home "Open alerts → SOON" (kept hidden via
+  `alertsHome`); `session_ended_test` unaffected (401 short-circuits before the alerts fetch);
+  `polling_lifecycle_test` wait widened past the demo `getAlerts` delay (now in the refresh path),
+  assertions unchanged.
+- **Known environment issue** (not a regression): `display_layout_test` fails only on writing
+  `assas-display-preview.png` (Permission denied) in this session; unrelated to the alert flag.
+- **Pending (run/verify step):** screenshots of the Alerts tab, Alert detail, and Device-details
+  alerts section → `evidence/ui/` (requires rendering the app; the Pi session is headless).
 
 ## Summary of successes / failures / issues
 Recorded as tests run (what passed, what failed and why, how resolved, remaining limitations).

@@ -184,9 +184,36 @@ exact strings so casing can't drift.
 ### Commits (Part C)
 - (this commit) feat(api): read-only alert endpoints with exact app contract.
 
-## Parts D–E
-Part D (mobile) stops before the `FeatureRelease.alerts` flag flip to present the gated-path audit.
-Part E (evaluation) stops before any dataset download. See `PLAN.md` / `EVALUATION.md`.
+## Part D — Mobile app (PBI-14)  ☑ code + analyze + unit tests; ◐ screenshots pending
+
+Only the three approved deliverables are enabled; later-sprint surfaces are kept hidden with their
+own flags (audit reviewed and approved before the flip).
+
+`FeatureRelease` (shared `assas_design`): `alerts = true`; new gates `alertsHome`,
+`alertSeverityBadges`, `alertDisplay`, `alertExplanations` all **false**; `alertManagement`, `risk`
+stay false.
+
+| Surface | Sprint 2 | How |
+|---|---|---|
+| Alerts tab (list) | ✓ shown | title, severity, device, last event time, occurrence (`N×`); newest first; All/Open/Resolved tabs stay off (`alertManagement`) |
+| Alert details | ✓ shown | title, severity, device (+nav), first & last seen, occurrences, source/dest address:port, rule ID; explanation block hidden (`alertExplanations`); Review/Resolve hidden (`alertManagement`) |
+| Device details → alerts | ✓ shown | this device's alerts replace "Coming soon" |
+| Home open-alerts count + recent summary | ✗ hidden | gated on `alertsHome` → stays "SOON" |
+| Device-list severity badges / sort | ✗ hidden | gated on `alertSeverityBadges` |
+| 7-inch display alert count | ✗ hidden | gated on `alertDisplay` → stays "SOON" |
+
+Model `SecurityAlert` extended additively (`ruleId`, `srcPort`, `dstPort`, `occurrenceCount`,
+`firstTime`, `lastTime`); `fromApi` reads the new keys.
+
+Tests: `flutter analyze` clean (mobile + display); `flutter test` 63 passed/1 skipped incl.
+`test/alerts_test.dart` (contract, gating, badge-hiding). Screenshots of the finished screens are
+produced in the run/verify step (headless Pi session can't render them yet).
+
+### Commits (Part D)
+- (this commit) feat(app): Threat Alerts in mobile (Alerts tab, details, device alerts).
+
+## Part E — Evaluation
+Stops before any dataset download. See `PLAN.md` / `EVALUATION.md`.
 `REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint end.
 
 ## Documentation discipline

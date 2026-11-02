@@ -3,10 +3,24 @@ import 'theme/assas_ui.dart';
 
 /// Shared release gates: demo data must not present unfinished features as live.
 abstract final class FeatureRelease {
-  static bool get alerts => false; // Sprint 2 / 3
+  // Sprint 2 (PBI-13/14): Threat Alerts in the mobile app — the Alerts tab,
+  // the alert-details screen, and alerts inside device details.
+  static bool get alerts => true;
   static bool get risk => false; // Sprint 4
   static bool get baseline => false; // Sprint 3
   static bool get alertManagement => false; // Sprint 5
+
+  // Later-sprint surfaces kept hidden even though `alerts` is live, so Sprint 2
+  // stays limited to its three approved mobile screens:
+  //  - Home (dashboard) open-alerts count + recent-alerts summary,
+  //  - device-list per-row alert-severity badges / alert-based sorting,
+  //  - the 7-inch display's alert count.
+  static bool get alertsHome => false;
+  static bool get alertSeverityBadges => false;
+  static bool get alertDisplay => false;
+  // Plain-language explanations are a later sprint; hidden here (explanation is
+  // NULL for Sprint 2 threat alerts).
+  static bool get alertExplanations => false;
 }
 
 class SoonTag extends StatelessWidget {

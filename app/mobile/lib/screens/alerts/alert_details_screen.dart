@@ -94,12 +94,16 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                       ],
                     ),
                   ),
-                  SectionHeader(
-                    'What happened',
-                    padding: const EdgeInsets.fromLTRB(22, 24, 22, 8),
-                    trailing: Text('ASSAS / EXPLAIN', style: UiText.mono(10, 500, color: Ui.mute)),
-                  ),
-                  _explain(a, c),
+                  // Plain-language explanation ships in a later sprint; hidden
+                  // now since explanation is NULL for Sprint 2 threat alerts.
+                  if (Released.alertExplanations) ...[
+                    SectionHeader(
+                      'What happened',
+                      padding: const EdgeInsets.fromLTRB(22, 24, 22, 8),
+                      trailing: Text('ASSAS / EXPLAIN', style: UiText.mono(10, 500, color: Ui.mute)),
+                    ),
+                    _explain(a, c),
+                  ],
                   const SectionHeader(
                     'Signal details',
                     padding: EdgeInsets.fromLTRB(22, 24, 22, 8),
@@ -110,11 +114,19 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                       ('Device', a.deviceName, Ui.ink),
                       ('Alert type', a.kindLabel, Ui.ink),
                       ('Severity', a.severityLabel, c),
-                      // Threat alerts only (PBI-11)
+                      if (a.occurrenceCount > 1)
+                        ('Occurrences', '${a.occurrenceCount}×', Ui.ink),
+                      if (a.firstTime != null)
+                        ('First seen', TimeFormat.alertTimePhrase(a.firstTime!), Ui.ink),
+                      if (a.lastTime != null)
+                        ('Last seen', TimeFormat.alertTimePhrase(a.lastTime!), Ui.ink),
+                      // Threat alerts: addresses + ports + matched rule (PBI-14)
                       if (a.kind == AlertKind.threat && a.sourceIp != null)
-                        ('Source IP', a.sourceIp!, Ui.ink),
+                        ('Source', a.srcPort != null ? '${a.sourceIp}:${a.srcPort}' : a.sourceIp!, Ui.ink),
                       if (a.kind == AlertKind.threat && a.destinationIp != null)
-                        ('Destination IP', a.destinationIp!, Ui.ink),
+                        ('Destination', a.dstPort != null ? '${a.destinationIp}:${a.dstPort}' : a.destinationIp!, Ui.ink),
+                      if (a.ruleId != null)
+                        ('Rule ID', a.ruleId!, Ui.ink),
                     ],
                   ),
                   // Review / Resolve arrive with alert management (Sprint 5, PBI-19).

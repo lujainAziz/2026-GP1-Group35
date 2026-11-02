@@ -103,7 +103,7 @@ class _StatusScreenState extends State<StatusScreen> {
     } catch (_) {
       if (status == ConnectionStatus.live) status = ConnectionStatus.stale;
     }
-    if (FeatureRelease.alerts) {
+    if (FeatureRelease.alertDisplay) {
     try {
       final alerts = await _repo.getAlerts();
       alertsAvailable = alerts != null;
@@ -246,10 +246,10 @@ class _StatusScreenState extends State<StatusScreen> {
           child: Row(children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('Unresolved\nalerts', style: UiText.sans(15, 600)),
-              if (!FeatureRelease.alerts) ...[const SizedBox(height: 8), const SoonTag(2)],
+              if (!FeatureRelease.alertDisplay) ...[const SizedBox(height: 8), const SoonTag(2)],
             ])),
-            Text(!FeatureRelease.alerts ? 'SOON' : _alertsAvailable ? '${_unresolved ?? '—'}' : '—',
-              style: !FeatureRelease.alerts ? UiText.mono(13, 700, em: .1, color: Ui.mute)
+            Text(!FeatureRelease.alertDisplay ? 'SOON' : _alertsAvailable ? '${_unresolved ?? '—'}' : '—',
+              style: !FeatureRelease.alertDisplay ? UiText.mono(13, 700, em: .1, color: Ui.mute)
                   : UiText.statNumber.copyWith(color: Ui.high)),
           ])),
       ])),

@@ -208,7 +208,7 @@ class DashboardScreen extends StatelessWidget {
 
   Widget _risk() {
     final risk = Released.risk ? state.risk : null;
-    final open = Released.alerts ? state.unresolvedCount : null;
+    final open = Released.alertsHome ? state.unresolvedCount : null;
     final note = open == null
         ? 'Alerts are not available yet'
         : open > 0
@@ -262,7 +262,7 @@ class DashboardScreen extends StatelessWidget {
   }
 
   Widget _stats(List<DeviceSignal> signals) {
-    final open = Released.alerts ? state.unresolvedCount : null;
+    final open = Released.alertsHome ? state.unresolvedCount : null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 26, 16, 0),
       child: IntrinsicHeight(
@@ -340,7 +340,7 @@ class DashboardScreen extends StatelessWidget {
                     child: _CardX(
                       radius: UiRadius.card,
                       color: Ui.mix(Ui.high, .16, Ui.surf),
-                      child: Released.alerts
+                      child: Released.alertsHome
                           ? _statInner('Open\nalerts', open?.toString() ?? '–', Ui.high)
                           : _soonInner('Open\nalerts', 2),
                     ),
@@ -396,7 +396,7 @@ class DashboardScreen extends StatelessWidget {
   }
 
   Widget _recent(BuildContext context) {
-    if (!Released.alerts) {
+    if (!Released.alertsHome) {
       return const EmptyDashed(
         title: 'Coming soon',
         hint: 'Threat alerts arrive in Sprint 2 and anomaly alerts in Sprint 3.',

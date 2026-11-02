@@ -29,6 +29,18 @@ class SecurityAlert {
   final String? sourceIp;
   final String? destinationIp;
 
+  /// Threat alerts (PBI-14): matched rule, ports, and dedup fields.
+  final String? ruleId;
+  final int? srcPort;
+  final int? dstPort;
+
+  /// How many times this alert fired (deduplicated); 1 unless merged.
+  final int occurrenceCount;
+
+  /// First and last event times (first stays fixed; last advances on merges).
+  final DateTime? firstTime;
+  final DateTime? lastTime;
+
   const SecurityAlert({
     required this.id,
     required this.kind,
@@ -42,6 +54,12 @@ class SecurityAlert {
     this.note,
     this.sourceIp,
     this.destinationIp,
+    this.ruleId,
+    this.srcPort,
+    this.dstPort,
+    this.occurrenceCount = 1,
+    this.firstTime,
+    this.lastTime,
   });
 
   bool get isUnresolved => state != AlertState.resolved;
@@ -94,6 +112,12 @@ class SecurityAlert {
         note: note,
         sourceIp: sourceIp,
         destinationIp: destinationIp,
+        ruleId: ruleId,
+        srcPort: srcPort,
+        dstPort: dstPort,
+        occurrenceCount: occurrenceCount,
+        firstTime: firstTime,
+        lastTime: lastTime,
       );
 
   // ---------- From the real API (PROPOSED contract, endpoint not built yet) ----------
@@ -118,6 +142,12 @@ class SecurityAlert {
       note: j['note']?.toString(),
       sourceIp: j['source_ip']?.toString(),
       destinationIp: j['destination_ip']?.toString(),
+      ruleId: j['rule_id']?.toString(),
+      srcPort: (j['src_port'] as num?)?.toInt(),
+      dstPort: (j['dst_port'] as num?)?.toInt(),
+      occurrenceCount: (j['occurrence_count'] as num?)?.toInt() ?? 1,
+      firstTime: DateTime.tryParse(j['first_event_time']?.toString() ?? ''),
+      lastTime: DateTime.tryParse(j['last_event_time']?.toString() ?? ''),
     );
   }
 

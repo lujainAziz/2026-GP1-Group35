@@ -735,7 +735,8 @@ class AlertMetaRow extends StatelessWidget {
       children: [
         Expanded(
           child: Text(
-            '${sevUpper(alert.severity)} · ${kindUpper(alert)}',
+            '${sevUpper(alert.severity)} · ${kindUpper(alert)}'
+            '${alert.occurrenceCount > 1 ? ' · ${alert.occurrenceCount}×' : ''}',
             maxLines: 1,
             overflow: TextOverflow.clip,
             style: UiText.alertMeta.copyWith(color: c),
