@@ -84,9 +84,11 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
   count-based deletion is safe.
 - **eve.json: rotated by `rotate-eve.sh`, driven by `assas-suricata-rotate.timer` (every 5 min).**
   When eve.json reaches the size threshold (`ASSAS_EVE_MAX_BYTES`, default 50 MiB) the script
-  renames it to `eve.json-<UTC-ts>` and sends `SIGHUP` to `assas-suricata.service` so Suricata
-  reopens a fresh eve.json. The script **only renames — it never compresses or deletes** — so it is
-  safe to run even while the ingester is stopped (rotated files accumulate until consumed). Deletion
+  renames it to `eve.json-<UTC-ts>` (collision-proof, suffixed `.N` if needed) and sends `SIGHUP`
+  to `assas-suricata.service` so Suricata reopens a fresh eve.json. A shared `flock`
+  (`/run/assas-suricata-rotate.lock`) serialises the timer and any manual/forced run so two
+  rotations can never overlap. The script **only renames — it never compresses or deletes** — so it
+  is safe to run even while the ingester is stopped (rotated files accumulate until consumed). Deletion
   of a rotated eve file is owned exclusively by the Part B ingester's checkpoint-gated reaper, which
   acts only after a file is fully consumed. This is the complete replacement for logrotate on
   eve.json; logrotate never touches eve.json, so it can never delete an unread file.

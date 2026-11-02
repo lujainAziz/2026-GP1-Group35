@@ -15,8 +15,9 @@ failed — see `README.md`). Record the rules date/version with every test run b
 | logrotate parses | `sudo logrotate -d /etc/logrotate.d/suricata` | ☑ both patterns OK, no error; eve.json not managed | pasted 2026-11-02 |
 | eve.json types = alert+stats only | after enable: `sudo jq -r .event_type /var/log/suricata/eve.json \| sort -u` | ◐ pending Batch 2 | — |
 | IDS never drops/modifies | af-packet, no `copy-mode`; `stats.capture.kernel_drops` only | ◐ pending | — |
-| **Real rotation** (not just `-d`) | `sudo ASSAS_EVE_MAX_BYTES=... appliance/suricata/rotate-eve.sh --force`: confirm `eve.json` renamed to `eve.json-<ts>`, a fresh `eve.json` with a **new inode** is created by Suricata, new events go to the new file and the rotated file stops growing, and the rotated file is **not** deleted/compressed | ◐ pending (live, this batch) | `evidence/partA-rotation-test.txt` |
-| Rotation never deletes | run rotation; verify no eve file removed/compressed; timer `assas-suricata-rotate.timer` active | ◐ pending | same |
+| **Real rotation** (not just `-d`) | `sudo appliance/suricata/rotate-eve.sh --force`: confirm `eve.json` renamed to `eve.json-<ts>`, a fresh `eve.json` with a **new inode** is created, and — proving logging resumed — after the next stats event **eve.json grows** while the service stays `active`; the rotated file is **not** deleted/compressed | ◐ pending (live, this batch) | `evidence/partA-rotation-test.txt` |
+| No overlap / no collision | shared `flock` serialises timer vs. manual; rotated names unique (`.N` suffix) | ◐ pending | script + `evidence/partA-rotation-test.txt` |
+| Rotation never deletes | verify no eve file removed/compressed; `assas-suricata-rotate.timer` active | ◐ pending | `evidence/partA-service-state.txt` |
 
 ## Part B — Alert ingester (`appliance/test_alerts.py`)  ☐ Planned
 Offline fixtures only: small PCAP → `suricata -r <pcap> -c <test-conf> -l <tmp>` → eve.json → feed

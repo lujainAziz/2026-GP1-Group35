@@ -9,14 +9,23 @@
 # to run while the ingester is stopped — rotated files simply accumulate on disk
 # until the ingester comes back and consumes them (no data is ever lost).
 #
-# Invoked periodically by assas-suricata-rotate.timer. Rotates only when
-# eve.json is at/over the size threshold, unless --force is given.
+# Invoked periodically by assas-suricata-rotate.timer, and occasionally by hand
+# for testing. A shared flock serialises those so the timer and a manual/forced
+# run can never rotate at the same time. Rotated names are made collision-proof.
 set -eu
 
 EVE="${ASSAS_EVE_PATH:-/var/log/suricata/eve.json}"
 MAX_BYTES="${ASSAS_EVE_MAX_BYTES:-52428800}"        # 50 MiB
 SERVICE="${ASSAS_SURICATA_SERVICE:-assas-suricata.service}"
+LOCK="${ASSAS_EVE_ROTATE_LOCK:-/run/assas-suricata-rotate.lock}"
 FORCE="${1:-}"
+
+# Serialise all rotations (timer vs. manual). Wait up to 30s for the lock.
+exec 9>"$LOCK"
+if ! flock -w 30 9; then
+    echo "rotate-eve: another rotation holds $LOCK, skipping"
+    exit 0
+fi
 
 [ -f "$EVE" ] || { echo "rotate-eve: $EVE absent, nothing to do"; exit 0; }
 
@@ -28,9 +37,14 @@ if [ "$FORCE" != "--force" ] && [ "$size" -lt "$MAX_BYTES" ]; then
     exit 0
 fi
 
-ts=$(date -u +%Y%m%d-%H%M%S)
-rotated="${EVE}-${ts}"
-[ -e "$rotated" ] && rotated="${EVE}-$(date -u +%Y%m%d-%H%M%S-%N)"
+# Collision-proof target name (unique even for repeated runs in the same second).
+base="${EVE}-$(date -u +%Y%m%d-%H%M%S)"
+rotated="$base"
+n=0
+while [ -e "$rotated" ]; do
+    n=$((n + 1))
+    rotated="${base}.${n}"
+done
 
 # Rename, then signal Suricata to reopen (it keeps writing to the renamed file
 # via its open fd until it processes the signal, so no events are lost).
