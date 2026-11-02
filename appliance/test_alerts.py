@@ -183,19 +183,53 @@ def test_partial_trailing_line_waits(tmp_path):
     assert count(conn) == 2
 
 
-def test_truncation_is_logged_and_reread(tmp_path, caplog):
+def test_truncation_logs_gap_and_does_not_reingest(tmp_path, caplog):
+    # Regression for the live defect: offset>size must NOT re-read from 0 (that
+    # re-ingested events and duplicated alerts). It logs a gap and resumes at EOF.
     conn = make_conn(tmp_path)
     eve = tmp_path / "eve.json"
     write(eve, eve_alert(sid=1), eve_alert(sid=2))
     alerts.process_file(conn, str(eve), 300)
     assert count(conn) == 2
-    # truncate in place (same inode) to a shorter size than the stored offset
-    os.truncate(eve, 10)
-    with open(eve, "w") as f:  # new, shorter content (still same path)
+    before_ids = {r[0] for r in conn.execute("SELECT alert_id FROM alerts")}
+    # shrink in place (same inode) below the stored offset, with fresh content
+    with open(eve, "w") as f:
         f.write(eve_alert(sid=3))
     with caplog.at_level("WARNING"):
         alerts.process_file(conn, str(eve), 300)
     assert any("TRUNCATION/GAP" in r.message for r in caplog.records)
+    # no re-ingest, no duplicate rows; offset clamped to EOF
+    assert count(conn) == 2
+    assert {r[0] for r in conn.execute("SELECT alert_id FROM alerts")} == before_ids
+    st = os.stat(eve)
+    off = conn.execute("SELECT offset FROM alert_ingest_state WHERE st_ino=?",
+                       (st.st_ino,)).fetchone()[0]
+    assert off == st.st_size
+    # resume-forward still works: a later appended event is ingested (the gap
+    # content, sid 3, is intentionally not recovered)
+    with open(eve, "a") as f:
+        f.write(eve_alert(sid=4))
+    alerts.process_file(conn, str(eve), 300)
+    assert count(conn) == 3
+    assert 3 not in {r[0] for r in conn.execute("SELECT rule_id FROM alerts")}  # sid 3 skipped
+
+
+def test_bad_encoding_line_is_skipped_not_fatal(tmp_path):
+    # Regression for the live crash-loop: json.loads(bytes) raises
+    # UnicodeDecodeError (not JSONDecodeError) on malformed bytes; it must be
+    # skipped, not stall the daemon, and the offset must advance past it.
+    conn = make_conn(tmp_path)
+    eve = tmp_path / "eve.json"
+    with open(eve, "wb") as f:
+        f.write(eve_alert(sid=1).encode())
+        f.write(b"\xff\xff\xff\xff\n")          # invalid UTF-8 -> UnicodeDecodeError
+        f.write(eve_alert(sid=2).encode())
+    alerts.process_file(conn, str(eve), 300)     # must not raise
+    assert count(conn) == 2                      # both valid alerts ingested
+    st = os.stat(eve)
+    off = conn.execute("SELECT offset FROM alert_ingest_state WHERE st_ino=?",
+                       (st.st_ino,)).fetchone()[0]
+    assert off == st.st_size                     # advanced past the bad line (no stall)
 
 
 # --------------------------------------------------------------------------- #

@@ -248,11 +248,27 @@ def process_file(conn, path, window_seconds):
     offset = row[0] if row else 0
 
     if offset > size:
+        # The file at this identity is smaller than our stored read position
+        # (truncation in place, or inode reuse). Re-reading from 0 would
+        # re-ingest already-stored events and duplicate alerts, so we DO NOT do
+        # that: log the gap explicitly and resume forward at the current EOF.
+        # Persist the clamped offset so the gap is not re-logged every cycle.
         log.warning(
             "TRUNCATION/GAP on %s (st_dev=%s st_ino=%s): stored offset %d > size %d; "
-            "re-reading from 0", path, dev, ino, offset, size,
+            "resuming at EOF (no re-read, no re-ingest); events in the gap are not recovered",
+            path, dev, ino, offset, size,
         )
-        offset = 0
+        offset = size
+        with conn:
+            conn.execute(
+                "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(st_dev, st_ino) DO UPDATE SET offset=excluded.offset, "
+                "path=excluded.path, updated_at=excluded.updated_at",
+                (dev, ino, path, offset,
+                 datetime.now().replace(microsecond=0).isoformat(sep="T")),
+            )
+        return dev, ino, offset, size
 
     if offset == size:
         return dev, ino, offset, size  # nothing new
@@ -270,7 +286,12 @@ def process_file(conn, path, window_seconds):
                 continue
             try:
                 obj = json.loads(s)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # json.loads(bytes) auto-detects encoding and raises
+                # UnicodeDecodeError (not JSONDecodeError) on malformed bytes;
+                # catch both so one bad line is skipped, not fatal. The line's
+                # bytes are still counted in `consumed`, so the offset advances
+                # past it and the daemon never stalls on it.
                 log.warning("skipping malformed eve line in %s", path)
                 continue
             a = parse_alert_event(obj)
