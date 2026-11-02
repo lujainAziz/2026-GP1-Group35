@@ -98,20 +98,38 @@ Method: `appliance/tools/resource_sampler.py 7200 10` (720 samples @10 s), readi
 version: ET Open 2026-11-02 (53,305 sigs). Output: `evidence/resources/resource-2h.csv` (+
 `resource-2h-summary.json` at completion).
 
-**Important measurement caveat:** during this baseline the **Claude Code dev agent is co-resident on
-the appliance (~2.4 GB RSS)** and inflates total-device memory; it is **not** part of the deployed
-appliance. The appliance-only footprint is recorded separately in
-`evidence/resources/appliance-footprint.txt`: **~1.49 GB total** (Suricata ~1.06 GB, display app
-~0.20 GB, discovery ~0.13 GB, API ~0.08 GB, alerts ~0.02 GB) — comfortably under the 4 GB target.
+**Acceptance metrics are total-device CPU and total-device memory** (the PBI-13 targets apply to the
+whole device). Both are measured and judged as-is; the total memory figure is **not** adjusted by
+excluding any process.
+
+**Measurement caveat (does not change the acceptance figure):** during this baseline a development
+agent (Claude Code) is co-resident on the appliance (~2.4 GB RSS) and is included in total-device
+memory. It is not part of the deployed appliance. Its presence means the total-memory result here
+may **overstate** the appliance's own usage; if the total-memory target is not met under this
+baseline, a **separate representative run without the development agent** is required before judging
+the target (procedure below). The appliance-service footprint is reported separately for context
+(not a substitute for the total-device figure).
+
+Primary (acceptance):
 
 | Metric | Target | Measured | Evidence |
 |---|---|---|---|
-| Total device CPU (0–100%) | avg ≤ 75% | *filled at completion* | `resource-2h-summary.json` |
-| Memory — appliance services only | < 4 GB of 8 GB | **~1.49 GB** ✓ | `appliance-footprint.txt` |
-| Memory — total device (incl. dev agent) | context only | *filled at completion* | `resource-2h.csv` |
+| Total-device CPU (0–100%) | avg ≤ 75% | *filled at completion* | `resource-2h-summary.json` |
+| Total-device memory | < 4 GB of 8 GB | *filled at completion (incl. co-resident dev agent)* | `resource-2h.csv`, `-summary.json` |
 | Traffic rate during test | record | first sample ~5.6 kbps (quiet) | `resource-2h.csv` |
 | Suricata packet-drop rate | record | first sample 0 drops / 192k pkts | eve `stats`, `resource-2h.csv` |
 
-First sample (13:37 UTC): CPU 32.3%, total mem 5813 MB (incl. dev agent), rx ~5.6 kbps, 0 drops.
-Final averages/max and drop-rate are written to `resource-2h-summary.json` when the run ends
-(~15:37 UTC) and committed then.
+Secondary (context only, not an acceptance substitute):
+
+| Metric | Measured | Evidence |
+|---|---|---|
+| Appliance-service memory (RSS sum) | ~1.49 GB (Suricata ~1.06, display ~0.20, discovery ~0.13, API ~0.08, alerts ~0.02) | `appliance-footprint.txt` |
+
+First sample (13:37 UTC): total-device CPU 32.3%, total-device mem 5813 MB (incl. dev agent),
+rx ~5.6 kbps, 0 drops. Final averages/max and drop-rate are written to `resource-2h-summary.json`
+when the run ends (~15:37 UTC) and committed with a completion check (duration, sampling gaps,
+service continuity).
+
+**Representative run without the development agent (if needed):** stop the Claude Code agent, re-run
+`appliance/tools/resource_sampler.py 7200 10` with only the appliance services active, and record
+total-device memory from that run as the acceptance figure.
