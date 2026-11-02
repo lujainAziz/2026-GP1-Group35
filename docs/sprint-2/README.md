@@ -1,0 +1,131 @@
+# Sprint 2 — Scope and Changes from Sprint 1
+
+Sprint 2 adds **signature-based threat detection** (PBI-13) and **Threat Alerts** (PBI-14) to the
+Assas appliance. Sprint 1 delivered passive discovery, capture, classification, pairing, the
+read-only inventory API, and the mobile/display apps; Sprint 2 is **additive** and must not change
+that behaviour.
+
+Status legend: ☐ Planned · ◐ In progress · ☑ Done & tested. Every "Done" row links to the evidence
+(commit, log path, or test). Results without evidence are not recorded.
+
+Repo: `github.com/lujainAziz/Assas`, branch `sprint-2` (branched from tag `sprint-1` = `4786e3c`).
+Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
+
+## What is new vs Sprint 1
+| Area | Sprint 1 | Sprint 2 addition |
+|---|---|---|
+| Detection | none | Suricata 7.0.10 IDS (ET Open signatures) on the capture interface |
+| Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (◐ not yet enabled), + `assas-alerts` (☐) |
+| Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☐) |
+| API | inventory endpoints | + read-only alert endpoints (☐) |
+| Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☐, flag flip pending review) |
+
+---
+
+## Environment (appliance)
+Recorded 2026-11-02 from the live Pi.
+
+| Item | Value | Evidence |
+|---|---|---|
+| Device | Raspberry Pi (aarch64) | `uname` in session |
+| OS | Debian GNU/Linux 13 (trixie), 13.7 | apt / `/etc/os-release` |
+| Kernel | `6.18.34+rpt-rpi-2712` | login banner |
+| Python | system `/usr/bin/python3` (daemons), venv `/home/assas/assas/.venv` (API) | existing services |
+| Capture interface | `eth1` (SPAN/mirror; promisc set by `assas-capture.service`) | `assas-capture.service`, `ASSAS_CAPTURE_IFACE=eth1` |
+
+---
+
+## Part A — Suricata IDS (PBI-13)  ◐ implemented & config-tested; service enable pending
+
+### Packages installed (2026-11-02, `apt-get install suricata`)
+| Package | Version | Note |
+|---|---|---|
+| `suricata` | `1:7.0.10-1+deb13u4` | Debian trixie/main; `suricata -V` → "7.0.10 RELEASE" |
+| `suricata-update` | `1.3.4-1+deb13u1` | rule manager |
+| `libevent-2.1-7t64`, `libevent-core-2.1-7t64` | `2.1.12` → `2.1.13-stable-1~deb13u1` | mandatory security upgrade (hard dep); **2 upgraded, 30 new, 0 removed** |
+| DPDK `librte-*`, `libxdp1` | `24.11.8-0+deb13u1`, `1.5.4-1` | hard deps of Debian suricata; unused at runtime (af-packet, not DPDK) |
+
+Build features (`suricata --build-info`): `AF_PACKET support: yes`, `NFQueue support: yes`
+(unused), `PF_RING: no`.
+
+### Stock package footprint neutralised
+- The package auto-enabled the stock `suricata.service` (created the multi-user wants symlink). It
+  was **stopped + disabled + masked** so only the Assas unit runs: `systemctl is-enabled suricata`
+  → `masked`, `is-active` → `inactive`.
+- **No scheduled rule-update job** was installed: `systemctl list-timers '*suricata*'` → 0 timers;
+  no `/etc/cron.*` entry; no `/etc/apt/apt.conf.d` hook. Automatic rule updates are intentionally
+  **not** configured (team decision pending).
+
+### Final configuration (repo is the source of truth; deployed to `/etc`)
+| Repo file | Deployed to | Purpose |
+|---|---|---|
+| `appliance/suricata/assas.yaml` | `/etc/suricata/assas.yaml` (0640 root) | Assas IDS config |
+| `appliance/suricata/gen_assas_yaml.py` | — | assertion-guarded generator from stock yaml |
+| `appliance/suricata/assas-suricata.logrotate` | `/etc/logrotate.d/suricata` (0644 root) | rotation (replaces stock) |
+| `appliance/systemd/assas-suricata.service` | `/etc/systemd/system/assas-suricata.service` | systemd unit |
+
+`assas.yaml` is the Debian stock `/etc/suricata/suricata.yaml` with only these edits (full diff is
+reproducible via the generator):
+1. `af-packet` interface `eth0` → **`eth1`**. IDS only — no `copy-mode`/inline, never drops or
+   modifies traffic.
+2. `eve-log` event types reduced to **`alert` + `stats`** only. On `alert`: `tagged-packets: no`,
+   `payload: no`, `payload-printable: no`, `packet: no`, `http-body: no`, `metadata: no` → no
+   packet events, no stored payloads (keeps Sprint 1's no-payload rule).
+3. `outputs.fast` (fast.log) disabled.
+4. Global `stats.interval` `8` → **`30`** s (modest; feeds Part E drop-rate).
+5. Rules path unchanged: `default-rule-path: /var/lib/suricata/rules`, `rule-files: [suricata.rules]`.
+
+**Log rotation:** stock `/etc/logrotate.d/suricata` used `copytruncate` (forbidden — corrupts the
+ingester's offset resume) and globbed `*.json`. Replaced with a stanza that rotates only
+`stats.log` + `suricata.log` (rename + `SIGHUP` reopen; `man suricata`: *"SIGHUP … close and
+re-open all log files"*). **eve.json is intentionally excluded from logrotate**: its rotation and
+retention are owned by the Part B ingester so logrotate can never delete an unread eve file.
+
+### ET Open ruleset
+| Item | Value | Evidence |
+|---|---|---|
+| Source | Emerging Threats Open (`et/open`), suricata-update default source | suricata-update |
+| Source index | `https://www.openinfosecfoundation.org/rules/index.yaml` (accessed 2026-11-02) | suricata-update docs |
+| Ruleset URL | `https://rules.emergingthreats.net/open/suricata-7.0.10/emerging.rules.tar.gz` (accessed 2026-11-02) | *to confirm from `suricata-update` stdout* |
+| Downloaded | 2026-11-02 15:09 | mtime of rules file |
+| Output file | `/var/lib/suricata/rules/suricata.rules` — 46,029,036 bytes, 69,273 lines | `ls -l`, `wc -l` |
+| Signatures loaded | **53,305 rules loaded, 0 failed** (53,310 signatures processed) | `suricata -T` output (below) |
+| Scheduled updates | none (one-shot only) | see "neutralised" above |
+
+### Verification evidence
+- Config + rules load test (exit 0): `sudo suricata -T -c /etc/suricata/assas.yaml -v` →
+  *"Setting engine mode to IDS mode by default"*, eve.json + stats.log initialised,
+  *"53305 rules successfully loaded, 0 rules failed"*, *"Configuration provided was successfully
+  loaded. Exiting."* (run 2026-11-02; raw log to be archived at `docs/sprint-2/evidence/` once the
+  service is enabled).
+- logrotate dry-run `logrotate -d /etc/logrotate.d/suricata` parses both patterns, no errors.
+- Service `active (running)` on `eth1`, and eve event-types limited to `alert`/`stats`: **pending
+  Batch 2** (enable + runtime check); evidence will be appended here.
+
+### Official sources (accessed 2026-11-02)
+- Suricata 7.0 user guide: `https://docs.suricata.io/en/suricata-7.0/`
+- af-packet / running modes: `https://docs.suricata.io/en/suricata-7.0/configuration/suricata-yaml.html`
+- suricata-update: `https://docs.suricata.io/en/latest/rule-management/suricata-update.html`
+- Emerging Threats Open rules: `https://rules.emergingthreats.net/`
+- Debian suricata package: `https://packages.debian.org/trixie/suricata`
+
+### Commits (Part A)
+- `56cb66f` — docs(sprint-2): approved plan.
+- `921f950` — feat(suricata): Assas IDS config, service, log rotation.
+- `ff0bb9f` — fix(suricata): drop eve.json from logrotate so unread files are never deleted.
+
+---
+
+## Parts B–E
+Tracked in `PLAN.md` (approach) and in `TESTING.md` / `EVALUATION.md` (evidence). Still ☐ Planned at
+this point; see those files. `REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint
+end.
+
+## Documentation discipline
+- Software/package versions, final configs, file/service paths, changes vs Sprint 1, and commit
+  links are recorded here as each step lands.
+- Official tool/source links carry an access date.
+- Dataset provenance (source page, download URL, DOI/reference, license, selected files + sizes +
+  SHA-256) is recorded in `EVALUATION.md`; **no dataset is downloaded before explicit approval**.
+- Raw results and test logs are stored under `docs/sprint-2/evidence/` with clear paths.
+- **No passwords, tokens, or private network data (real MACs/IPs/hostnames) are committed.**
