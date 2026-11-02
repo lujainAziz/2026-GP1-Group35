@@ -1,0 +1,14 @@
+captured: 2026-11-02T13:29:27.893065Z
+total alerts: 1
+by kind: {'threat': 1}
+by state: {'new': 1}
+by severity: {'medium': 1}
+linked to a device: 0
+unlinked (device_mac null): 1
+deduped (occurrence_count>1): 1
+max occurrence_count: 24
+ordered newest-first by last_event_time: True
+sample signatures (titles only, no addresses):
+   - SURICATA IPv6 truncated packet | sev medium | occ 24 | linked False
+GET /alerts/{id} ok: True | kind threat | state new
+no device-linked alerts yet (nothing matched the inventory)

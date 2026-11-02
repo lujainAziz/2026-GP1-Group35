@@ -24,7 +24,7 @@ failed — see `README.md`). Record the rules date/version with every test run b
 does not exist (seen in the test: "cannot statx … No such file"). The ingester must tolerate a
 transient missing/!-existent `eve.json` (retry, don't error).
 
-## Part B — Alert ingester (`appliance/test_alerts.py`)  ☑ unit-tested (22 passed)
+## Part B — Alert ingester (`appliance/test_alerts.py`)  ☑ unit-tested (22) + live-verified
 Run: `cd appliance && ../.venv/bin/python -m pytest test_alerts.py -q` → **22 passed in 0.11s**
 (full suite `pytest -q` → **497 passed**, no Sprint-1 regressions). Offline, deterministic: eve
 events are synthesised as JSON lines so file identity/rotation/offsets are controllable (no Suricata
@@ -44,10 +44,14 @@ binary needed in CI). Covered:
   and keeps the most recent `keep` consumed; live file never reaped.
 - truncation (size < stored offset) is logged (`TRUNCATION/GAP`) and re-read; missing eve.json
   (post-rotation window) tolerated.
-- *Live end-to-end* (`assas-alerts.service` reading the real eve.json): recorded after the service
-  is enabled (`evidence/partB-*`).
+- **Live end-to-end** (2026-11-02, `assas-alerts.service` reading the real eve.json →
+  `evidence/partB-service-state.txt`, `evidence/partBC-live.txt`): service `active (running)`;
+  a real Suricata alert was ingested and served; **dedup confirmed live** — 24 firings of one
+  signature merged into a single alert with `occurrence_count=24`, `state=New`; severity 3 → Medium;
+  the address-less decoder alert correctly linked to **no** device (`device_mac` NULL). No raw
+  addresses are committed (aggregates + signature names only).
 
-## Part C — API (`test_api.py`, `test_frontend_contract.py`)  ☑ Done & tested
+## Part C — API (`test_api.py`, `test_frontend_contract.py`)  ☑ Done & tested + live-verified
 Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_contract.py -q` →
 **139 passed** (full suite **503 passed**, no regressions). Covered:
 - `AlertEndpointTests` (direct-call): `GET /alerts` ordered by `last_event_time` desc; device-name
@@ -60,6 +64,11 @@ Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_co
   `first_event_time`, `occurrence_count`, `rule_id`, `source_ip`/`destination_ip`, ports, and
   `explanation`/`anomaly_score` = `null`; `/alerts/{id}` and `/devices/{mac}/alerts` return the row;
   unknown id → 404.
+- **Live** (2026-11-02, `evidence/partBC-live.txt`): after restarting `assas-api` to load the new
+  routes, the local API served the ingested alert with `kind=threat`, `state=new`, newest-first
+  ordering, and `GET /alerts/{id}` resolving the row. (`GET /devices/{mac}/alerts` not exercised
+  live — the only live alert is address-less so it links to no device — but it is unit-tested.)
+  Operational note: deploying API changes requires `systemctl restart assas-api`.
 
 ## Part D — Mobile (`app/mobile`)  ☑ analyzed & unit-tested · ◐ screenshots pending
 Run (Flutter SDK at `~/flutter`): `flutter analyze` (mobile) → **No issues found**;

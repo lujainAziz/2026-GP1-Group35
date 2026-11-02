@@ -15,7 +15,7 @@ Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
 | Area | Sprint 1 | Sprint 2 addition |
 |---|---|---|
 | Detection | none | Suricata 7.0.10 IDS (ET Open signatures) on the capture interface |
-| Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (☑ active), `assas-suricata-rotate.timer` (☑ active), + `assas-alerts` (☐) |
+| Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (☑ active), `assas-suricata-rotate.timer` (☑ active), + `assas-alerts` (☑ active) |
 | Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☐) |
 | API | inventory endpoints | + read-only alert endpoints (☐) |
 | Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☐, flag flip pending review) |
@@ -139,7 +139,7 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 
 ---
 
-## Part B — Threat alert ingestion (PBI-14)  ◐ code done & unit-tested; live enable pending
+## Part B — Threat alert ingestion (PBI-14)  ☑ Done, unit-tested & live-verified
 
 New daemon `appliance/alerts.py` + `appliance/systemd/assas-alerts.service` (runs as `root`, like
 `assas-discovery`). It reads Suricata `alert` events from `eve.json` (+ rotated `eve.json-<ts>`) and
@@ -163,8 +163,14 @@ deletes only fully-consumed rotated files (keeps `ASSAS_ALERT_KEEP_ROTATED`, def
 truncation/gaps. Configurable via env (`ASSAS_DB_PATH`, `ASSAS_EVE_PATH`,
 `ASSAS_ALERT_DEDUP_WINDOW`, `ASSAS_ALERT_POLL_SECONDS`, `ASSAS_ALERT_KEEP_ROTATED`).
 
+**Live verification** (2026-11-02, `evidence/partB-service-state.txt`, `evidence/partBC-live.txt`):
+`assas-alerts.service` active; a real Suricata alert was ingested and served via the API, with
+**dedup confirmed live** (24 firings → one alert, `occurrence_count=24`) and the address-less
+decoder alert correctly left unlinked (`device_mac` NULL). Only aggregates/signature names are
+committed — no raw addresses.
+
 ### Commits (Part B)
-- (this commit) feat(alerts): Suricata eve.json ingestion into alerts table.
+- `6d15b7d` feat(alerts): Suricata eve.json ingestion into alerts table.
 
 ## Part C — API (PBI-14, read-only)  ☑ Done & tested
 
@@ -182,7 +188,7 @@ Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="t
 exact strings so casing can't drift.
 
 ### Commits (Part C)
-- (this commit) feat(api): read-only alert endpoints with exact app contract.
+- `810c3ab` feat(api): read-only alert endpoints with exact app contract.
 
 ## Part D — Mobile app (PBI-14)  ☑ code + analyze + unit tests; ◐ screenshots pending
 
@@ -210,7 +216,7 @@ Tests: `flutter analyze` clean (mobile + display); `flutter test` 63 passed/1 sk
 produced in the run/verify step (headless Pi session can't render them yet).
 
 ### Commits (Part D)
-- (this commit) feat(app): Threat Alerts in mobile (Alerts tab, details, device alerts).
+- `87d819e` feat(app): Threat Alerts in mobile (Alerts tab, details, device alerts).
 
 ## Part E — Evaluation
 Stops before any dataset download. See `PLAN.md` / `EVALUATION.md`.

@@ -1,0 +1,6 @@
+# assas-alerts.service
+MainPID=11170
+ExecMainStatus=0
+ActiveState=active
+SubState=running
+enabled=enabled
