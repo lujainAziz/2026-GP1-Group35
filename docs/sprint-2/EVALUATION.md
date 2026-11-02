@@ -17,21 +17,31 @@ Per-file sizes/SHA-256 that are not published are confirmed with an HTTP `HEAD` 
 moment of (approved) download, **before** pulling large files, and recorded here.
 
 ### IoT-23 (Stratosphere Laboratory, CTU)
-- **Source:** `https://www.stratosphereips.org/datasets-iot23` · **Zenodo:** record 4743746
+- **Source:** `https://www.stratosphereips.org/datasets-iot23` · Zenodo record 4743746
   (DOI `10.5281/zenodo.4743746`). **Licence: CC-BY-4.0** (confirmed via Zenodo API).
-- **Reference:** Garcia, Parmisano, Erquiaga, *IoT-23: A labeled dataset…*, 2020.
-- **Distribution (confirmed):** a single archive `iot_23_datasets_full.tar.gz` —
-  **21,510,801,277 bytes (~20.0 GiB)**, `md5:7132e603f9750b8580b6cebdbcd43e9c`. It contains
-  **20 malware + 3 benign** captures, each with a `.pcap`. Individual pcaps are **not** separately
-  published on Zenodo (they live inside the archive); a per-scenario HTTP mirror exists on the
-  Stratosphere server but its current index path returned 404 on 2026-11-02 (to re-locate).
-- **Proposed selection** (small, clearly labelled; extracted from the archive, the rest discarded):
-  `CTU-IoT-Malware-Capture-34-1` (Mirai), `-8-1` (Hakai), `-60-1` (Gafgyt), `-20-1` (Torii), and
-  benign `CTU-Honeypot-Capture-7-1`. Per-capture pcap byte sizes + SHA-256: **to confirm after
-  extraction** (not individually published).
-- **Download size:** 20.0 GiB (archive). **Extracted size:** not published; fits comfortably in
-  214 GB free. *(If pulling 20 GiB is undesirable, the alternative is the per-scenario Stratosphere
-  mirror once its index URL is re-located — then only the selected pcaps are fetched.)*
+  **Reference:** Garcia, Parmisano, Erquiaga, *IoT-23…*, 2020.
+- **Official per-capture downloads (preferred — avoids the 20 GiB archive):** the publisher mirror
+  serves each scenario at
+  `https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/<capture>/` with a
+  directly downloadable `.pcap` (size shown in the autoindex), a publisher `.capinfos` (capture
+  metadata), and a README stating the label. Confirmed 2026-11-02.
+- **Proposed selection** (small, labelled; filenames are the dataset's own public artifact names):
+
+  | Capture | Label (per dataset docs) | PCAP file | Size (autoindex) |
+  |---|---|---|---|
+  | CTU-IoT-Malware-Capture-34-1 | Mirai | `2018-12-21-15-50-14-…195.pcap` | **120 MB** |
+  | CTU-IoT-Malware-Capture-8-1 | Hakai | `2018-07-31-15-15-09-…113.pcap` | **2.0 MB** |
+  | CTU-IoT-Malware-Capture-20-1 | Torii | `2018-10-02-13-12-30-…103.pcap` | **3.9 MB** |
+  | CTU-Honeypot-Capture-7-1 | benign (Somfy device) | under `Somfy-0X/` subfolders | TBD at approval |
+
+  Rejected `CTU-IoT-Malware-Capture-60-1` — its pcap is **21 GB**. The three malware captures total
+  ≈ **126 MB** (trivially within 214 GB free).
+- **Full archive — only if per-capture proves insufficient:** `iot_23_datasets_full.tar.gz` =
+  21,510,801,277 B (~20.0 GiB), **publisher `md5:7132e603f9750b8580b6cebdbcd43e9c`**. Using it needs
+  **separate approval** plus an **expected extracted size** (not published; I'll estimate from the
+  `.capinfos` before requesting).
+- **Checksums:** record publisher-provided values where available (the archive md5 above; per-capture
+  `.capinfos` is capture metadata, not a hash). **SHA-256 is computed after download, never before.**
 
 ### CICIoT2023 (Canadian Institute for Cybersecurity, UNB)
 - **Source:** `https://www.unb.ca/cic/datasets/iotdataset-2023.html` → files under
