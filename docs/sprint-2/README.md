@@ -15,7 +15,7 @@ Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
 | Area | Sprint 1 | Sprint 2 addition |
 |---|---|---|
 | Detection | none | Suricata 7.0.10 IDS (ET Open signatures) on the capture interface |
-| Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (◐ not yet enabled), + `assas-alerts` (☐) |
+| Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata`, `assas-suricata-rotate.timer` (◐ enable pending), + `assas-alerts` (☐) |
 | Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☐) |
 | API | inventory endpoints | + read-only alert endpoints (☐) |
 | Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☐, flag flip pending review) |
@@ -61,8 +61,10 @@ Build features (`suricata --build-info`): `AF_PACKET support: yes`, `NFQueue sup
 |---|---|---|
 | `appliance/suricata/assas.yaml` | `/etc/suricata/assas.yaml` (0640 root) | Assas IDS config |
 | `appliance/suricata/gen_assas_yaml.py` | — | assertion-guarded generator from stock yaml |
-| `appliance/suricata/assas-suricata.logrotate` | `/etc/logrotate.d/suricata` (0644 root) | rotation (replaces stock) |
-| `appliance/systemd/assas-suricata.service` | `/etc/systemd/system/assas-suricata.service` | systemd unit |
+| `appliance/suricata/assas-suricata.logrotate` | `/etc/logrotate.d/suricata` (0644 root) | rotation for stats.log/suricata.log only (replaces stock) |
+| `appliance/suricata/rotate-eve.sh` | run in place | eve.json rotation: rename + SIGHUP reopen, never deletes |
+| `appliance/systemd/assas-suricata.service` | `/etc/systemd/system/assas-suricata.service` | IDS unit |
+| `appliance/systemd/assas-suricata-rotate.{service,timer}` | `/etc/systemd/system/` | periodic eve.json rotation check (5 min) |
 
 `assas.yaml` is the Debian stock `/etc/suricata/suricata.yaml` with only these edits (full diff is
 reproducible via the generator):
@@ -75,11 +77,19 @@ reproducible via the generator):
 4. Global `stats.interval` `8` → **`30`** s (modest; feeds Part E drop-rate).
 5. Rules path unchanged: `default-rule-path: /var/lib/suricata/rules`, `rule-files: [suricata.rules]`.
 
-**Log rotation:** stock `/etc/logrotate.d/suricata` used `copytruncate` (forbidden — corrupts the
-ingester's offset resume) and globbed `*.json`. Replaced with a stanza that rotates only
-`stats.log` + `suricata.log` (rename + `SIGHUP` reopen; `man suricata`: *"SIGHUP … close and
-re-open all log files"*). **eve.json is intentionally excluded from logrotate**: its rotation and
-retention are owned by the Part B ingester so logrotate can never delete an unread eve file.
+**Log rotation.** The stock `/etc/logrotate.d/suricata` used `copytruncate` (forbidden — corrupts
+the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
+- `stats.log` + `suricata.log`: ordinary logrotate (rename + `SIGHUP` reopen; `man suricata`:
+  *"SIGHUP … close and re-open all log files"*). These are not consumed by the ingester, so
+  count-based deletion is safe.
+- **eve.json: rotated by `rotate-eve.sh`, driven by `assas-suricata-rotate.timer` (every 5 min).**
+  When eve.json reaches the size threshold (`ASSAS_EVE_MAX_BYTES`, default 50 MiB) the script
+  renames it to `eve.json-<UTC-ts>` and sends `SIGHUP` to `assas-suricata.service` so Suricata
+  reopens a fresh eve.json. The script **only renames — it never compresses or deletes** — so it is
+  safe to run even while the ingester is stopped (rotated files accumulate until consumed). Deletion
+  of a rotated eve file is owned exclusively by the Part B ingester's checkpoint-gated reaper, which
+  acts only after a file is fully consumed. This is the complete replacement for logrotate on
+  eve.json; logrotate never touches eve.json, so it can never delete an unread file.
 
 ### ET Open ruleset
 | Item | Value | Evidence |

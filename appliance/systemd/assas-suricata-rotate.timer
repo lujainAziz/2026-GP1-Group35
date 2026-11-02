@@ -1,0 +1,14 @@
+[Unit]
+Description=Periodic ASSAS eve.json rotation check (PBI-13)
+
+[Timer]
+# Check size shortly after boot and every 5 minutes thereafter. The script
+# rotates only when eve.json reaches the size threshold, so idle checks are
+# cheap and no rotation happens on a quiet network.
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
