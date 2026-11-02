@@ -89,8 +89,20 @@ display `flutter analyze` → **No issues found**.
   screenshots → `evidence/ui/` are captured on a dev machine (the Pi session is headless). See
   `evidence/ui/README.md`.
 
+## Evaluation — resources  ☑ 2-hour live-traffic baseline complete (detection replay outstanding)
+Run `appliance/tools/resource_sampler.py 7200 10`, 2026-11-02 13:37–15:37 UTC. Verified:
+**7200 s / 720 samples**, inter-sample interval 10.0–11.0 s (**no gap >15 s**), all five services
+`active` with **NRestarts=0** and continuous through the window (no restarts). Results:
+**CPU avg 29.5% / max 39.9% → PASS (≤75%)**; **Suricata drop rate 0.0%** (0/163,368) → PASS;
+traffic rx avg ~12 kbps (light); **total-device memory avg 4.90 GB / max 6.01 GB → target <4 GB NOT
+MET under this baseline** because the Claude Code dev agent (~2.4 GB) was co-resident and is included
+as required (not excluded). Appliance-only RSS ~1.49 GB (context). Memory is **not validly judged**
+until a run without the dev agent; procedure + commands in `EVALUATION.md §4`. Evidence:
+`evidence/resources/resource-2h.csv`, `resource-2h-summary.json`, `appliance-footprint.txt`.
+
 ## Summary of successes / failures / issues
 Recorded as tests run (what passed, what failed and why, how resolved, remaining limitations).
 Currently: Suricata Configuration, Threat Alert Ingestion, Alert API, and Mobile Alert Screens are
-tested (see each section above); the Evaluation detection replay and the mobile visual review remain
-outstanding.
+tested (see each section above); the 2-hour resource baseline is complete (CPU + drop-rate pass,
+memory pending a dev-agent-free run); the Evaluation **detection replay** and the **mobile visual
+review** remain outstanding.

@@ -5,8 +5,9 @@ Replay setup, detection results, and resource measurements. Status: ☐ Planned 
 `docs/sprint-2/evidence/`. No private network data (real MACs/IPs/hostnames) is committed.
 
 Current status: **no dataset downloaded** (selection below awaits approval); **detection replay not
-run yet**; the **2-hour live-traffic resource baseline is running** (§4). Datasets are downloaded
-only after explicit approval.
+run yet**; the **2-hour live-traffic resource baseline is complete** (§4 — CPU and drop-rate targets
+met; memory not validly judged until a run without the co-resident dev agent). Datasets are
+downloaded only after explicit approval.
 
 ---
 
@@ -87,49 +88,49 @@ Per-attack table (one row per labelled attack class), filled from raw eve eviden
   assumption.
 - Raw eve slices and the matching script/output saved under `evidence/detection/`.
 
-## 4. Resources — ◐ 2-hour LIVE-TRAFFIC BASELINE running (started 2026-11-02 ~13:37 UTC)
-All existing services + `assas-suricata` + `assas-alerts` running. **Scope:** this is a
-baseline under *live house traffic*, not proof of performance under attack or heavy load; the
-attack-replay run (§2–3) will be measured separately once datasets are approved.
+## 4. Resources — ☑ 2-hour live-traffic baseline complete (2026-11-02 13:37–15:37 UTC)
+All existing services + `assas-suricata` + `assas-alerts` running. **Scope:** baseline under *live
+house traffic*, not proof of performance under attack or heavy load; the attack-replay run (§2–3) is
+measured separately once datasets are approved.
 
-Method: `appliance/tools/resource_sampler.py 7200 10` (720 samples @10 s), reading `/proc/stat`
-(total device CPU 0–100%), `/proc/meminfo` (`MemTotal−MemAvailable`), `/sys/class/net/eth1/statistics`
-(throughput), and the eve `stats` `capture.kernel_packets`/`kernel_drops` deltas (drop rate). Rules
-version: ET Open 2026-11-02 (53,305 sigs). Output: `evidence/resources/resource-2h.csv` (+
-`resource-2h-summary.json` at completion).
+Method: `appliance/tools/resource_sampler.py 7200 10` reading `/proc/stat` (total-device CPU 0–100%),
+`/proc/meminfo` (`MemTotal−MemAvailable`), `/sys/class/net/eth1/statistics` (throughput), and the eve
+`stats` `capture.kernel_packets`/`kernel_drops` deltas (drop rate). Rules: ET Open 2026-11-02 (53,305
+sigs). Evidence: `evidence/resources/resource-2h.csv` (720 rows), `resource-2h-summary.json`,
+`appliance-footprint.txt`.
 
-**Acceptance metrics are total-device CPU and total-device memory** (the resource targets apply to
-the whole device). Both are measured and judged as-is; the total memory figure is **not** adjusted
-by excluding any process.
+**Run verification:** duration **7200 s (exactly 2 h)**, 13:37:07→15:37:08 UTC; **720 samples**;
+inter-sample interval 10.0–11.0 s, mean 10.001 s, **no gap >15 s**; all five services `active` with
+**NRestarts=0** and "active since" predating the window (suricata/rotate 12:39 UTC, alerts 13:27,
+api 13:29, discovery/capture since 2026-10-29) → **continuous, no restarts** during the test.
 
-**Measurement caveat (does not change the acceptance figure):** during this baseline a development
-agent (Claude Code) is co-resident on the appliance (~2.4 GB RSS) and is included in total-device
-memory. It is not part of the deployed appliance. Its presence means the total-memory result here
-may **overstate** the appliance's own usage; if the total-memory target is not met under this
-baseline, a **separate representative run without the development agent** is required before judging
-the target (procedure below). The appliance-service footprint is reported separately for context
-(not a substitute for the total-device figure).
+**Acceptance metrics are total-device CPU and total-device memory**, judged as-is; the total memory
+figure is **not** adjusted by excluding any process.
 
-Primary (acceptance):
+| Metric (acceptance) | Target | Measured | Verdict | Evidence |
+|---|---|---|---|---|
+| Total-device CPU | avg ≤ 75% | **avg 29.5%, max 39.9%** | **PASS** | `resource-2h-summary.json` |
+| Total-device memory | < 4 GB of 8 GB | **avg 4.90 GB, max 6.01 GB** (of 7.87 GB) | **NOT MET** (see note) | `resource-2h.csv`, `-summary.json` |
+| Traffic load | record | **rx avg ~12.0 kbps, tx ~0** (light live traffic) | — | `resource-2h.csv` |
+| Suricata packet-drop rate | record | **0.0%** — 0 drops / 163,368 pkts | **PASS** | `resource-2h-summary.json` |
 
-| Metric | Target | Measured | Evidence |
-|---|---|---|---|
-| Total-device CPU (0–100%) | avg ≤ 75% | *filled at completion* | `resource-2h-summary.json` |
-| Total-device memory | < 4 GB of 8 GB | *filled at completion (incl. co-resident dev agent)* | `resource-2h.csv`, `-summary.json` |
-| Traffic rate during test | record | first sample ~5.6 kbps (quiet) | `resource-2h.csv` |
-| Suricata packet-drop rate | record | first sample 0 drops / 192k pkts | eve `stats`, `resource-2h.csv` |
+**Memory — why NOT MET and what it means:** total-device memory exceeded 4 GB, but a development
+agent (Claude Code) was **co-resident on the appliance during this run (~2.4 GB RSS)** and is
+included in the figure as required. It is not part of the deployed appliance, so this baseline
+**overstates** the appliance's own memory. For context only (not a substitute for the acceptance
+figure), the appliance services' own RSS sum is **~1.49 GB** (`appliance-footprint.txt`:
+Suricata ~1.06, display ~0.20, discovery ~0.13, API ~0.08, alerts ~0.02). The target is therefore
+**not yet validly judged** — a representative run without the development agent is required before a
+pass/fail on memory is claimed.
 
-Secondary (context only, not an acceptance substitute):
-
-| Metric | Measured | Evidence |
-|---|---|---|
-| Appliance-service memory (RSS sum) | ~1.49 GB (Suricata ~1.06, display ~0.20, discovery ~0.13, API ~0.08, alerts ~0.02) | `appliance-footprint.txt` |
-
-First sample (13:37 UTC): total-device CPU 32.3%, total-device mem 5813 MB (incl. dev agent),
-rx ~5.6 kbps, 0 drops. Final averages/max and drop-rate are written to `resource-2h-summary.json`
-when the run ends (~15:37 UTC) and committed with a completion check (duration, sampling gaps,
-service continuity).
-
-**Representative run without the development agent (if needed):** stop the Claude Code agent, re-run
-`appliance/tools/resource_sampler.py 7200 10` with only the appliance services active, and record
-total-device memory from that run as the acceptance figure.
+**Representative run without the development agent (to validly judge the memory target):**
+```
+# stop the co-resident dev agent (the Claude Code session on the Pi), then:
+cd /home/assas/assas
+ASSAS_CAPTURE_IFACE=eth1 nohup python3 appliance/tools/resource_sampler.py 7200 10 \
+  >> docs/sprint-2/evidence/resources/resource-2h-clean.run.log 2>&1 &
+# outputs resource-2h.csv/-summary.json in the same dir (rename to *-clean before starting,
+# or set ASSAS_RES_OUTDIR to a clean subdir). Record total-device memory from that run as the
+# acceptance figure.
+```
+Run it when the appliance is operated normally (no dev agent); record the result here.

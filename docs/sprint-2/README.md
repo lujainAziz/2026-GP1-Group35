@@ -30,7 +30,7 @@ Single source for the PBI-13 / PBI-14 acceptance items; sections below carry the
 | 13 | ET Open rules via `suricata-update` | Suricata Configuration | ☑ | `partA-et-open-source.txt`, `partA-suricata-T.log` |
 | 13 | `eve.json` with alert events (+ stats for drop rate) | Suricata Configuration | ☑ | `partA-eve-event-types.txt` |
 | 13 | systemd service consistent with existing units | Suricata Configuration | ☑ | `assas-suricata.service` |
-| 13 | Resource targets: total CPU ≤75% avg, memory <4 GB | Evaluation | ◐ baseline running | `resources/` |
+| 13 | Resource targets: total CPU ≤75% avg, memory <4 GB | Evaluation | ◐ CPU 29.5% avg + 0% drops PASS; memory not validly judged (dev agent co-resident) | `resources/resource-2h-summary.json` |
 | 14 | Ingest alerts from `eve.json` into `alerts` table | Threat Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
 | 14 | Severity from rule priority (1→Critical … ≥4→Low) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
 | 14 | Device linking (one/both→source/neither) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
