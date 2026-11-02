@@ -8,7 +8,7 @@ failed — see `README.md`). Record the rules date/version with every test run b
 
 ---
 
-## Part A — Suricata config  ☑ Done & tested (2026-11-02)
+## Suricata Configuration  ☑ Done & tested (2026-11-02)
 | Test | How | Result | Evidence |
 |---|---|---|---|
 | Config + rules load | `sudo suricata -T -c /etc/suricata/assas.yaml -v` | ☑ exit 0, IDS mode, 53305 rules, 0 failed | `evidence/partA-suricata-T.log` |
@@ -20,11 +20,11 @@ failed — see `README.md`). Record the rules date/version with every test run b
 | Rotation never deletes/compresses | inspect eve files after rotation | ☑ rotated file kept, uncompressed | `evidence/partA-rotation-test.txt` |
 | No overlap / no collision | shared `flock` serialises timer vs. manual; names `.N`-suffixed | ☑ by design (script `sh -n` OK) | `appliance/suricata/rotate-eve.sh` |
 
-**Note (for Part B):** for ~1–3 s after rotation, before Suricata processes `SIGHUP`, `eve.json`
+**Note (for Threat Alert Ingestion):** for ~1–3 s after rotation, before Suricata processes `SIGHUP`, `eve.json`
 does not exist (seen in the test: "cannot statx … No such file"). The ingester must tolerate a
 transient missing/!-existent `eve.json` (retry, don't error).
 
-## Part B — Alert ingester (`appliance/test_alerts.py`)  ☑ unit-tested (22) + live-verified
+## Threat Alert Ingestion (`appliance/test_alerts.py`)  ☑ unit-tested (22) + live-verified
 Run: `cd appliance && ../.venv/bin/python -m pytest test_alerts.py -q` → **22 passed in 0.11s**
 (full suite `pytest -q` → **497 passed**, no Sprint-1 regressions). Offline, deterministic: eve
 events are synthesised as JSON lines so file identity/rotation/offsets are controllable (no Suricata
@@ -51,7 +51,7 @@ binary needed in CI). Covered:
   the address-less decoder alert correctly linked to **no** device (`device_mac` NULL). No raw
   addresses are committed (aggregates + signature names only).
 
-## Part C — API (`test_api.py`, `test_frontend_contract.py`)  ☑ Done & tested + live-verified
+## Alert API (`test_api.py`, `test_frontend_contract.py`)  ☑ Done & tested + live-verified
 Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_contract.py -q` →
 **139 passed** (full suite **503 passed**, no regressions). Covered:
 - `AlertEndpointTests` (direct-call): `GET /alerts` ordered by `last_event_time` desc; device-name
@@ -70,7 +70,7 @@ Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_co
   live — the only live alert is address-less so it links to no device — but it is unit-tested.)
   Operational note: deploying API changes requires `systemctl restart assas-api`.
 
-## Part D — Mobile (`app/mobile`)  ☑ analyzed & unit-tested; visual review outstanding
+## Mobile Alert Screens (`app/mobile`)  ☑ analyzed & unit-tested; visual review outstanding
 Run (Flutter SDK at `~/flutter`): `flutter analyze` (mobile) → **No issues found**;
 `flutter test` → **63 passed, 1 skipped** (incl. new `test/alerts_test.dart` **7 passed**);
 display `flutter analyze` → **No issues found**.
@@ -91,4 +91,6 @@ display `flutter analyze` → **No issues found**.
 
 ## Summary of successes / failures / issues
 Recorded as tests run (what passed, what failed and why, how resolved, remaining limitations).
-Currently: Part A config load ☑; all runtime and B–D tests pending.
+Currently: Suricata Configuration, Threat Alert Ingestion, Alert API, and Mobile Alert Screens are
+tested (see each section above); the Evaluation detection replay and the mobile visual review remain
+outstanding.

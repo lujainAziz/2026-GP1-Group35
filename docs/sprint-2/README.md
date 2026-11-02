@@ -1,9 +1,9 @@
 # Sprint 2 — Scope and Changes from Sprint 1
 
-Sprint 2 adds **signature-based threat detection** (PBI-13) and **Threat Alerts** (PBI-14) to the
-Assas appliance. Sprint 1 delivered passive discovery, capture, classification, pairing, the
-read-only inventory API, and the mobile/display apps; Sprint 2 is **additive** and must not change
-that behaviour.
+Sprint 2 adds **signature-based threat detection** and **Threat Alerts** to the Assas appliance
+(see the requirements-tracking table for the PBI-13 / PBI-14 items). Sprint 1 delivered passive
+discovery, capture, classification, pairing, the read-only inventory API, and the mobile/display
+apps; Sprint 2 is **additive** and must not change that behaviour.
 
 Status legend: ☐ Planned · ◐ In progress · ☑ Done & tested. Every "Done" row links to the evidence
 (commit, log path, or test). Results without evidence are not recorded.
@@ -16,9 +16,29 @@ Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
 |---|---|---|
 | Detection | none | Suricata 7.0.10 IDS (ET Open signatures) on the capture interface |
 | Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (☑ active), `assas-suricata-rotate.timer` (☑ active), + `assas-alerts` (☑ active) |
-| Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☐) |
-| API | inventory endpoints | + read-only alert endpoints (☐) |
-| Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☐, flag flip pending review) |
+| Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☑) |
+| API | inventory endpoints | + read-only alert endpoints (☑) |
+| Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☑ code+tests; visual review outstanding) |
+
+## Requirements tracking
+Single source for the PBI-13 / PBI-14 acceptance items; sections below carry the detail.
+
+| PBI | Requirement | Section | Status | Evidence |
+|---|---|---|---|---|
+| 13 | Suricata installed; version reported | Suricata Configuration | ☑ | `partA-suricata-T.log`, README |
+| 13 | IDS mode on the capture interface (`eth1`); never blocks/modifies | Suricata Configuration | ☑ | `assas.yaml`, `partA-service-state.txt` |
+| 13 | ET Open rules via `suricata-update` | Suricata Configuration | ☑ | `partA-et-open-source.txt`, `partA-suricata-T.log` |
+| 13 | `eve.json` with alert events (+ stats for drop rate) | Suricata Configuration | ☑ | `partA-eve-event-types.txt` |
+| 13 | systemd service consistent with existing units | Suricata Configuration | ☑ | `assas-suricata.service` |
+| 13 | Resource targets: total CPU ≤75% avg, memory <4 GB | Evaluation | ◐ baseline running | `resources/` |
+| 14 | Ingest alerts from `eve.json` into `alerts` table | Threat Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
+| 14 | Severity from rule priority (1→Critical … ≥4→Low) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
+| 14 | Device linking (one/both→source/neither) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
+| 14 | Dedup window; `occurrence_count`/`last_event_time` | Threat Alert Ingestion | ☑ | `partBC-live.txt` (24→1), `test_alerts.py` |
+| 14 | Resume safety (checkpoint, rotation, gap logging) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
+| 14 | Authenticated read-only alert endpoints | Alert API | ☑ | `test_api.py`, `test_frontend_contract.py`, `partBC-live.txt` |
+| 14 | Mobile: alerts tab, details, device alerts | Mobile Alert Screens | ☑ code+tests; visual review outstanding | `test/alerts_test.dart`, `evidence/ui/` |
+| 13+14 | Detection evaluation on replayed attack traffic | Evaluation | ☐ dataset download outstanding | `EVALUATION.md` |
 
 ---
 
@@ -35,7 +55,7 @@ Recorded 2026-11-02 from the live Pi.
 
 ---
 
-## Part A — Suricata IDS (PBI-13)  ☑ Done & tested (2026-11-02)
+## Suricata Configuration  ☑ Done & tested (2026-11-02)
 
 ### Packages installed (2026-11-02, `apt-get install suricata`)
 | Package | Version | Note |
@@ -74,7 +94,7 @@ reproducible via the generator):
    `payload: no`, `payload-printable: no`, `packet: no`, `http-body: no`, `metadata: no` → no
    packet events, no stored payloads (keeps Sprint 1's no-payload rule).
 3. `outputs.fast` (fast.log) disabled.
-4. Global `stats.interval` `8` → **`30`** s (modest; feeds Part E drop-rate).
+4. Global `stats.interval` `8` → **`30`** s (modest; feeds the Evaluation drop-rate).
 5. Rules path unchanged: `default-rule-path: /var/lib/suricata/rules`, `rule-files: [suricata.rules]`.
 
 **Log rotation.** The stock `/etc/logrotate.d/suricata` used `copytruncate` (forbidden — corrupts
@@ -89,7 +109,7 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
   (`/run/assas-suricata-rotate.lock`) serialises the timer and any manual/forced run so two
   rotations can never overlap. The script **only renames — it never compresses or deletes** — so it
   is safe to run even while the ingester is stopped (rotated files accumulate until consumed). Deletion
-  of a rotated eve file is owned exclusively by the Part B ingester's checkpoint-gated reaper, which
+  of a rotated eve file is owned exclusively by the Threat Alert Ingestion reaper, which
   acts only after a file is fully consumed. This is the complete replacement for logrotate on
   eve.json; logrotate never touches eve.json, so it can never delete an unread file.
 
@@ -122,7 +142,7 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 - **Sensitive-data scan**: all evidence files scanned for IPv4/MAC/IPv6 → clean (no addresses
   committed).
 
-> Operational note for Part B: for ~1–3 s after a rotation (before Suricata handles `SIGHUP`)
+> Operational note for Threat Alert Ingestion: for ~1–3 s after a rotation (before Suricata handles `SIGHUP`)
 > `eve.json` briefly does not exist. The ingester must tolerate this (retry, not error).
 
 ### Official sources (accessed 2026-11-02)
@@ -132,14 +152,14 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 - Emerging Threats Open rules: `https://rules.emergingthreats.net/`
 - Debian suricata package: `https://packages.debian.org/trixie/suricata`
 
-### Commits (Part A)
+### Commits (Suricata Configuration)
 - `56cb66f` — docs(sprint-2): implementation plan.
 - `921f950` — feat(suricata): Assas IDS config, service, log rotation.
 - `ff0bb9f` — fix(suricata): drop eve.json from logrotate so unread files are never deleted.
 
 ---
 
-## Part B — Threat alert ingestion (PBI-14)  ☑ Done, unit-tested & live-verified
+## Threat Alert Ingestion  ☑ Done, unit-tested & live-verified
 
 New daemon `appliance/alerts.py` + `appliance/systemd/assas-alerts.service` (runs as `root`, like
 `assas-discovery`). It reads Suricata `alert` events from `eve.json` (+ rotated `eve.json-<ts>`) and
@@ -155,10 +175,10 @@ writes Threat Alerts into SQLite. Tests: `appliance/test_alerts.py` (22 passed).
 - `alert_ingest_state` — `(st_dev, st_ino)` PK + `offset, size_at_eof, consumed, path` — the read
   checkpoint, written in the **same transaction** as the alert upserts.
 
-**Behaviour** (per PBI-14): severity from rule priority (1→Critical … ≥4→Low); device linking
+**Behaviour:** severity from rule priority (1→Critical … ≥4→Low); device linking
 (one→that device, both→source keeping the other IP, neither→NULL); dedup within a window (default
 300 s, `ASSAS_ALERT_DEDUP_WINDOW`, measured from `last_event_time`; NULL-device key = rule+src+dst);
-resume-safe checkpointing; follows the Part A rotation (drains `eve.json-<ts>` by inode); reaper
+resume-safe checkpointing; follows the Suricata Configuration rotation (drains `eve.json-<ts>` by inode); reaper
 deletes only fully-consumed rotated files (keeps `ASSAS_ALERT_KEEP_ROTATED`, default 3); logs
 truncation/gaps. Configurable via env (`ASSAS_DB_PATH`, `ASSAS_EVE_PATH`,
 `ASSAS_ALERT_DEDUP_WINDOW`, `ASSAS_ALERT_POLL_SECONDS`, `ASSAS_ALERT_KEEP_ROTATED`).
@@ -169,10 +189,10 @@ truncation/gaps. Configurable via env (`ASSAS_DB_PATH`, `ASSAS_EVE_PATH`,
 decoder alert correctly left unlinked (`device_mac` NULL). Only aggregates/signature names are
 committed — no raw addresses.
 
-### Commits (Part B)
+### Commits (Threat Alert Ingestion)
 - `6d15b7d` feat(alerts): Suricata eve.json ingestion into alerts table.
 
-## Part C — API (PBI-14, read-only)  ☑ Done & tested
+## Alert API  ☑ Done & tested
 
 Additive endpoints in `appliance/api.py`, gated by the existing `require_auth` (paired bearer token;
 localhost bypass). A missing `alerts` table reads as empty.
@@ -187,10 +207,10 @@ Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="t
 `src_port`/`dst_port`; `explanation` and the anomaly fields are `null`. A contract test asserts the
 exact strings so casing can't drift.
 
-### Commits (Part C)
+### Commits (Alert API)
 - `810c3ab` feat(api): read-only alert endpoints with exact app contract.
 
-## Part D — Mobile app (PBI-14)  ☑ code + analyze + unit tests; visual review pending
+## Mobile Alert Screens  ☑ code + analyze + unit tests; visual review pending
 
 Only the three Sprint-2 deliverables are enabled; later-sprint surfaces are kept hidden behind their
 own flags.
@@ -216,11 +236,11 @@ Tests: `flutter analyze` clean (mobile + display); `flutter test` 63 passed/1 sk
 outstanding — screenshots are captured on a dev machine (the Pi session is headless); see
 `evidence/ui/README.md`.
 
-### Commits (Part D)
+### Commits (Mobile Alert Screens)
 - `87d819e` feat(app): Threat Alerts in mobile (Alerts tab, details, device alerts).
 
-## Part E — Evaluation
-Dataset download and detection replay are outstanding; the resource baseline is recorded. See
+## Evaluation
+Dataset download and detection replay are outstanding; the resource baseline is in progress. See
 `PLAN.md` / `EVALUATION.md`.
 `REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint end.
 

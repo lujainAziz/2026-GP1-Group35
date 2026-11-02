@@ -1,6 +1,8 @@
 # Sprint 2 — Implementation Plan
 
-**Scope:** PBI-13 (Suricata signature-based threat detection) and PBI-14 (Threat Alerts).
+**Scope:** signature-based threat detection and Threat Alerts. The PBI-13 / PBI-14 acceptance items
+and their status are tracked in `README.md` → *Requirements tracking*; this document is the
+implementation plan behind them.
 
 **Out of scope (reserved for later sprints):** anomaly detection, network risk level, alert
 explanations, alert state management (Reviewed/Resolved), notifications, and remote access.
@@ -38,7 +40,7 @@ explanations, alert state management (Reviewed/Resolved), notifications, and rem
 
 ---
 
-## Part A — Suricata on the appliance (PBI-13) ☐
+## Suricata Configuration ☑
 
 1. Suricata is installed via `apt` as a deliberate, approved step. The installed version is
    recorded from `suricata --build-info`.
@@ -49,7 +51,7 @@ explanations, alert state management (Reviewed/Resolved), notifications, and rem
 4. **eve.json** output:
    - `alert` is the only event type ingested into the `alerts` table.
    - Suricata `stats` output (eve `stats` event type and/or `stats.log`) is enabled at a modest
-     interval to provide the packet-drop rate required by Part E. Stats are used for evaluation
+     interval to provide the packet-drop rate required by the Evaluation. Stats are used for evaluation
      only and are never written into the `alerts` table.
    - Other high-volume event types (flow, dns, http, tls, etc.) are disabled to limit CPU and disk
      usage.
@@ -58,7 +60,7 @@ explanations, alert state management (Reviewed/Resolved), notifications, and rem
    `After=network-online.target assas-capture.service` so the interface is in promiscuous mode
    first). It runs Suricata in af-packet IDS mode on `eth1` with the Assas configuration.
 
-**Log rotation** (prerequisite for Part B resume safety):
+**Log rotation** (prerequisite for Threat Alert Ingestion resume safety):
 - Rotation uses a **rename-based scheme followed by the log-reopen signal supported by the
   installed Suricata version** (rename/`create` then `SIGHUP`, or `suricatasc` log-reopen where
   available). The exact mechanism is pinned to the installed version and documented in `README.md`.
@@ -68,7 +70,7 @@ explanations, alert state management (Reviewed/Resolved), notifications, and rem
 
 ---
 
-## Part B — Threat alert ingestion (PBI-14) ☐
+## Threat Alert Ingestion ☑
 
 A daemon `appliance/alerts.py` and systemd service `appliance/systemd/assas-alerts.service`
 (styled like the existing services, `After=assas-suricata.service`) read Suricata `alert` events
@@ -113,13 +115,13 @@ existing alert instead of creating a new one:
 - The eve.json read checkpoint — file identity `(st_dev, st_ino)` and byte `offset` — is persisted
   in an `alert_ingest_state` table within the same transaction as the alert write, so no event is
   stored twice across restarts.
-- Rotated `eve.json.*` files are kept until fully read (coordinated with Part A rotation).
+- Rotated `eve.json.*` files are kept until fully read (coordinated with the Suricata Configuration rotation).
 - Truncation or a gap (changed inode with unread bytes, offset beyond EOF, etc.) is logged
   explicitly; ingestion does not continue silently past it.
 
 ---
 
-## Part C — API (authenticated, read-only) ☐
+## Alert API (authenticated, read-only) ☑
 
 New endpoints reuse the existing `require_auth` dependency:
 
@@ -142,7 +144,7 @@ strings) so any casing drift fails the test suite (extending `test_api.py` /
 
 ---
 
-## Part D — Mobile app (`app/mobile`) ☐
+## Mobile Alert Screens (`app/mobile`) ☑ (visual review outstanding)
 
 A complete audit of every widget, screen, and code path gated by `Released.alerts` /
 `FeatureRelease.alerts` is produced and reviewed before the alerts flag is enabled. Code paths that
@@ -167,7 +169,7 @@ With the existing design and styling preserved:
 
 ---
 
-## Part E — Evaluation ☐
+## Evaluation ◐
 
 1. **Detection:** labeled attack traffic from CICIoT2023 and IoT-23 is replayed into the monitored
    interface. Dataset files are retrieved only after approval.
@@ -182,7 +184,7 @@ With the existing design and styling preserved:
 3. **Resources:** a continuous 2-hour run with Suricata and all existing services records total
    device CPU on a 0–100% scale (target: average ≤ 75%), memory (target: < 4 GB of 8 GB), the
    traffic rate during the test, and Suricata's packet-drop rate (from the stats enabled in
-   Part A).
+   the Suricata Configuration).
 4. Unit tests use small offline PCAPs with `suricata -r` only.
 
 ---

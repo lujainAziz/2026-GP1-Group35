@@ -98,9 +98,9 @@ Method: `appliance/tools/resource_sampler.py 7200 10` (720 samples @10 s), readi
 version: ET Open 2026-11-02 (53,305 sigs). Output: `evidence/resources/resource-2h.csv` (+
 `resource-2h-summary.json` at completion).
 
-**Acceptance metrics are total-device CPU and total-device memory** (the PBI-13 targets apply to the
-whole device). Both are measured and judged as-is; the total memory figure is **not** adjusted by
-excluding any process.
+**Acceptance metrics are total-device CPU and total-device memory** (the resource targets apply to
+the whole device). Both are measured and judged as-is; the total memory figure is **not** adjusted
+by excluding any process.
 
 **Measurement caveat (does not change the acceptance figure):** during this baseline a development
 agent (Claude Code) is co-resident on the appliance (~2.4 GB RSS) and is included in total-device
