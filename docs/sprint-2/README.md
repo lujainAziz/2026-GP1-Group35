@@ -21,7 +21,8 @@ Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
 | Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☑ code+tests; visual review outstanding) |
 
 ## Requirements tracking
-Single source for the PBI-13 / PBI-14 acceptance items; sections below carry the detail.
+Single source for the PBI-13 / PBI-14 acceptance items; sections below carry the detail. Final
+per-requirement pass/fail/not-tested verdicts (automated vs live) are in `VERIFICATION.md`.
 
 | PBI | Requirement | Section | Status | Evidence |
 |---|---|---|---|---|
