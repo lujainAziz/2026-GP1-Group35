@@ -1,0 +1,11 @@
+# Live auth — paired session from a NON-local address (token never printed/saved)
+pairing: /pairing/code -> 200 ; /pair -> 200 ; token obtained: True
+## from LAN IP WITHOUT token (expect 401):
+   /alerts -> 401
+   /alerts/1 -> 401
+   /devices/<example-mac>/alerts -> 401
+## from LAN IP WITH valid paired token (expect 200):
+   /alerts -> 200
+   /alerts/1 -> 200
+   /devices/<example-mac>/alerts -> 200
+cleanup: /unpair -> 204 (temporary session removed)
