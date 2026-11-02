@@ -12,9 +12,9 @@ Legend: ✅ pass · ❌ fail · ☐ not tested.
 |---|---|---|---|---|---|---|
 | 1 | Five services up; no faults/restarts during the test | ✅ | Live | All five `active`/`enabled`, **NRestarts=0**, active-since predates the 13:37–15:37 UTC window → continuous; journal 0 stop/fail events | `evidence/resources/` (§4), service check | `2bea922` |
 | 2 | Full path: traffic on `eth1` → Suricata event → SQLite alert → API → app | ✅ to API (Live) · ☐ app | 68 live alerts (21 distinct signatures) from `eth1` traffic ingested to `alerts` and served by the API; **app leg pending visual review (#7)** | `evidence/final-live-verify.txt`; `evidence/partBC-live.txt` | `6d15b7d`,`810c3ab`,`25eb0f4` |
-| 3 | Dedup: `occurrence_count`↑, keep first & last event time, don't merge unrelated hosts | ✅ | Live + Automated | Live: occ up to **204**, `first<last` (e.g. id=1 15:40:44→22:45:09); same-second merges keep equal times; NULL-device rules 2210045 & 2210030 each kept as **separate** alerts (distinct src/dst). Automated: `test_alerts.py` dedup + NULL-device cases | `evidence/final-live-verify.txt`; `appliance/test_alerts.py` | `6d15b7d` |
+| 3 | Dedup: `occurrence_count`↑, keep first & last event time, don't merge unrelated hosts | ✅ | Live + Automated | Live: occ up to **204**, `first<last` (id=1); same-second merges keep equal times; NULL-device rules 2210045 & 2210030 kept as **separate** alerts (distinct src/dst); **`occurrence_count` cross-checked against source events (12/12 NULL-device exact; total 739==739)**. Automated: `test_alerts.py` dedup + NULL-device cases | `evidence/final-live-verify.txt`, `evidence/partB-resume-crosscheck.txt`; `appliance/test_alerts.py` | `6d15b7d` |
 | 4 | Link alert to the right device; `device_mac` NULL when no match | ✅ | Live + Automated | Live: **56 linked**, **12 NULL** (link-local / address-less → NULL). Automated: one/both→source/neither rules in `test_alerts.py` | `evidence/final-live-verify.txt`; `appliance/test_alerts.py` | `6d15b7d` |
-| 5 | Resume after reader stop; multiple rotations; no loss/dup; keep unread files | ✅ Automated · ☐ live spot-check | Automated | `test_alerts.py`: resume on fresh DB (no double-ingest), multi-rotation recovery (every event once, in order), reaper preserves unconsumed files, truncation logged. Live restart spot-check optional (sudo batch below) | `appliance/test_alerts.py`; live dedup `partBC-live.txt` | `6d15b7d` |
+| 5 | Resume after reader stop; multiple rotations; no loss/dup; keep unread files | ✅ Automated + Live cross-check · ☐ restart smoke test | Automated + Live | **Automated** `test_alerts.py`: resume on fresh DB (no double-ingest), multi-rotation recovery (every event once, in order), reaper preserves unconsumed files, truncation logged. **Live cross-check (read-only):** persisted `alert_ingest_state` matches on-disk eve (rotated `offset==size_at_eof==size`, `consumed=1`; live `offset==size`, 0-byte lag); **739 alert events in eve == SUM(occurrence_count) 739** (no loss/double-count); 12/12 NULL-device alerts' `occurrence_count` == source events in `[first,last]`. **Reader-restart smoke test** (sudo, below) still to run — alert-IDs alone are not full resume proof. | `evidence/partB-resume-crosscheck.txt`; `appliance/test_alerts.py` | `6d15b7d` |
 | 6 | Three endpoints: reject unauthenticated; succeed with a paired session | ✅ | Live + Automated | Live from a **non-local (LAN-IP)** address: **401 without a token** and **200 with a valid paired token** on all three (`/alerts`, `/alerts/{id}`, `/devices/{mac}/alerts`); token obtained via the normal pairing flow and removed with `/unpair` afterwards (token never printed/stored). localhost→200 only exercises the local-bypass path. Automated: `AlertContractTests` — 401 without token, 200 + exact contract with a token | `evidence/partC-auth-live.txt`; `appliance/test_frontend_contract.py` | `810c3ab` |
 | 7 | Three alert screens + navigation; data matches the API | ☐ | — | **Pending owner visual review.** Steps + required screenshots below and in `evidence/ui/README.md`; not marked passed until confirmed | `evidence/ui/README.md` | `87d819e` |
 | 8 | Independent 2-hour resource run **without** the dev agent (CPU/mem/traffic/drops/continuity) | ☐ | — | Not yet run (the agent is the co-resident process). Script ready: `clean_resource_run.sh` (aborts if agent present; guards throughout). **First run retained: memory target NOT met.** | `appliance/tools/clean_resource_run.sh`; `EVALUATION.md §4` | `6bd3981` |
@@ -27,16 +27,30 @@ Legend: ✅ pass · ❌ fail · ☐ not tested.
 - **#8 clean 2-hour memory run** without the dev agent, to validly judge the memory target.
 - **D detection evaluation** — dataset approval + mirrored-port replay.
 
-## Optional live resume spot-check (#5) — sudo batch
-Confirms the ingester resumes from its checkpoint without re-ingesting (live traffic may add new
-rows; the check is that existing `alert_id`s are unchanged):
+## Reader-restart smoke test (#5) — sudo batch (smoke test only)
+This is a **smoke test** — it shows the reader comes back and keeps its alerts across a restart; it
+is **not** full resume proof on its own (that is the automated `test_alerts.py` plus the read-only
+checkpoint/occurrence cross-check above). It preserves data and injects no synthetic events.
+Notes: query with a **high `limit` (1000)** so the 200-default pagination can't make IDs look
+missing; a **manual `systemctl restart` is an intentional test action and is not necessarily counted
+by `NRestarts`** (which tracks automatic, policy-driven restarts) — record it separately.
 ```
 cd /home/assas/assas
-python3 -c "import urllib.request,json;print('before ids:',sorted(int(a['id']) for a in json.load(urllib.request.urlopen('http://127.0.0.1:8000/alerts'))))" > /tmp/before.txt
-sudo systemctl restart assas-alerts.service
+api(){ python3 -c "import urllib.request,json;print(sorted(int(a['id']) for a in json.load(urllib.request.urlopen('http://127.0.0.1:8000/alerts?limit=1000',timeout=5))))"; }
+api > /tmp/before.txt
+echo "INTENTIONAL TEST ACTION: manual restart of assas-alerts at $(date -u +%FT%TZ)"
+sudo systemctl restart assas-alerts.service   # manual/intentional — not an automatic NRestarts event
 sleep 8
-python3 -c "import urllib.request,json;print('after ids :',sorted(int(a['id']) for a in json.load(urllib.request.urlopen('http://127.0.0.1:8000/alerts'))))" > /tmp/after.txt
-cat /tmp/before.txt /tmp/after.txt   # existing ids must persist (no renumber/duplication)
+api > /tmp/after.txt
+python3 - <<'PY'
+b=set(eval(open('/tmp/before.txt').read())); a=set(eval(open('/tmp/after.txt').read()))
+print("before:",len(b)," after:",len(a))
+print("all pre-restart ids still present (no loss/renumber):", b.issubset(a))
+print("ids lost (must be empty):", sorted(b-a))
+print("new ids during restart window (live traffic, possible):", sorted(a-b))
+PY
+systemctl is-active assas-alerts.service
+systemctl show -p NRestarts --value assas-alerts.service  # automatic restarts only; manual restart not counted here
 ```
 
 ## Mobile visual review (#7) — steps and required screenshots
