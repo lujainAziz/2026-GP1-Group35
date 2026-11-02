@@ -13,8 +13,8 @@ only after explicit approval.
 ## 1. Datasets (selection for approval) — ☐ HOLD, nothing downloaded
 Metadata gathered 2026-11-02 from the official sources (no dataset files fetched). **Available disk:**
 `/` (and `/home`) = 235 GB total, **214 GB free (5% used)** — ample for either dataset.
-Per-file sizes/SHA-256 that are not published are confirmed with an HTTP `HEAD` / listing at the
-moment of (approved) download, **before** pulling large files, and recorded here.
+Per-file sizes are taken from the publisher autoindex where shown; SHA-256 is computed only after
+download.
 
 ### IoT-23 (Stratosphere Laboratory, CTU)
 - **Source:** `https://www.stratosphereips.org/datasets-iot23` · Zenodo record 4743746
@@ -37,9 +37,9 @@ moment of (approved) download, **before** pulling large files, and recorded here
   Rejected `CTU-IoT-Malware-Capture-60-1` — its pcap is **21 GB**. The three malware captures total
   ≈ **126 MB** (trivially within 214 GB free).
 - **Full archive — only if per-capture proves insufficient:** `iot_23_datasets_full.tar.gz` =
-  21,510,801,277 B (~20.0 GiB), **publisher `md5:7132e603f9750b8580b6cebdbcd43e9c`**. Using it needs
-  **separate approval** plus an **expected extracted size** (not published; I'll estimate from the
-  `.capinfos` before requesting).
+  21,510,801,277 B (~20.0 GiB), **publisher `md5:7132e603f9750b8580b6cebdbcd43e9c`**. Use of the
+  archive requires separate approval and an expected extracted size (not published; estimated from
+  the `.capinfos` metadata beforehand).
 - **Checksums:** record publisher-provided values where available (the archive md5 above; per-capture
   `.capinfos` is capture metadata, not a hash). **SHA-256 is computed after download, never before.**
 
@@ -53,12 +53,12 @@ moment of (approved) download, **before** pulling large files, and recorded here
 - **Proposed selection** (one small labelled PCAP per class for coverage, e.g. a Recon scan, a
   DoS/DDoS flood, a Mirai flood, a Spoofing capture, plus a `BenignTraffic` sample).
 - **Download/extracted sizes + SHA-256:** the `PCAP/` directory is **not web-autoindexed** (the URL
-  302-redirects to the CIC portal), so exact per-file sizes could not be retrieved now; they are
-  captured via `HEAD` at approved download. The raw PCAP set is large (multi-GB per attack).
+  302-redirects to the CIC portal), so exact per-file sizes are not available without access; an
+  HTTP `HEAD` at download captures them. The raw PCAP set is large (multi-GB per attack).
 
-### On approval
-No file is pulled until approved. On approval I first record each selected file's exact size (`HEAD`)
-and SHA-256 (and extracted sizes), update this section, verify against the source, then replay.
+### Download procedure
+Each selected file's exact size (`HEAD`) and extracted size are recorded first and this section is
+updated and verified against the source; SHA-256 is computed after download; replay follows.
 
 ---
 

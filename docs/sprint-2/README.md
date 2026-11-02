@@ -133,7 +133,7 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 - Debian suricata package: `https://packages.debian.org/trixie/suricata`
 
 ### Commits (Part A)
-- `56cb66f` — docs(sprint-2): approved plan.
+- `56cb66f` — docs(sprint-2): implementation plan.
 - `921f950` — feat(suricata): Assas IDS config, service, log rotation.
 - `ff0bb9f` — fix(suricata): drop eve.json from logrotate so unread files are never deleted.
 
@@ -190,10 +190,10 @@ exact strings so casing can't drift.
 ### Commits (Part C)
 - `810c3ab` feat(api): read-only alert endpoints with exact app contract.
 
-## Part D — Mobile app (PBI-14)  ☑ code + analyze + unit tests; ◐ screenshots pending
+## Part D — Mobile app (PBI-14)  ☑ code + analyze + unit tests; visual review pending
 
-Only the three approved deliverables are enabled; later-sprint surfaces are kept hidden with their
-own flags (audit reviewed and approved before the flip).
+Only the three Sprint-2 deliverables are enabled; later-sprint surfaces are kept hidden behind their
+own flags.
 
 `FeatureRelease` (shared `assas_design`): `alerts = true`; new gates `alertsHome`,
 `alertSeverityBadges`, `alertDisplay`, `alertExplanations` all **false**; `alertManagement`, `risk`
@@ -212,14 +212,16 @@ Model `SecurityAlert` extended additively (`ruleId`, `srcPort`, `dstPort`, `occu
 `firstTime`, `lastTime`); `fromApi` reads the new keys.
 
 Tests: `flutter analyze` clean (mobile + display); `flutter test` 63 passed/1 skipped incl.
-`test/alerts_test.dart` (contract, gating, badge-hiding). Screenshots of the finished screens are
-produced in the run/verify step (headless Pi session can't render them yet).
+`test/alerts_test.dart` (contract, gating, badge-hiding). Visual review of the three screens is
+outstanding — screenshots are captured on a dev machine (the Pi session is headless); see
+`evidence/ui/README.md`.
 
 ### Commits (Part D)
 - `87d819e` feat(app): Threat Alerts in mobile (Alerts tab, details, device alerts).
 
 ## Part E — Evaluation
-Stops before any dataset download. See `PLAN.md` / `EVALUATION.md`.
+Dataset download and detection replay are outstanding; the resource baseline is recorded. See
+`PLAN.md` / `EVALUATION.md`.
 `REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint end.
 
 ## Documentation discipline

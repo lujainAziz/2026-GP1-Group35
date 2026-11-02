@@ -70,7 +70,7 @@ Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_co
   live — the only live alert is address-less so it links to no device — but it is unit-tested.)
   Operational note: deploying API changes requires `systemctl restart assas-api`.
 
-## Part D — Mobile (`app/mobile`)  ☑ analyzed & unit-tested · ◐ screenshots pending
+## Part D — Mobile (`app/mobile`)  ☑ analyzed & unit-tested; visual review outstanding
 Run (Flutter SDK at `~/flutter`): `flutter analyze` (mobile) → **No issues found**;
 `flutter test` → **63 passed, 1 skipped** (incl. new `test/alerts_test.dart` **7 passed**);
 display `flutter analyze` → **No issues found**.
@@ -85,8 +85,9 @@ display `flutter analyze` → **No issues found**.
   assertions unchanged.
 - **Known environment issue** (not a regression): `display_layout_test` fails only on writing
   `assas-display-preview.png` (Permission denied) in this session; unrelated to the alert flag.
-- **Pending (run/verify step):** screenshots of the Alerts tab, Alert detail, and Device-details
-  alerts section → `evidence/ui/` (requires rendering the app; the Pi session is headless).
+- **Outstanding:** visual review of the Alerts tab, Alert detail, and Device-details alerts section;
+  screenshots → `evidence/ui/` are captured on a dev machine (the Pi session is headless). See
+  `evidence/ui/README.md`.
 
 ## Summary of successes / failures / issues
 Recorded as tests run (what passed, what failed and why, how resolved, remaining limitations).
