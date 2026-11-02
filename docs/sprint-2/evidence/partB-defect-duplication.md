@@ -33,19 +33,20 @@ cycle's `with conn:` transaction rolls back, the offset never advances, and the 
 `test_alerts.py` truncation test asserts only that a warning is logged — not that **no duplicate
 rows** result. No test feeds a line that triggers `UnicodeDecodeError` (only `JSONDecodeError`).
 
-## Fix plan (proposed — not yet applied)
-1. Decode tolerantly and catch per line: `json.loads(raw.decode("utf-8", "replace"))` and/or
-   `except (json.JSONDecodeError, UnicodeDecodeError)` → skip the bad line (offset still advances),
-   never crash the cycle.
-2. Truncation/gap must **not** re-read from 0: on `offset > size` (same inode), log a gap and set
-   `offset = size` (resume forward) — never re-ingest. Harden file identity against inode reuse
-   (e.g., also track first-bytes/creation signal), so a replaced file is treated as new (offset 0)
-   only when it truly is new.
-3. Unit tests: (a) a `UnicodeDecodeError`-triggering line is skipped without crashing or stalling and
-   the offset advances; (b) after a simulated truncation, **no duplicate rows** and no
-   occurrence_count inflation.
-4. Data cleanup: de-duplicate the affected rows in `assas.db` and reset the checkpoint; restart
-   `assas-alerts`. (Requires sudo; proposed separately.)
+## Fix — code applied & tested (commit `10b78e7`); deploy + cleanup pending
+1. ✅ `process_file` now catches `(json.JSONDecodeError, UnicodeDecodeError)` per line → a malformed
+   line is skipped, the offset still advances past it, the daemon never stalls.
+2. ✅ Truncation/gap (`offset > size`) no longer re-reads from 0: it logs the gap and resumes at EOF
+   (`offset = size`, persisted) → never re-ingests. Gap events are not recovered (documented
+   trade-off; matches "log a gap, don't silently continue").
+3. ✅ Tests (`appliance/test_alerts.py`): truncation → no duplicate rows + resume-forward;
+   `UnicodeDecodeError` line skipped without stalling, offset advances. Appliance suite 504 passed.
+4. ☐ **Residual hardening (not yet done):** inode reuse where the replaced file is *larger* than the
+   old offset would resume mid-file; add a first-bytes/creation fingerprint to file identity. Low
+   likelihood with the rename+SIGHUP rotation (new file gets a new inode), tracked as follow-up.
+5. ☐ **Deploy + data cleanup (sudo, pending approval):** the service runs `alerts.py` from the repo,
+   so a restart loads the fix. The already-duplicated rows remain until cleaned — wipe `alerts` +
+   `alert_ingest_state` and let the fixed ingester re-ingest cleanly from the current eve files.
 
 ## Status impact
 Threat Alert Ingestion **resume-safety / dedup is NOT verified** in live operation (duplication +

@@ -23,9 +23,10 @@ Legend: ✅ pass · ❌ fail · ☐ not tested.
 | D | Detection evaluation on replayed attack datasets | ☐ | — | **Not tested** — datasets on hold (no download). Synthetic/unit alerts are **not** a substitute. Replay host + IoT-23 selection prepared | `EVALUATION.md §1–3` | `6bd3981` |
 
 ## Outstanding (blocks "Sprint 2 complete")
-- **Ingester defects (blocker)** — `evidence/partB-defect-duplication.md`: (1) truncation handler
-  re-reads from offset 0 → duplicate alerts; (2) unhandled `UnicodeDecodeError` → crash loop,
-  ingestion currently halted. Needs code fix + unit tests + DB cleanup + restart.
+- **Ingester defects** — `evidence/partB-defect-duplication.md`: **code fix + tests committed
+  (`10b78e7`, suite 504 passed).** Remaining: deploy (restart) + DB cleanup to clear the duplicated
+  live rows and the crash-loop, then re-verify resume/dedup live. Residual inode-reuse hardening
+  tracked as follow-up.
 - **#7 visual review** of the three mobile screens (owner).
 - **#8 clean 2-hour memory run** without the dev agent, to validly judge the memory target.
 - **D detection evaluation** — dataset approval + mirrored-port replay.
