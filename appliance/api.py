@@ -439,6 +439,37 @@ class DeviceDetail(DeviceSummary):
     classification: Optional[Classification] = None
 
 
+class AlertOut(BaseModel):
+    """Threat Alert as the mobile app's SecurityAlert contract expects it.
+
+    String casing is locked to what SecurityAlert.fromApi matches: kind
+    "threat", state "new", severity one of critical/high/medium/low (all
+    lowercase). explanation and the anomaly fields are null this sprint.
+    """
+    id: str
+    kind: str = "threat"
+    title: str
+    device_mac: Optional[str] = None
+    device_name: str
+    time: Optional[str] = None  # = last_event_time (app orders/display by this)
+    severity: str
+    state: str
+    # Sprint 2 additive fields (Part D reads these).
+    first_event_time: Optional[str] = None
+    last_event_time: Optional[str] = None
+    occurrence_count: int = 1
+    rule_id: Optional[int] = None
+    source_ip: Optional[str] = None
+    destination_ip: Optional[str] = None
+    src_port: Optional[int] = None
+    dst_port: Optional[int] = None
+    # Hidden this sprint; sent explicitly as null so the contract is stable.
+    explanation: Optional[str] = None
+    model_version: Optional[str] = None
+    anomaly_score: Optional[float] = None
+    threshold: Optional[float] = None
+
+
 class StatusCount(BaseModel):
     status: Optional[str]
     count: int
@@ -810,6 +841,102 @@ def set_device_name(mac: str, body: NameUpdate):
     finally:
         conn.close()
     return NameState(mac=mac, user_name=body.name)
+
+
+# --------------------------------------------------------------------------- #
+# Threat alerts (PBI-14). Read-only; the ingester (appliance/alerts.py) owns the
+# `alerts` table. A missing table (ingester never ran) reads as "no alerts".
+# --------------------------------------------------------------------------- #
+_ALERT_SELECT = (
+    "SELECT a.alert_id, a.device_mac, a.title, a.rule_id, a.event_time, "
+    "a.src_ip, a.dst_ip, a.src_port, a.dst_port, a.severity, a.state, "
+    "a.occurrence_count, a.last_event_time, "
+    "d.user_name, d.hostname, d.model "
+    "FROM alerts a LEFT JOIN devices d ON d.mac = a.device_mac "
+)
+
+_SEVERITIES = ("critical", "high", "medium", "low")
+_STATES = ("new", "reviewed", "resolved")
+
+
+def _alert_device_name(user_name, hostname, model) -> str:
+    """Same precedence the app uses: user name -> hostname -> model -> Unknown."""
+    for value in (user_name, hostname, model):
+        if value and str(value).strip():
+            return str(value).strip()
+    return "Unknown device"
+
+
+def _severity_api(value) -> str:
+    v = (value or "").strip().lower()
+    return v if v in _SEVERITIES else "low"
+
+
+def _state_api(value) -> str:
+    v = (value or "").strip().lower()
+    return v if v in _STATES else "new"
+
+
+def row_to_alert(row) -> AlertOut:
+    return AlertOut(
+        id=str(row["alert_id"]),
+        kind="threat",
+        title=row["title"],
+        device_mac=row["device_mac"],
+        device_name=_alert_device_name(row["user_name"], row["hostname"], row["model"]),
+        time=row["last_event_time"],
+        severity=_severity_api(row["severity"]),
+        state=_state_api(row["state"]),
+        first_event_time=row["event_time"],
+        last_event_time=row["last_event_time"],
+        occurrence_count=row["occurrence_count"],
+        rule_id=row["rule_id"],
+        source_ip=row["src_ip"],
+        destination_ip=row["dst_ip"],
+        src_port=row["src_port"],
+        dst_port=row["dst_port"],
+    )
+
+
+def _query_alerts(conn, where: str, args: tuple, limit: int):
+    sql = (
+        _ALERT_SELECT + "WHERE a.alert_type = 'Threat' AND " + where
+        + " ORDER BY a.last_event_time DESC, a.alert_id DESC LIMIT ?"
+    )
+    try:
+        return conn.execute(sql, (*args, limit)).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return []
+        raise
+
+
+@app.get("/alerts", response_model=list[AlertOut])
+def list_alerts(
+    conn: sqlite3.Connection = Depends(get_connection),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """All Threat Alerts, newest first by last event time."""
+    return [row_to_alert(r) for r in _query_alerts(conn, "1=1", (), limit)]
+
+
+@app.get("/alerts/{alert_id}", response_model=AlertOut)
+def get_alert(alert_id: int, conn: sqlite3.Connection = Depends(get_connection)):
+    rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
+    return row_to_alert(rows[0])
+
+
+@app.get("/devices/{mac}/alerts", response_model=list[AlertOut])
+def list_device_alerts(
+    mac: str,
+    conn: sqlite3.Connection = Depends(get_connection),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """Alerts linked to one device, newest first by last event time."""
+    mac = normalize_mac(mac)
+    return [row_to_alert(r) for r in _query_alerts(conn, "a.device_mac = ?", (mac,), limit)]
 
 
 @app.get("/summary", response_model=SummaryStats)

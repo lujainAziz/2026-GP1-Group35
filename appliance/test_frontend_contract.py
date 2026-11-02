@@ -170,5 +170,76 @@ class FrontendContractTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 503)
 
 
+class AlertContractTests(unittest.TestCase):
+    """End-to-end (incl. pairing auth) exact-string contract for Threat Alerts."""
+
+    def setUp(self):
+        import alerts
+        self.directory = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.directory.name, 'assas.db')
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute(f'CREATE TABLE devices ({_DEVICES_SCHEMA})')
+            conn.execute(
+                "INSERT INTO devices (mac, user_name, status, discovered_current) "
+                "VALUES (?, ?, 'online', 1)", ('aa:bb:cc:dd:ee:ff', 'Front Cam'))
+            alerts.ensure_schema(conn)
+            conn.execute(
+                "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+                "src_ip, dst_ip, src_port, dst_port, severity, state, occurrence_count, "
+                "last_event_time) VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', ?, ?)",
+                ('aa:bb:cc:dd:ee:ff', 'ET MALWARE X', 2025001, '2026-11-02T10:00:00',
+                 '10.0.0.5', '8.8.8.8', 1234, 53, 'Critical', 4, '2026-11-02T10:04:00'))
+        self.patch = patch.object(api, 'DB_PATH', self.db)
+        self.patch.start()
+        self.local = TestClient(api.app, client=('127.0.0.1', 1234))
+        self.phone = TestClient(api.app, client=('192.0.2.10', 1234))
+
+    def tearDown(self):
+        self.local.close()
+        self.phone.close()
+        self.patch.stop()
+        self.directory.cleanup()
+
+    def pair(self):
+        code = self.local.get('/pairing/code').json()['code']
+        token = self.phone.post('/pair', json={'code': code, 'device_name': 'p'}).json()['token']
+        self.phone.headers['Authorization'] = 'Bearer ' + token
+
+    def test_alerts_require_auth_and_match_exact_contract(self):
+        self.assertEqual(self.phone.get('/alerts').status_code, 401)
+        self.pair()
+        response = self.phone.get('/alerts')
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        a = data[0]
+        # Exact strings SecurityAlert.fromApi depends on (casing locked).
+        self.assertEqual(a['kind'], 'threat')
+        self.assertEqual(a['state'], 'new')
+        self.assertEqual(a['severity'], 'critical')
+        self.assertEqual(a['title'], 'ET MALWARE X')
+        self.assertEqual(a['device_mac'], 'aa:bb:cc:dd:ee:ff')
+        self.assertEqual(a['device_name'], 'Front Cam')
+        self.assertEqual(a['time'], '2026-11-02T10:04:00')  # = last_event_time
+        self.assertEqual(a['first_event_time'], '2026-11-02T10:00:00')
+        self.assertEqual(a['last_event_time'], '2026-11-02T10:04:00')
+        self.assertEqual(a['occurrence_count'], 4)
+        self.assertEqual(a['rule_id'], 2025001)
+        self.assertEqual(a['source_ip'], '10.0.0.5')
+        self.assertEqual(a['destination_ip'], '8.8.8.8')
+        self.assertEqual(a['src_port'], 1234)
+        self.assertEqual(a['dst_port'], 53)
+        self.assertIsNone(a['explanation'])
+        self.assertIsNone(a['anomaly_score'])
+        # single-alert + per-device endpoints
+        one = self.phone.get('/alerts/' + a['id'])
+        self.assertEqual(one.status_code, 200)
+        self.assertEqual(one.json()['id'], a['id'])
+        dev = self.phone.get('/devices/aa:bb:cc:dd:ee:ff/alerts')
+        self.assertEqual(dev.status_code, 200)
+        self.assertEqual(len(dev.json()), 1)
+        self.assertEqual(self.phone.get('/alerts/99999').status_code, 404)
+
+
 if __name__ == '__main__':
     unittest.main()

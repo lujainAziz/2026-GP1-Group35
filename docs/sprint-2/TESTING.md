@@ -47,12 +47,19 @@ binary needed in CI). Covered:
 - *Live end-to-end* (`assas-alerts.service` reading the real eve.json): recorded after the service
   is enabled (`evidence/partB-*`).
 
-## Part C — API (`test_api.py`, `test_frontend_contract.py`)  ☐ Planned
-- endpoints: `GET /alerts`, `GET /alerts/{id}`, `GET /devices/{mac}/alerts` ordered by
-  `last_event_time` desc; auth via paired bearer (reuse `require_auth`); missing table → `[]`.
-- **contract test**: exact literal strings `kind="threat"`, `state="new"`,
-  `severity∈{critical,high,medium,low}` (casing locked).
-Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_contract.py -v`.
+## Part C — API (`test_api.py`, `test_frontend_contract.py`)  ☑ Done & tested
+Run: `cd appliance && ../.venv/bin/python -m pytest test_api.py test_frontend_contract.py -q` →
+**139 passed** (full suite **503 passed**, no regressions). Covered:
+- `AlertEndpointTests` (direct-call): `GET /alerts` ordered by `last_event_time` desc; device-name
+  precedence (user_name→hostname→model→"Unknown device"); unlinked alert → `device_mac` null,
+  "Unknown device"; `GET /alerts/{id}` + 404; `GET /devices/{mac}/alerts` filters and normalises the
+  MAC; **missing `alerts` table → `[]`**.
+- `AlertContractTests` (end-to-end via `TestClient`, incl. pairing): `GET /alerts` is **401 without a
+  paired token**; with a token the JSON matches the `SecurityAlert` contract with **exact casing** —
+  `kind="threat"`, `state="new"`, `severity="critical"`, plus `device_name`, `time`(=last_event_time),
+  `first_event_time`, `occurrence_count`, `rule_id`, `source_ip`/`destination_ip`, ports, and
+  `explanation`/`anomaly_score` = `null`; `/alerts/{id}` and `/devices/{mac}/alerts` return the row;
+  unknown id → 404.
 
 ## Part D — Mobile (`app/mobile`)  ☐ Planned
 - `flutter test` for the alerts list and detail widgets (title, severity, device, last time,

@@ -166,9 +166,28 @@ truncation/gaps. Configurable via env (`ASSAS_DB_PATH`, `ASSAS_EVE_PATH`,
 ### Commits (Part B)
 - (this commit) feat(alerts): Suricata eve.json ingestion into alerts table.
 
-## Parts C–E
-Tracked in `PLAN.md` (approach) and in `TESTING.md` / `EVALUATION.md` (evidence). Still ☐ Planned;
-see those files. `REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint end.
+## Part C — API (PBI-14, read-only)  ☑ Done & tested
+
+Additive endpoints in `appliance/api.py`, gated by the existing `require_auth` (paired bearer token;
+localhost bypass). A missing `alerts` table reads as empty.
+- `GET /alerts` — all Threat Alerts, newest first by `last_event_time` (`limit` 1–1000, default 200).
+- `GET /alerts/{alert_id}` — one alert (404 if unknown).
+- `GET /devices/{mac}/alerts` — a device's alerts, newest first.
+
+Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="threat"`,
+`state="new"`, `severity ∈ {critical,high,medium,low}`; plus `id`, `title`, `device_mac`,
+`device_name` (user_name→hostname→model→"Unknown device"), `time` (= `last_event_time`),
+`first_event_time`, `last_event_time`, `occurrence_count`, `rule_id`, `source_ip`/`destination_ip`,
+`src_port`/`dst_port`; `explanation` and the anomaly fields are `null`. A contract test asserts the
+exact strings so casing can't drift.
+
+### Commits (Part C)
+- (this commit) feat(api): read-only alert endpoints with exact app contract.
+
+## Parts D–E
+Part D (mobile) stops before the `FeatureRelease.alerts` flag flip to present the gated-path audit.
+Part E (evaluation) stops before any dataset download. See `PLAN.md` / `EVALUATION.md`.
+`REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint end.
 
 ## Documentation discipline
 - Software/package versions, final configs, file/service paths, changes vs Sprint 1, and commit

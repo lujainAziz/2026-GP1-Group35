@@ -1508,5 +1508,82 @@ class IpResolutionEndpointTests(_SeededDBTest):
         self.assertIsNone(d.ipv6)
 
 
+class AlertEndpointTests(_SeededDBTest):
+    """Read-only Threat Alert endpoints (PBI-14), called directly with a conn."""
+
+    def _schema(self):
+        import alerts
+        alerts.ensure_schema(self.conn)
+
+    def _add_alert(self, **cols):
+        keys = ", ".join(cols)
+        marks = ", ".join("?" for _ in cols)
+        self.conn.execute(
+            f"INSERT INTO alerts ({keys}) VALUES ({marks})", tuple(cols.values())
+        )
+        self.conn.commit()
+
+    def test_missing_table_reads_as_empty(self):
+        self.assertEqual(api.list_alerts(conn=self.conn, limit=200), [])
+
+    def test_list_orders_by_last_event_and_maps_contract(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="cam-1", status="online")
+        self._add_alert(
+            device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET A", rule_id=1,
+            event_time="2026-11-02T10:00:00", severity="High", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            src_ip="10.0.0.5", dst_ip="8.8.8.8", src_port=5, dst_port=53)
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ET B", rule_id=2,
+            event_time="2026-11-02T11:00:00", severity="Critical", state="New",
+            occurrence_count=3, last_event_time="2026-11-02T11:30:00",
+            src_ip="203.0.113.1", dst_ip="198.51.100.1")
+        out = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual([a.title for a in out], ["ET B", "ET A"])  # newest last_event_time first
+        b, a = out
+        self.assertEqual((b.kind, b.state, b.severity), ("threat", "new", "critical"))
+        self.assertEqual(a.severity, "high")
+        self.assertIsNone(b.device_mac)
+        self.assertEqual(b.device_name, "Unknown device")
+        self.assertEqual(b.occurrence_count, 3)
+        self.assertEqual((b.source_ip, b.destination_ip), ("203.0.113.1", "198.51.100.1"))
+        self.assertEqual(a.device_name, "cam-1")  # hostname (no user_name)
+        self.assertEqual(a.first_event_time, "2026-11-02T10:00:00")
+        self.assertIsNone(a.explanation)
+        self.assertIsNone(a.anomaly_score)
+
+    def test_user_name_preferred_for_device_name(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="cam-1", user_name="Front Cam",
+                    status="online")
+        self._add_alert(device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="X",
+                        rule_id=1, event_time="2026-11-02T10:00:00", severity="low",
+                        state="New", occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        self.assertEqual(api.list_alerts(conn=self.conn, limit=200)[0].device_name, "Front Cam")
+
+    def test_get_alert_and_404(self):
+        self._schema()
+        self._add_alert(device_mac=None, alert_type="Threat", title="X", rule_id=1,
+                        event_time="2026-11-02T10:00:00", severity="Medium", state="New",
+                        occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        self.assertEqual(api.get_alert(alert_id=1, conn=self.conn).severity, "medium")
+        with self.assertRaises(api.HTTPException) as ctx:
+            api.get_alert(alert_id=999, conn=self.conn)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_device_alerts_filter_normalises_mac(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="cam-1", status="online")
+        self._add_alert(device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="mine",
+                        rule_id=1, event_time="2026-11-02T10:00:00", severity="low",
+                        state="New", occurrence_count=1, last_event_time="2026-11-02T10:02:00")
+        self._add_alert(device_mac=None, alert_type="Threat", title="other", rule_id=2,
+                        event_time="2026-11-02T10:00:00", severity="low", state="New",
+                        occurrence_count=1, last_event_time="2026-11-02T10:03:00")
+        out = api.list_device_alerts(mac="AA:BB:CC:DD:EE:FF", conn=self.conn, limit=200)
+        self.assertEqual([a.title for a in out], ["mine"])
+
+
 if __name__ == "__main__":
     unittest.main()
