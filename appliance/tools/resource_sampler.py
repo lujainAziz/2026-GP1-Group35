@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Continuous appliance resource sampler for the Sprint 2 evaluation (PBI-13/14).
+
+Records, with all services running, the metrics PBI-13 asks for:
+  - total device CPU on a 0-100% scale (target: average <= 75%),
+  - memory used of total (target: < 4 GB of 8 GB),
+  - traffic rate on the capture interface,
+  - Suricata packet-drop rate (from eve `stats` capture.kernel_packets/kernel_drops).
+
+Reads only /proc, /sys and the world-readable eve.json -> no root needed.
+Writes an incremental CSV plus a summary JSON so partial data survives a stop.
+
+Usage: resource_sampler.py [duration_seconds] [interval_seconds]
+Env: ASSAS_EVE_PATH, ASSAS_CAPTURE_IFACE, ASSAS_RES_OUTDIR.
+"""
+import glob
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+
+DURATION = int(sys.argv[1]) if len(sys.argv) > 1 else 7200       # 2 hours
+INTERVAL = float(sys.argv[2]) if len(sys.argv) > 2 else 10.0
+IFACE = os.getenv("ASSAS_CAPTURE_IFACE", "eth1")
+EVE = os.getenv("ASSAS_EVE_PATH", "/var/log/suricata/eve.json")
+OUTDIR = os.getenv("ASSAS_RES_OUTDIR", "/home/assas/assas/docs/sprint-2/evidence/resources")
+CSV = os.path.join(OUTDIR, "resource-2h.csv")
+SUMMARY = os.path.join(OUTDIR, "resource-2h-summary.json")
+
+
+def read_cpu():
+    with open("/proc/stat") as f:
+        parts = f.readline().split()[1:]
+    vals = [int(x) for x in parts]
+    idle = vals[3] + (vals[4] if len(vals) > 4 else 0)  # idle + iowait
+    total = sum(vals)
+    return idle, total
+
+
+def read_mem():
+    info = {}
+    with open("/proc/meminfo") as f:
+        for line in f:
+            k, _, v = line.partition(":")
+            info[k] = int(v.strip().split()[0])  # kB
+    total = info["MemTotal"]
+    avail = info.get("MemAvailable", info.get("MemFree", 0))
+    return (total - avail) // 1024, total // 1024  # MB used, MB total
+
+
+def read_net(iface):
+    base = f"/sys/class/net/{iface}/statistics"
+    try:
+        def r(n):
+            with open(f"{base}/{n}") as f:
+                return int(f.read())
+        return r("rx_bytes"), r("tx_bytes"), r("rx_packets"), r("tx_packets")
+    except OSError:
+        return None
+
+
+def read_suri_stats():
+    """Last eve `stats` event's cumulative capture counters (pkts, drops)."""
+    path = EVE
+    if not os.path.exists(path):
+        rotated = sorted(glob.glob(glob.escape(EVE) + "-*"))
+        if not rotated:
+            return None
+        path = rotated[-1]
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 131072))
+            tail = f.read().split(b"\n")
+    except OSError:
+        return None
+    for raw in reversed(tail):
+        raw = raw.strip()
+        if not raw or b'"stats"' not in raw:
+            continue
+        try:
+            o = json.loads(raw)
+        except ValueError:
+            continue
+        cap = (o.get("stats") or {}).get("capture") or {}
+        if "kernel_packets" in cap:
+            return int(cap.get("kernel_packets", 0)), int(cap.get("kernel_drops", 0))
+    return None
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def main():
+    os.makedirs(OUTDIR, exist_ok=True)
+    start = time.time()
+    idle0, tot0 = read_cpu()
+    net0 = read_net(IFACE)
+    suri_first = read_suri_stats()
+
+    cpu_samples, mem_used_samples, rxbps_samples, txbps_samples = [], [], [], []
+    new = not os.path.exists(CSV)
+    with open(CSV, "a", buffering=1) as csv:
+        if new:
+            csv.write("utc,cpu_pct,mem_used_mb,mem_total_mb,rx_bps,tx_bps,rx_pps,tx_pps,"
+                      "suri_kernel_packets,suri_kernel_drops\n")
+        last_net = net0
+        last_idle, last_tot = idle0, tot0
+        last_t = start
+        while time.time() - start < DURATION:
+            time.sleep(INTERVAL)
+            t = time.time()
+            idle1, tot1 = read_cpu()
+            dt_idle, dt_tot = idle1 - last_idle, tot1 - last_tot
+            cpu_pct = round(100.0 * (1 - dt_idle / dt_tot), 1) if dt_tot > 0 else 0.0
+            last_idle, last_tot = idle1, tot1
+
+            mem_used, mem_total = read_mem()
+            net1 = read_net(IFACE)
+            span = max(1e-6, t - last_t)
+            if net1 and last_net:
+                rx_bps = int((net1[0] - last_net[0]) * 8 / span)
+                tx_bps = int((net1[1] - last_net[1]) * 8 / span)
+                rx_pps = int((net1[2] - last_net[2]) / span)
+                tx_pps = int((net1[3] - last_net[3]) / span)
+            else:
+                rx_bps = tx_bps = rx_pps = tx_pps = 0
+            last_net = net1 or last_net
+            last_t = t
+            suri = read_suri_stats() or (0, 0)
+
+            csv.write(f"{now_iso()},{cpu_pct},{mem_used},{mem_total},{rx_bps},{tx_bps},"
+                      f"{rx_pps},{tx_pps},{suri[0]},{suri[1]}\n")
+            cpu_samples.append(cpu_pct)
+            mem_used_samples.append(mem_used)
+            rxbps_samples.append(rx_bps)
+            txbps_samples.append(tx_bps)
+
+    suri_last = read_suri_stats()
+    d_pkts = d_drops = None
+    if suri_first and suri_last:
+        d_pkts = suri_last[0] - suri_first[0]
+        d_drops = suri_last[1] - suri_first[1]
+
+    def avg(xs):
+        return round(sum(xs) / len(xs), 2) if xs else None
+
+    summary = {
+        "started": now_iso_from(start),
+        "ended": now_iso(),
+        "duration_seconds": int(time.time() - start),
+        "interval_seconds": INTERVAL,
+        "samples": len(cpu_samples),
+        "cpu_pct_avg": avg(cpu_samples),
+        "cpu_pct_max": max(cpu_samples) if cpu_samples else None,
+        "cpu_target_avg_le_75": (avg(cpu_samples) or 0) <= 75,
+        "mem_used_mb_avg": avg(mem_used_samples),
+        "mem_used_mb_max": max(mem_used_samples) if mem_used_samples else None,
+        "mem_total_mb": read_mem()[1],
+        "mem_target_under_4gb": (max(mem_used_samples) if mem_used_samples else 0) < 4096,
+        "rx_bps_avg": avg(rxbps_samples),
+        "tx_bps_avg": avg(txbps_samples),
+        "suricata_pkts_during": d_pkts,
+        "suricata_drops_during": d_drops,
+        "suricata_drop_rate_pct": (round(100.0 * d_drops / d_pkts, 4)
+                                   if d_pkts and d_pkts > 0 else None),
+    }
+    with open(SUMMARY, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(json.dumps(summary, indent=2))
+
+
+def now_iso_from(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds")
+
+
+if __name__ == "__main__":
+    main()
