@@ -1,0 +1,13 @@
+== before ==
+/var/log/suricata/eve.json inode=909884 size=554696
+== rotate (force) ==
+rotate-eve: rotated /var/log/suricata/eve.json -> /var/log/suricata/eve.json-20261102-124031 (554696 bytes); sent SIGHUP to assas-suricata.service
+== right after rotation ==
+waiting 35s...
+== after one stats interval ==
+/var/log/suricata/eve.json inode=909942 size=16089
+eve.json grew:  -> 16089 (resumed if s1 > s0)
+service active=active
+== all eve files ==
+-rw-r--r-- 1 root root  16089 15:41:07 /var/log/suricata/eve.json
+-rw-r--r-- 1 root root 554696 14:30:00 /var/log/suricata/eve.json-20261102-124031

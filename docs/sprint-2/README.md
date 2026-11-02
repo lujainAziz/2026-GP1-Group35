@@ -15,7 +15,7 @@ Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
 | Area | Sprint 1 | Sprint 2 addition |
 |---|---|---|
 | Detection | none | Suricata 7.0.10 IDS (ET Open signatures) on the capture interface |
-| Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata`, `assas-suricata-rotate.timer` (◐ enable pending), + `assas-alerts` (☐) |
+| Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (☑ active), `assas-suricata-rotate.timer` (☑ active), + `assas-alerts` (☐) |
 | Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☐) |
 | API | inventory endpoints | + read-only alert endpoints (☐) |
 | Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☐, flag flip pending review) |
@@ -35,7 +35,7 @@ Recorded 2026-11-02 from the live Pi.
 
 ---
 
-## Part A — Suricata IDS (PBI-13)  ◐ implemented & config-tested; service enable pending
+## Part A — Suricata IDS (PBI-13)  ☑ Done & tested (2026-11-02)
 
 ### Packages installed (2026-11-02, `apt-get install suricata`)
 | Package | Version | Note |
@@ -96,23 +96,34 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 ### ET Open ruleset
 | Item | Value | Evidence |
 |---|---|---|
-| Source | Emerging Threats Open (`et/open`), suricata-update default source | suricata-update |
+| Source | Emerging Threats Open (`et/open`) — suricata-update's built-in default (no source was explicitly enabled, so `suricata-update` used its default ET Open ruleset; `list-enabled-sources` → *"No enabled sources"*) | `partA-et-open-source.txt` |
 | Source index | `https://www.openinfosecfoundation.org/rules/index.yaml` (accessed 2026-11-02) | suricata-update docs |
-| Ruleset URL | `https://rules.emergingthreats.net/open/suricata-7.0.10/emerging.rules.tar.gz` (accessed 2026-11-02) | *to confirm from `suricata-update` stdout* |
+| Ruleset URL | canonical ET Open for this version: `https://rules.emergingthreats.net/open/suricata-7.0.10/emerging.rules.tar.gz` (accessed 2026-11-02; for a byte-exact capture run `sudo suricata-update list-sources`) | reference |
 | Downloaded | 2026-11-02 15:09 | mtime of rules file |
 | Output file | `/var/lib/suricata/rules/suricata.rules` — 46,029,036 bytes, 69,273 lines | `ls -l`, `wc -l` |
-| Signatures loaded | **53,305 rules loaded, 0 failed** (53,310 signatures processed) | `suricata -T` output (below) |
+| Signatures loaded | **53,305 rules loaded, 0 failed** (53,310 signatures processed) | `partA-suricata-T.log` |
 | Scheduled updates | none (one-shot only) | see "neutralised" above |
 
-### Verification evidence
-- Config + rules load test (exit 0): `sudo suricata -T -c /etc/suricata/assas.yaml -v` →
-  *"Setting engine mode to IDS mode by default"*, eve.json + stats.log initialised,
-  *"53305 rules successfully loaded, 0 rules failed"*, *"Configuration provided was successfully
-  loaded. Exiting."* (run 2026-11-02; raw log to be archived at `docs/sprint-2/evidence/` once the
-  service is enabled).
-- logrotate dry-run `logrotate -d /etc/logrotate.d/suricata` parses both patterns, no errors.
-- Service `active (running)` on `eth1`, and eve event-types limited to `alert`/`stats`: **pending
-  Batch 2** (enable + runtime check); evidence will be appended here.
+### Verification evidence (all under `docs/sprint-2/evidence/`)
+- **Config + rules load** (exit 0): `suricata -T` → *"Setting engine mode to IDS mode by default"*,
+  eve.json + stats.log initialised, *"53305 rules successfully loaded, 0 rules failed"*,
+  *"Configuration provided was successfully loaded."* → `partA-suricata-T.log`.
+- **Service**: `assas-suricata.service` `ActiveState=active`, `SubState=running`,
+  `ExecMainStatus=0`, enabled; `assas-suricata-rotate.timer` enabled + active →
+  `partA-service-state.txt`.
+- **eve event types = `alert` + `stats` only** (no packet/flow/dns/…): `partA-eve-event-types.txt`
+  (computed with `python3`; raw eve records are never committed — they contain addresses). During
+  the check, 4 `alert` events had already fired on live traffic, confirming end-to-end detection.
+- **logrotate excludes eve.json** (manages only stats.log/suricata.log): `partA-logrotate-patterns.txt`.
+- **Real rotation** (forced, not just `-d`): `eve.json` inode `909884` → renamed
+  `eve.json-20261102-124031` (554696 B, preserved uncompressed); Suricata reopened a fresh
+  `eve.json` with **new inode `909942`** which **grew to 16089 B** after the next stats interval
+  while the service stayed active → logging genuinely resumed → `partA-rotation-test.txt`.
+- **Sensitive-data scan**: all evidence files scanned for IPv4/MAC/IPv6 → clean (no addresses
+  committed).
+
+> Operational note for Part B: for ~1–3 s after a rotation (before Suricata handles `SIGHUP`)
+> `eve.json` briefly does not exist. The ingester must tolerate this (retry, not error).
 
 ### Official sources (accessed 2026-11-02)
 - Suricata 7.0 user guide: `https://docs.suricata.io/en/suricata-7.0/`

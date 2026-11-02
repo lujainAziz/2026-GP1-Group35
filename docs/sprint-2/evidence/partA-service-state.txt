@@ -1,0 +1,9 @@
+# assas-suricata.service
+MainPID=6302
+ExecMainStatus=0
+ActiveState=active
+SubState=running
+enabled=enabled
+
+# assas-suricata-rotate.timer
+enabled=enabled active=active
