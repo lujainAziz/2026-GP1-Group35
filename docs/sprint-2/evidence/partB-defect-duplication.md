@@ -54,8 +54,10 @@ rows** result. No test feeds a line that triggers `UnicodeDecodeError` (only `JS
    = 2843` == 2843 retained-log alert events (diff 0)** → no duplication, no loss vs the logs; live
    checkpoint `offset==size` (caught up), rotated file `consumed=1`. No crash loop. Pre-reset check
    found **0 genuine DB-only alerts**, and the backup preserves the prior 651-row state.
-6. ☐ **Restart-safety confirmation (sudo, no delete):** one restart comparing rows + SUM(occurrence)
-   + checkpoint offset before/after (row count alone can't detect occurrence-only re-ingestion).
+6. ✅ **Restart-safety confirmed (2026-11-03, `evidence/partB-restart-safety.txt`):** a restart left
+   rows/`SUM(occurrence)`/offset **identical** (337/2854/29899717 before==after) → resumed from the
+   checkpoint with no re-ingestion. (Checked `SUM(occurrence)` + offset, not row count alone, since
+   re-ingestion can inflate occurrence without adding rows.)
 
 ## Root cause of `offset > size` (reboot, not accounting)
 **Confirmed:** the Pi **rebooted at 2026-11-02 23:12 +03 (20:12 UTC)** — `who -b` = "system boot

@@ -1,0 +1,9 @@
+# Restart-safety re-check (occurrence + checkpoint, not row count) — 2026-11-03
+# Ran: snapshot -> sudo systemctl restart assas-alerts -> snapshot (no reset/delete).
+before: rows=337 sum_occ=2854 offset=29899717
+after : rows=337 sum_occ=2854 offset=29899717
+# Interpretation: identical before/after -> checkpoint offset NOT reset, SUM(occurrence)
+# unchanged, rows unchanged. The restart resumed from the persisted checkpoint and
+# re-ingested nothing (occurrence delta 0 == 0 new source events in the consumed range).
+# Had the pre-fix re-read-from-0 behaviour persisted, a restart would have spiked
+# SUM(occurrence); it did not -> RESTART-SAFE, no re-ingestion/duplication.
