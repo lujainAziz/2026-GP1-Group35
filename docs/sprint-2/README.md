@@ -11,6 +11,14 @@ Status legend: ☐ Planned · ◐ In progress · ☑ Done & tested. Every "Done"
 Repo: `github.com/lujainAziz/Assas`, branch `sprint-2` (branched from tag `sprint-1` = `4786e3c`).
 Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
 
+**Branch sync with `main` (correction).** `sprint-2` was cut at PR #14 (`4786e3c`). `main` then
+advanced to PR #18 (`c8e42e5`) with UI/design updates **not** initially in `sprint-2` — contrary to
+an earlier assertion that all `main`/design changes were already present. On 2026-11-03 `origin/main`
+(through `c8e42e5`) was merged into `sprint-2` (conflict-free) to include: #15 "Computer" device
+label, #16 OUI registry docs, **#17 live signal line → "Soon · Sprint 5"**, **#18 "Now watching"
+protocol tags → "Soon · Sprint 5"**. #17/#18 restore the approved design's gating of live-activity UI
+that `sprint-2` had been showing. All Sprint 2 functionality is preserved.
+
 ## What is new vs Sprint 1
 | Area | Sprint 1 | Sprint 2 addition |
 |---|---|---|
