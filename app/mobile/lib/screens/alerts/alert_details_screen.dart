@@ -108,25 +108,21 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                     'Signal details',
                     padding: EdgeInsets.fromLTRB(22, 24, 22, 8),
                   ),
+                  // Device shown once via the tappable pill above the time, so it
+                  // is not repeated here. Occurrences, first/last seen, rule id and
+                  // ports are intentionally hidden from this screen (they remain in
+                  // the database and API); only source/destination IP are shown.
                   SpecList(
                     railColor: c,
+                    copyable: const {'Source IP', 'Destination IP'},
+                    onCopy: (_) => showToast(context, 'Copied'),
                     rows: [
-                      ('Device', a.deviceName, Ui.ink),
                       ('Alert type', a.kindLabel, Ui.ink),
                       ('Severity', a.severityLabel, c),
-                      if (a.occurrenceCount > 1)
-                        ('Occurrences', '${a.occurrenceCount}×', Ui.ink),
-                      if (a.firstTime != null)
-                        ('First seen', TimeFormat.alertTimePhrase(a.firstTime!), Ui.ink),
-                      if (a.lastTime != null)
-                        ('Last seen', TimeFormat.alertTimePhrase(a.lastTime!), Ui.ink),
-                      // Threat alerts: addresses + ports + matched rule (PBI-14)
                       if (a.kind == AlertKind.threat && a.sourceIp != null)
-                        ('Source', a.srcPort != null ? '${a.sourceIp}:${a.srcPort}' : a.sourceIp!, Ui.ink),
+                        ('Source IP', a.sourceIp!, Ui.ink),
                       if (a.kind == AlertKind.threat && a.destinationIp != null)
-                        ('Destination', a.dstPort != null ? '${a.destinationIp}:${a.dstPort}' : a.destinationIp!, Ui.ink),
-                      if (a.ruleId != null)
-                        ('Rule ID', a.ruleId!, Ui.ink),
+                        ('Destination IP', a.destinationIp!, Ui.ink),
                     ],
                   ),
                   // Review / Resolve arrive with alert management (Sprint 5, PBI-19).

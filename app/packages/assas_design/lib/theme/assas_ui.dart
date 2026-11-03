@@ -206,8 +206,11 @@ class UiText {
   static TextStyle get settingsTitle => sans(46, 800, height: 0.92, em: -0.045);
   static TextStyle get pairTitle => sans(44, 800, height: 0.95, em: -0.04);
   static TextStyle get statNumber => sans(40, 800, em: -0.04);
-  static TextStyle get deviceName => sans(40, 800, height: 0.92, em: -0.045);
-  static TextStyle get alertTitle => sans(34, 800, height: 0.95, em: -0.04);
+  // Detail-screen titles: sized so long device names / alert signatures stay
+  // readable (wrap, no clip) even at the smallest font setting. Used only on the
+  // device-details and alert-details titles.
+  static TextStyle get deviceName => sans(26, 800, height: 1.02, em: -0.03);
+  static TextStyle get alertTitle => sans(22, 800, height: 1.12, em: -0.02);
   static TextStyle get splashWordmark => mono(24, 700, em: 0.55);
 
   // ---------- Section headers ----------
@@ -233,8 +236,8 @@ class UiText {
   static TextStyle get error => sans(12, 400, height: 1.35);
 
   // ---------- Captions and mono data ----------
-  static TextStyle get ip => mono(26, 700, em: -0.02);
-  static TextStyle get mac => mono(15, 700, em: -0.02);
+  static TextStyle get ip => mono(18, 700, height: 1.25, em: -0.02);
+  static TextStyle get mac => mono(15, 700, height: 1.25, em: -0.02);
   static TextStyle get overviewNumber => mono(26, 800, height: 0.95, em: -0.03);
   static TextStyle get ribbonNumber => mono(13, 800);
   static TextStyle get specValue => mono(12.5, 600);

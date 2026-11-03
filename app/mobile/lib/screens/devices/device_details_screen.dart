@@ -1,6 +1,7 @@
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
 
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../../state/app_state.dart';
 import '../../theme/assas_ui.dart';
 import '../../widgets/coming_soon.dart';
@@ -262,6 +263,8 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
           quarterTurns: topLeft ? 0 : 2,
           child: CustomPaint(size: const Size(14, 14), painter: _BracketPainter(hero)),
         );
+    // Value is tap-to-copy (raw text); long IPv6 wraps at `:`/`.` groups so it
+    // stays readable without clipping.
     Widget field(String k, String v, TextStyle style) => Padding(
           padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
           child: Column(
@@ -269,7 +272,14 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
             children: [
               Text(k, style: UiText.identityLabel.copyWith(color: Ui.mute)),
               const SizedBox(height: 5),
-              Text(v, style: style),
+              Pressable(
+                semanticLabel: 'Copy $k',
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: v));
+                  showToast(context, 'Copied');
+                },
+                child: Text(breakAddress(v), style: style, softWrap: true),
+              ),
             ],
           ),
         );

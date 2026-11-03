@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:assas_design/widgets/ui_kit.dart' show surfCard;
 
 export 'package:assas_design/widgets/ui_kit.dart' show glassCard, surfCard;
@@ -644,12 +645,28 @@ class PillButton extends StatelessWidget {
 }
 
 /// Card with a rail and dotted rows (Signal details / device specs).
+/// Insert zero-width spaces after `:`/`.` so long addresses (esp. IPv6) wrap at
+/// group boundaries instead of being clipped or broken mid-group. Display only;
+/// copy uses the raw value.
+String breakAddress(String v) => v.replaceAllMapped(RegExp(r'[:.]'), (m) => '${m[0]}​');
+
 class SpecList extends StatelessWidget {
-  const SpecList({super.key, required this.rows, required this.railColor});
+  const SpecList({
+    super.key,
+    required this.rows,
+    required this.railColor,
+    this.copyable = const <String>{},
+    this.onCopy,
+  });
 
   /// (label, value, value color)
   final List<(String, String, Color)> rows;
   final Color railColor;
+
+  /// Labels whose value can be tapped to copy (e.g. IP addresses). The copied
+  /// text is the raw value; [onCopy] lets the screen show its own feedback.
+  final Set<String> copyable;
+  final void Function(String value)? onCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -689,13 +706,26 @@ class SpecList extends StatelessWidget {
                           Text(r.$1.toUpperCase(), style: UiText.specLabel.copyWith(color: Ui.mute)),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Text(
-                              r.$2,
-                              textAlign: TextAlign.right,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: UiText.specValue.copyWith(color: r.$3),
-                            ),
+                            child: Builder(builder: (context) {
+                              final canCopy = copyable.contains(r.$1);
+                              final text = Text(
+                                canCopy ? breakAddress(r.$2) : r.$2,
+                                textAlign: TextAlign.right,
+                                // addresses may wrap to a few lines; no clipping
+                                maxLines: canCopy ? 4 : 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: UiText.specValue.copyWith(color: r.$3),
+                              );
+                              if (!canCopy) return text;
+                              return Pressable(
+                                semanticLabel: 'Copy ${r.$1}',
+                                onTap: () {
+                                  Clipboard.setData(ClipboardData(text: r.$2));
+                                  onCopy?.call(r.$2);
+                                },
+                                child: text,
+                              );
+                            }),
                           ),
                         ],
                       ),
@@ -735,8 +765,7 @@ class AlertMetaRow extends StatelessWidget {
       children: [
         Expanded(
           child: Text(
-            '${sevUpper(alert.severity)} · ${kindUpper(alert)}'
-            '${alert.occurrenceCount > 1 ? ' · ${alert.occurrenceCount}×' : ''}',
+            '${sevUpper(alert.severity)} · ${kindUpper(alert)}',
             maxLines: 1,
             overflow: TextOverflow.clip,
             style: UiText.alertMeta.copyWith(color: c),

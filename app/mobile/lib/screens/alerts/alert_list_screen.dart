@@ -107,39 +107,12 @@ class _AlertListScreenState extends State<AlertListScreen> {
       children: [
         const KickerRow('NEEDS ATTENTION'),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: UiSpace.pageText),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Takes the free space (was a Spacer) and shrinks the word if it does not fit.
-              Expanded(
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.bottomLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: Released.alerts
-                          ? Text(
-                              state.unresolvedCount?.toString() ?? '–',
-                              style: UiText.alertsHero.copyWith(color: Ui.high),
-                            )
-                          // A 120px dash looks like a block, so the word is shown instead.
-                          : Text('Soon', style: UiText.devicesHero.copyWith(color: Ui.mute)),
-                    ),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  'open\nalerts',
-                  textAlign: TextAlign.right,
-                  style: UiText.heroSuffix.copyWith(height: 1),
-                ),
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 10, UiSpace.pageText, 0),
+          child: Text(
+            // Screen title (not a count). The open-alerts summary is a later
+            // sprint; the list below is the Sprint-2 deliverable.
+            Released.alerts ? 'Threat Alerts' : 'Soon',
+            style: UiText.pairTitle.copyWith(color: Released.alerts ? Ui.ink : Ui.mute),
           ),
         ),
         const SizedBox(height: 14),

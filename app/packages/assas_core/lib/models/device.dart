@@ -60,8 +60,15 @@ class Device {
   /// user's name -> hostname -> model -> "Unknown device".
   String get displayName => _clean(userName) ?? detectedName;
 
-  /// The name Assas detected, ignoring the user's name.
-  String get detectedName => _clean(hostname) ?? _clean(model) ?? 'Unknown device';
+  /// The name Assas detected, ignoring the user's name. A detected hostname that
+  /// is just an opaque machine identifier (UUID / long hex / long vowel-less
+  /// token) is not human-friendly, so it falls back to the model or
+  /// "Unknown device". The real identifier (MAC) and renaming are unaffected.
+  String get detectedName {
+    final h = _clean(hostname);
+    if (h != null && !_looksLikeMachineId(h)) return h;
+    return _clean(model) ?? 'Unknown device';
+  }
 
   bool get hasUserName => _clean(userName) != null;
   String get vendorLabel => _clean(vendor) ?? 'Unknown';
@@ -172,6 +179,23 @@ String? _clean(String? v) {
   final t = v.trim();
   if (t.isEmpty || t.toLowerCase() == 'null' || t.toLowerCase() == 'unknown') return null;
   return t;
+}
+
+/// True for a hostname that is an opaque auto-generated identifier (not a
+/// human-friendly name): a UUID, a long hex string, or a long separator-free,
+/// essentially vowel-less token. Conservative so real names (with vowels,
+/// hyphens/dots, or under 24 chars) are kept as-is.
+bool _looksLikeMachineId(String s) {
+  if (s.contains(' ')) return false;
+  final uuid = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+  if (uuid.hasMatch(s)) return true;
+  if (s.length >= 24 && RegExp(r'^[0-9a-fA-F]+$').hasMatch(s)) return true;
+  if (s.length >= 24 && !s.contains('-') && !s.contains('.')) {
+    final vowels = RegExp(r'[AEIOUaeiou]').allMatches(s).length;
+    if (vowels / s.length < 0.1) return true;
+  }
+  return false;
 }
 
 bool? _asBool(dynamic v) {
