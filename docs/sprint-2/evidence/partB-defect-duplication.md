@@ -51,11 +51,14 @@ rows** result. No test feeds a line that triggers `UnicodeDecodeError` (only `JS
    `alert_ingest_state` and let the fixed ingester re-ingest cleanly from the current eve files.
 
 ## Root cause of `offset > size` (reboot, not accounting)
-The Pi **rebooted at 2026-11-02 23:12 +03 (20:12 UTC)** — `who -b` = "system boot 2026-11-02 23:12",
-and all five services share `ExecMainStartTimestamp ≈ 23:12:46 +03` with `NRestarts=0` (co-start =
-boot, not a single-service restart). Sequence: the ingester had read and committed `offset 7672248`
-from eve.json (those bytes existed in the page cache); the unclean reboot lost eve.json's last
-unsynced ~4536 bytes; on restart the on-disk file was `7667712 < 7672248` → `offset > size`. Byte/
+**Confirmed:** the Pi **rebooted at 2026-11-02 23:12 +03 (20:12 UTC)** — `who -b` = "system boot
+2026-11-02 23:12", and all five services share `ExecMainStartTimestamp ≈ 23:12:46 +03` with
+`NRestarts=0` (co-start = boot, not a single-service restart); this coincides with the SSH drop.
+**Likely (not independently proven):** the ingester had read and committed `offset 7672248` from
+eve.json; the unclean reboot lost eve.json's last unsynced ~4536 bytes, so on restart the on-disk
+file was `7667712 < 7672248` → `offset > size`. The exact loss mechanism (unsynced tail vs. another
+truncation at reboot) is not independently proven, but it is the explanation consistent with the
+~4536-byte shortfall and a sound byte/partial-line accounting. Byte/
 partial-line **accounting is sound** (`consumed = Σ(len(line)+1)` over complete lines only, so
 `consumed ≤ bytes read` and the offset always lands on a line boundary ≤ real EOF; it cannot
 over-commit). So the mismatch is a **durability artifact of the reboot**, and the re-read-from-0
