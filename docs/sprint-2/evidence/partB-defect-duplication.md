@@ -46,9 +46,16 @@ rows** result. No test feeds a line that triggers `UnicodeDecodeError` (only `JS
 4. ☐ **Residual hardening (not yet done):** inode reuse where the replaced file is *larger* than the
    old offset would resume mid-file; add a first-bytes/creation fingerprint to file identity. Low
    likelihood with the rename+SIGHUP rotation (new file gets a new inode), tracked as follow-up.
-5. ☐ **Deploy + data cleanup (sudo, pending approval):** the service runs `alerts.py` from the repo,
-   so a restart loads the fix. The already-duplicated rows remain until cleaned — wipe `alerts` +
-   `alert_ingest_state` and let the fixed ingester re-ingest cleanly from the current eve files.
+5. ✅ **Deploy + data cleanup (done 2026-11-03):** fail-closed batch stopped only `assas-alerts`,
+   took a validated WAL-aware backup (`assas-precleanup-20261103-181205.db`, sha `fcfc73e6…`, +
+   log copies) under `/home/assas/sprint2-backups/`, reset only `alerts` + `alert_ingest_state`
+   (651 alerts + 2 checkpoints) in one transaction, and restarted the fixed reader. **Independent
+   read-only verification** (`evidence/partB-cleanup-verify.txt`): 331 rows, **`SUM(occurrence_count)
+   = 2843` == 2843 retained-log alert events (diff 0)** → no duplication, no loss vs the logs; live
+   checkpoint `offset==size` (caught up), rotated file `consumed=1`. No crash loop. Pre-reset check
+   found **0 genuine DB-only alerts**, and the backup preserves the prior 651-row state.
+6. ☐ **Restart-safety confirmation (sudo, no delete):** one restart comparing rows + SUM(occurrence)
+   + checkpoint offset before/after (row count alone can't detect occurrence-only re-ingestion).
 
 ## Root cause of `offset > size` (reboot, not accounting)
 **Confirmed:** the Pi **rebooted at 2026-11-02 23:12 +03 (20:12 UTC)** — `who -b` = "system boot
