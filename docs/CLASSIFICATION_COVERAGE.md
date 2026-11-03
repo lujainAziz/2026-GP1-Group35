@@ -41,6 +41,12 @@ No fingerprint API, account, telemetry or cloud upload was added.
   `/usr/share/nmap/nmap-mac-prefixes` or its `/usr/local/share` equivalent.
   Primary entries and longest-prefix lookup are preserved; randomized MACs
   still do not acquire a manufacturer from their random prefix.
+- The Pi's arp-scan registry (`/usr/share/arp-scan/ieee-oui.txt`) shipped with
+  the OS was dated October 2024 and missed newer prefixes (for example
+  `60:FF:9E`, AzureWave). On 24 Oct 2026 it was refreshed with `get-oui`
+  (47,399 to 51,942 entries). On a new Pi: back up the file, run
+  `cd /tmp && get-oui -v -f /tmp/ieee-oui-new.txt`, copy the result over
+  `/usr/share/arp-scan/ieee-oui.txt`, then restart `assas-discovery`.
 
 ## Verification and deployment
 

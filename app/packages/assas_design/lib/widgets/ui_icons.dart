@@ -84,7 +84,7 @@ class UiIcons {
   static String shortLabel(Device d) => switch (glyphName(d)) {
         'tv' => 'TV',
         'camera' => 'Camera',
-        'laptop' => 'Laptop',
+        'laptop' => 'Computer',
         'phone' => 'Phone',
         'tablet' => 'Tablet',
         'plug' => 'Plug',

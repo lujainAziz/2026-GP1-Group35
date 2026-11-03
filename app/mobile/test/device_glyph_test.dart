@@ -23,4 +23,11 @@ void main() {
     expect(UiIcons.shortLabel(phone), 'Phone');
     expect(UiIcons.forDevice(phone), UiIcons.phone);
   });
+
+  test('computers are labelled Computer but keep the laptop glyph', () {
+    final pc = device('Computer / Server');
+    expect(UiIcons.glyphName(pc), 'laptop');
+    expect(UiIcons.shortLabel(pc), 'Computer');
+    expect(UiIcons.forDevice(pc), UiIcons.laptop);
+  });
 }

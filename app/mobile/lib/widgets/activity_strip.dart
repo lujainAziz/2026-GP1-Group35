@@ -2,11 +2,13 @@ import 'dart:math' as math;
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
 import '../theme/assas_ui.dart';
+import 'coming_soon.dart';
 
 class ActivityTrace extends StatelessWidget {
   const ActivityTrace({super.key, required this.activity, required this.connected});
   final LiveActivity? activity;
   final bool connected;
+  static bool get _released => false; // Sprint 5
   @override
   Widget build(BuildContext context) {
     final data = activity;
@@ -19,7 +21,8 @@ class ActivityTrace extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(22, 10, 22, 0),
       height: 58,
       decoration: BoxDecoration(border: Border.symmetric(horizontal: BorderSide(color: Ui.line))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+      child: !_released ? const Align(alignment: Alignment.centerRight, child: SoonTag(5))
+        : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
         const SizedBox(height: 4),
         Text(label, style: UiText.liveSignal.copyWith(color: Ui.mute)),
         Expanded(child: SizedBox.expand(child: ready
@@ -55,6 +58,7 @@ class ObservedProtocols extends StatelessWidget {
   const ObservedProtocols({super.key, required this.activity, required this.connected});
   final LiveActivity? activity;
   final bool connected;
+  static bool get _released => false; // Sprint 5
   @override
   Widget build(BuildContext context) {
     final data = activity;
@@ -62,7 +66,8 @@ class ObservedProtocols extends StatelessWidget {
     final tags = ready ? data.protocols : const <String>[];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: !_released ? const Align(alignment: Alignment.centerLeft, child: SoonTag(5))
+        : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('NOW WATCHING · LAST 60s', style: UiText.watchLead.copyWith(color: Ui.acc)),
         const SizedBox(height: 8),
         if (tags.isEmpty) Text(ready ? 'No protocols seen recently' : 'Waiting for capture data',
