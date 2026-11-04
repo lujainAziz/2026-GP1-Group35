@@ -69,11 +69,19 @@ WHERE addr = ?
   AND datetime(first_seen, '-2 hours')      <= <event_time>   -- clock skew / first-sighting lag
   AND datetime(last_seen,  '+24 hours')     >= <event_time>   -- deprecated-address grace
 ```
-Rationale for the bounds: a privacy (RFC 4941) address keeps *receiving* traffic
-after it stops being preferred, until its valid-lifetime expires (commonly ≤ 1–7
-days; we take a conservative 24 h grace past the last ownership evidence,
-configurable `ASSAS_IPV6_LINK_GRACE`). An event **older than the first evidence**
-(e.g. a replayed capture) is *not* attributed to the address's current owner.
+Rationale for the bounds (both configurable, both a stated trade-off — the lower
+bound **does allow** attributing events up to 2 h before the first proof; it does
+NOT exclude "everything older than the evidence"):
+- **Lower bound `first_seen − 2h`** (`ASSAS_IPV6_LINK_PRE_SLACK`): ownership
+  evidence necessarily lags first use — a fresh privacy address sends traffic
+  before our NDP capture / periodic neighbor poll first records the pair. Since
+  a privacy IID belongs to exactly one device for its lifetime (collision
+  negligible), traffic in that short pre-proof gap is attributed to the device
+  that then proved ownership. Accepted, bounded risk: anything **more than 2 h
+  older than the first evidence** (e.g. a replayed old capture) stays NULL.
+- **Upper bound `last_seen + 24h`** (`ASSAS_IPV6_LINK_GRACE`): a deprecated
+  RFC 4941 address keeps *receiving* traffic after it stops being preferred,
+  until its valid-lifetime expires; 24 h is a conservative slice of that.
 The ingester normally processes events near-real-time, so live events fall
 inside the window naturally. Unioned with the existing column match. Decision
 rules **unchanged**:
@@ -95,10 +103,12 @@ rules **unchanged**:
 4. **Router-MAC exclusion (review point 1):** a stream of SPAN frames carrying
    the gateway MAC with *external* IPv6 sources must create **no** `device_ipv6`
    rows — and those alerts stay NULL (never attributed to the router).
-5. **Evidence-window linking (review point 2):** evidence `[first, last]`;
-   event at `last + 25h` → NULL; event inside the window → link; event *before*
-   `first − 2h` (replayed old capture) → NULL. `INCOMPLETE`/`FAILED` neighbor
-   entries are ignored by the parser (unit test).
+5. **Evidence-window linking (review point 2) — boundaries tested on both
+   sides:** with evidence `[first, last]`:
+   `first − 1h59m` → **link** (inside the pre-slack, by design);
+   `first − 2h01m` → NULL (replayed old capture);
+   `last + 23h59m` → **link**; `last + 24h01m` → NULL.
+   `INCOMPLETE`/`FAILED` neighbor entries are ignored by the parser (unit test).
 6. **Fan-out cap:** after N distinct global addresses on one MAC, further pairs
    are rejected + logged.
 7. **End-to-end collapse:** one device with a *proven* (NDP-sourced) privacy

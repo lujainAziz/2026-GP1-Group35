@@ -45,12 +45,14 @@ usage noise. Disabling is per-SID (no category/metadata matching).
 **Capture config first (checked, read-only):** `assas.yaml` keeps Debian stream
 defaults (`midstream`/`async-oneside` off, kernel checksum mode);
 `kernel_drops=0` in the observed windows. Notable: **sid 2200013 "IPv6
-truncated packet" has occ=1595 from only 2 rows** — a strong hint that the
-mirror forwards frames larger than the capture path accepts (router-side
-GSO/jumbo frames truncated at the SPAN egress). **Action item before any rule
-change:** check offloads/MTU (`ethtool -k eth1`, switch mirror settings). If
-truncation is confirmed as a mirror artifact, these decoder events measure the
-mirror, not the network.
+truncated packet" has occ=1595 from only 2 rows**. One **unverified hypothesis**
+for that volume is mirror-side truncation of oversized (GSO/jumbo) frames at the
+SPAN egress — this is **not established**; other causes (genuinely malformed
+packets, sender-side behaviour) are possible. **Required check before any rule
+decision here:** `ethtool -k eth1` offload state + the switch mirror/MTU
+settings, and a sample truncated-packet inspection. Only if mirror truncation is
+*demonstrated* do these decoder events measure the mirror rather than the
+network.
 
 Per-rule proposal (pick one per team decision):
 | SIDs | Option 1 — threshold (recommended) | Option 2 — disable | Detection impact |
