@@ -6,6 +6,7 @@ Surgical, assertion-guarded edits only (fails fast if the stock layout shifts):
   2. eve-log types reduced to alert (no payload/packet/tagged) + stats
   3. outputs.fast enabled yes -> no
   4. global stats interval 8 -> 30
+  5. HOME_NET: add local IPv6 ranges (fc00::/7 ULA, fe80::/10 link-local)
 Everything else is left exactly as Debian ships it.
 """
 import sys
@@ -25,6 +26,7 @@ def expect(n, text):
 
 
 # --- anchor checks ---------------------------------------------------------
+expect(18, '    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"')
 expect(64, "stats:")
 expect(68, "  interval: 8")
 expect(84, "  - fast:")
@@ -81,6 +83,19 @@ for i, ln in enumerate(lines):
         break
 if not done:
     sys.exit("ASSERT FAIL: af-packet eth0 interface not found")
+
+# 5. HOME_NET: add the standard local IPv6 ranges. The ISP-delegated global
+#    IPv6 prefix is dynamic, so it is deferred (documented, not hardcoded).
+#    Applied after the slice/af-packet edits (both at lines > 18), so line 18 is
+#    still the stock HOME_NET line; done before the header insert at line 2.
+assert lines[18 - 1] == '    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"', \
+    "HOME_NET line moved before the edit"
+lines[18 - 1:18] = [
+    "    # ASSAS: IPv4 RFC1918 + local IPv6 (fc00::/7 ULA, fe80::/10 link-local).",
+    "    # The global IPv6 prefix is ISP-delegated/dynamic -> add it here only",
+    "    # after the operator confirms a stable monitored-LAN prefix.",
+    '    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,fc00::/7,fe80::/10]"',
+]
 
 # Header comments must follow the "%YAML 1.1 / ---" directive (which must be
 # line 1), so inject them right after the "---" document-start marker.
