@@ -82,6 +82,34 @@ revisit disabling 2200013 only after the `ethtool`/mirror check.
    standard NIDS self-test; no synthetic data written into logs by hand.
 4. Existing alert rows remain untouched (count before == after tuning).
 
+## APPLIED — actual results (2026-11-04T21:29:33Z / 00:29 local +03)
+
+Run on the appliance with a fail-stop + auto-rollback batch (operator-improved);
+raw artifacts preserved in `evidence/rule-tuning/`.
+
+- **Backups taken first:** `suricata.rules.bak-20261104T212854Z` + the previous
+  `disable.conf` (both restorable; rollback trap tested in the batch design).
+- **`suricata-update --offline`** — used the cached ET Open only (no download).
+- **Authoritative diff proof (enabled-SID set before vs after):**
+  removed = **exactly the 12 approved SIDs** (`removed.txt`), added = **none**
+  (`added.txt` empty), unexpected = **none** (`unexpected.txt` empty).
+  Enabled rules **53,305 → 53,293 (−12)**; writer stats `modified: 12, added 0,
+  removed 0`. (The tool's "Disabled 27" log line is its internal match count
+  including protocol-based disables already inactive from `assas.yaml`
+  — the enabled-set diff above is the verification, not that line.)
+- **`suricata -T`:** 53,293 rules loaded, 0 failed; service `active` after
+  restart.
+- **Old data untouched:** alert rows only grew (645 now), states intact
+  (1 Reviewed / 1 Resolved kept); no severity changes.
+- **Post-apply monitor (00:45 local, live + rotated eve, by event timestamp):**
+  7 new alerts since apply, **0 from the 12 SIDs** — normal-usage rules are
+  silent while other detection continues. Monitoring continues over the next
+  days; the old count will not (and should not) drop.
+- **Still pending:** the end-to-end detection self-test (testmynids over plain
+  HTTP from a device whose traffic is mirrored — verify the path before judging
+  a miss); STREAM/decoder untouched pending the capture check; IPv6 plan
+  deferred.
+
 ## Deployment batch (held until the list above is approved)
 ```bash
 sudo install -m 0644 appliance/suricata/disable.conf    /etc/suricata/disable.conf
