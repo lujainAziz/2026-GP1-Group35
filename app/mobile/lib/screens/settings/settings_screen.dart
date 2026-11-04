@@ -339,6 +339,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Column(
         children: [
           // Keep the design width when possible; shrink to fit at larger zoom.
+          // The box WIDTH is set instantly via SizedBox (not animated): changing
+          // the app text size changes the DesignScale zoom, which shrinks this
+          // canvas; if the width animated down over 220 ms the row would briefly
+          // overflow mid-transition. Only the selection COLOR animates.
           LayoutBuilder(builder: (context, box) {
             final w = ((box.maxWidth - 3 * 6) / 4).clamp(0.0, 66.0).toDouble();
             return Row(
@@ -350,20 +354,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: () => app.setTextScaleIndex(i),
                   semanticLabel:
                       'Text size ${AppSettings.textScaleLabels[i]}${i == app.textScaleIndex ? ', selected' : ''}',
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
+                  child: SizedBox(
                     width: w,
                     height: 58,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: i == app.textScaleIndex ? Ui.acc : Ui.surf2,
-                      borderRadius: BorderRadius.circular(UiRadius.textSizeOption),
-                    ),
-                    child: Text(
-                      'Aa',
-                      textScaler: TextScaler.noScaling,
-                      style: UiText.sans(12 + i * 4.0, 800,
-                          color: i == app.textScaleIndex ? Ui.accInk : Ui.ink),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: i == app.textScaleIndex ? Ui.acc : Ui.surf2,
+                        borderRadius: BorderRadius.circular(UiRadius.textSizeOption),
+                      ),
+                      child: Text(
+                        'Aa',
+                        textScaler: TextScaler.noScaling,
+                        style: UiText.sans(12 + i * 4.0, 800,
+                            color: i == app.textScaleIndex ? Ui.accInk : Ui.ink),
+                      ),
                     ),
                   ),
                 ),
