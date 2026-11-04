@@ -106,6 +106,21 @@ def test_link_device_one_both_neither(tmp_path):
     assert alerts.link_device(conn, None, None) is None
 
 
+def test_link_device_ambiguous_ip_reuse_stays_unlinked(tmp_path):
+    # Review #4: DHCP reuse leaves an offline device and the current device both
+    # claiming one IP. Linking to the first match would mislink to the stale
+    # device; on ambiguity we keep device_mac NULL instead of guessing.
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('old:dev','10.0.0.9')")
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('new:dev','10.0.0.9')")
+    conn.commit()
+    assert alerts.link_device(conn, "10.0.0.9", "8.8.8.8") is None
+    # a uniquely-owned address still links
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('solo','10.0.0.5')")
+    conn.commit()
+    assert alerts.link_device(conn, "10.0.0.5", "8.8.8.8") == "solo"
+
+
 # --------------------------------------------------------------------------- #
 # Deduplication
 # --------------------------------------------------------------------------- #

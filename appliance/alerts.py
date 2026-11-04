@@ -172,19 +172,36 @@ def link_device(conn, src_ip, dst_ip):
 
     one side -> that device; both -> source device; neither -> None.
     The caller still stores both IPs on the alert, so the other IP is retained.
+
+    IP reuse (DHCP) can leave more than one inventory row claiming the same
+    address (e.g. an offline device that kept its last IP plus the current
+    device that now holds it). Picking the first match would link the alert to
+    the wrong, possibly stale device. We therefore link ONLY when exactly one
+    device owns the address; on ambiguity we leave it unlinked (device_mac NULL)
+    and log the reason, since the latest last_seen alone is not proof of
+    ownership for a (possibly replayed) event.
     """
-    def mac_for(ip):
+    def resolve(ip):
         if not ip:
             return None
-        row = conn.execute(
-            "SELECT mac FROM devices "
-            "WHERE ? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip) LIMIT 1",
-            (ip,),
-        ).fetchone()
-        return row[0] if row else None
+        macs = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT mac FROM devices "
+                "WHERE ? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip)",
+                (ip,),
+            ).fetchall()
+        ]
+        if len(macs) == 1:
+            return macs[0]
+        if len(macs) > 1:
+            log.warning(
+                "ambiguous device link for IP: %d devices claim it; leaving alert "
+                "unlinked (device_mac NULL)", len(macs),
+            )
+        return None
 
-    src_mac = mac_for(src_ip)
-    dst_mac = mac_for(dst_ip)
+    src_mac = resolve(src_ip)
+    dst_mac = resolve(dst_ip)
     if src_mac and dst_mac:
         return src_mac  # both match -> link to the source device
     return src_mac or dst_mac
