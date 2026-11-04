@@ -40,6 +40,11 @@ POLL_SECONDS = float(os.getenv("ASSAS_ALERT_POLL_SECONDS", "2"))
 # How many fully-consumed rotated eve files to keep (for debugging) before the
 # reaper deletes them. The reaper NEVER touches an unconsumed file.
 KEEP_CONSUMED_ROTATED = int(os.getenv("ASSAS_ALERT_KEEP_ROTATED", "3"))
+# A rotated file is only reaped once it has been quiescent (unmodified) for this
+# many seconds AND no process still holds it open (see _file_in_use). This, with
+# the grow-check, prevents deleting a file Suricata is still writing to after the
+# rename but before it honours the reopen signal.
+REAP_GRACE_SECONDS = float(os.getenv("ASSAS_ALERT_REAP_GRACE", "10"))
 
 log = logging.getLogger("assas.alerts")
 
@@ -389,30 +394,63 @@ def rotated_files(eve_path):
 
 
 def _current_identity_size(path):
-    """(st_dev, st_ino, st_size) from an open fd, or None if the file is gone.
+    """(st_dev, st_ino, st_size, st_mtime) from an open fd, or None if gone.
 
-    Uses the held descriptor (like process_file) so identity and size describe
-    the same file even if a rotation races the check.
+    Uses the held descriptor (like process_file) so identity, size and mtime
+    describe the same file even if a rotation races the check.
     """
     try:
         with open(path, "rb") as f:
             st = os.fstat(f.fileno())
-            return st.st_dev, st.st_ino, st.st_size
+            return st.st_dev, st.st_ino, st.st_size, st.st_mtime
     except FileNotFoundError:
         return None
 
 
-def reap(conn, eve_path, keep=KEEP_CONSUMED_ROTATED):
+def _file_in_use(dev, ino):
+    """True if any process currently holds (dev, ino) open (Linux /proc scan).
+
+    This is the authoritative "still being written" guard: Suricata keeps the
+    renamed file open until it honours the reopen signal, so while that fd exists
+    the file must not be reaped. Returns False when /proc is unavailable (so the
+    mtime grace stays the guard on non-Linux); the ingester runs as root, so it
+    can read other processes' fds. It is a conservative check — any open handle
+    (read or write) blocks reaping.
+    """
+    try:
+        pids = [d for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        return False
+    for pid in pids:
+        fddir = "/proc/%s/fd" % pid
+        try:
+            fds = os.listdir(fddir)
+        except OSError:
+            continue  # process gone / not permitted
+        for fd in fds:
+            try:
+                st = os.stat("%s/%s" % (fddir, fd))  # follows the symlink to the target
+            except OSError:
+                continue
+            if st.st_dev == dev and st.st_ino == ino:
+                return True
+    return False
+
+
+def reap(conn, eve_path, keep=KEEP_CONSUMED_ROTATED, grace=REAP_GRACE_SECONDS, now=None):
     """Delete fully-consumed rotated eve files, keeping the most recent `keep`.
 
-    NEVER touches a file that is not marked consumed in alert_ingest_state, and
-    re-validates each candidate right before deleting: if a file marked consumed
-    has since GROWN past our read offset (the writer kept appending after the
-    rename, before honouring the reopen), it is not actually fully read — we
-    clear its `consumed` flag so the next cycle drains it and we do NOT delete
-    it. This closes the delete-vs-late-write race rather than trusting a stale
-    size.
+    NEVER touches a file that is not marked consumed in alert_ingest_state, and a
+    candidate is only deleted when ALL of these hold (checked again right before
+    unlink): (1) its current size does not exceed our read offset — if it GREW
+    (the writer appended after the rename, before honouring the reopen) the
+    consumed flag is revoked so the next cycle drains it; (2) it has been
+    quiescent (unmodified) for `grace` seconds; and (3) no process still holds it
+    open (_file_in_use). (2)+(3) guarantee the writer is finished with the file,
+    so deletion cannot race a late write — a stale double size-check alone would
+    not. Checking the current size twice is not sufficient on its own.
     """
+    now = time.time() if now is None else now
     # dev/ino -> (offset, size_at_eof) for every file we think is fully read.
     consumed = {
         (r[0], r[1]): (r[2], r[3])
@@ -421,51 +459,60 @@ def reap(conn, eve_path, keep=KEEP_CONSUMED_ROTATED):
             "FROM alert_ingest_state WHERE consumed=1"
         ).fetchall()
     }
+
+    def revoke(dev, ino):
+        with conn:
+            conn.execute(
+                "UPDATE alert_ingest_state SET consumed=0 WHERE st_dev=? AND st_ino=?",
+                (dev, ino),
+            )
+
+    def safe_to_delete(p, dev, ino):
+        """Re-validate a candidate against growth, quiescence and open handles."""
+        ident = _current_identity_size(p)
+        if ident is None:
+            return None  # vanished; caller clears the state row
+        cur_dev, cur_ino, cur_size, cur_mtime = ident
+        offset = consumed.get((dev, ino), (0, 0))[0]
+        if (cur_dev, cur_ino) != (dev, ino):
+            return False
+        if cur_size > offset:
+            log.warning(
+                "rotated file %s grew after being marked consumed (size %d > offset %d); "
+                "clearing consumed flag to re-drain, not deleting", p, cur_size, offset,
+            )
+            revoke(dev, ino)
+            return False
+        if now - cur_mtime < grace:
+            log.debug("holding %s: modified %.1fs ago (< grace %.0fs)", p, now - cur_mtime, grace)
+            return False
+        if _file_in_use(dev, ino):
+            log.debug("holding %s: a process still has it open (writer not finished)", p)
+            return False
+        return True
+
     candidates = []
     for p in rotated_files(eve_path):
         ident = _current_identity_size(p)
         if ident is None:
             continue
-        dev, ino, size = ident
-        mark = consumed.get((dev, ino))
-        if mark is None:
+        dev, ino = ident[0], ident[1]
+        if (dev, ino) not in consumed:
             continue
-        offset, _size_at_eof = mark
-        if size > offset:
-            # Unread bytes appeared after we marked this consumed: the writer was
-            # still appending. Revoke the flag so run_once drains the tail; never
-            # delete a file with unread data.
-            log.warning(
-                "rotated file %s grew after being marked consumed (size %d > offset %d); "
-                "clearing consumed flag to re-drain, not deleting",
-                p, size, offset,
-            )
-            with conn:
-                conn.execute(
-                    "UPDATE alert_ingest_state SET consumed=0 WHERE st_dev=? AND st_ino=?",
-                    (dev, ino),
-                )
-            continue
-        candidates.append((p, dev, ino))
+        if safe_to_delete(p, dev, ino):
+            candidates.append((p, dev, ino))
     to_delete = candidates[:-keep] if keep > 0 else candidates
     for p, dev, ino in to_delete:
-        # Final re-check immediately before unlinking: if it grew in the gap,
-        # revoke consumed and skip (the next cycle drains it).
-        ident = _current_identity_size(p)
-        if ident is None:
+        # Final re-check immediately before unlinking (the window since the first
+        # pass): growth, quiescence and open-handle must all still hold.
+        verdict = safe_to_delete(p, dev, ino)
+        if verdict is None:
             with conn:
                 conn.execute(
                     "DELETE FROM alert_ingest_state WHERE st_dev=? AND st_ino=?", (dev, ino)
                 )
             continue
-        cur_dev, cur_ino, cur_size = ident
-        offset = consumed.get((dev, ino), (0, 0))[0]
-        if (cur_dev, cur_ino) != (dev, ino) or cur_size > offset:
-            with conn:
-                conn.execute(
-                    "UPDATE alert_ingest_state SET consumed=0 WHERE st_dev=? AND st_ino=?",
-                    (dev, ino),
-                )
+        if not verdict:
             continue
         try:
             os.remove(p)

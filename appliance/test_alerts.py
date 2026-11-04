@@ -277,7 +277,7 @@ def test_reaper_preserves_unread_and_deletes_consumed(tmp_path):
         conn.execute(
             "INSERT INTO alert_ingest_state(st_dev,st_ino,path,offset,consumed) "
             "VALUES (?,?,?,?,1)", (st.st_dev, st.st_ino, str(r_consumed), st.st_size))
-    alerts.reap(conn, str(eve), keep=0)
+    alerts.reap(conn, str(eve), keep=0, grace=0)
     assert not r_consumed.exists()   # consumed -> deleted
     assert r_unread.exists()         # NOT consumed -> preserved (retention guarantee)
     assert eve.exists()              # live file never reaped
@@ -295,7 +295,7 @@ def test_reaper_keeps_recent_consumed(tmp_path):
                 "INSERT INTO alert_ingest_state(st_dev,st_ino,path,offset,consumed) "
                 "VALUES (?,?,?,?,1)", (st.st_dev, st.st_ino, str(p), st.st_size))
         files.append(p)
-    alerts.reap(conn, str(eve), keep=2)
+    alerts.reap(conn, str(eve), keep=2, grace=0)
     assert not files[0].exists()     # oldest consumed deleted
     assert files[1].exists() and files[2].exists()  # two most recent kept
 
@@ -320,7 +320,7 @@ def test_reaper_revokes_consumed_when_file_grows(tmp_path):
     # writer appends after we considered it fully read
     with open(rot, "a") as f:
         f.write(eve_alert(sid=99))
-    alerts.reap(conn, str(eve), keep=0)              # keep=0 would normally delete it
+    alerts.reap(conn, str(eve), keep=0, grace=0)     # keep=0 would normally delete it
     assert rot.exists()                               # grown file preserved
     consumed = conn.execute(
         "SELECT consumed FROM alert_ingest_state WHERE st_dev=? AND st_ino=?",
@@ -329,6 +329,43 @@ def test_reaper_revokes_consumed_when_file_grows(tmp_path):
     alerts.run_once(conn, str(eve), 300)              # next cycle drains the tail
     sids = sorted(r[0] for r in conn.execute("SELECT rule_id FROM alerts"))
     assert sids == [10, 99]                           # appended event not lost
+
+
+def test_reaper_does_not_delete_file_still_open_by_a_writer(tmp_path):
+    # Review #2 (concurrent writer): while any process still holds the rotated
+    # file open (as Suricata does until it honours the reopen signal), it must
+    # NOT be reaped even though size==offset and grace has passed. Checking the
+    # size twice is not enough; the open-handle check is the real guarantee.
+    conn = make_conn(tmp_path)
+    eve = tmp_path / "eve.json"
+    rot = write(tmp_path / "eve.json-20261102-070000", eve_alert(sid=12))
+    dev, ino, new_off, size = alerts.process_file(conn, str(rot), 300)
+    alerts.mark_consumed(conn, dev, ino, size)
+    holder = open(rot, "a")                            # writer still has it open
+    try:
+        alerts.reap(conn, str(eve), keep=0, grace=0)
+        assert rot.exists()                            # not deleted while open
+    finally:
+        holder.close()
+    alerts.reap(conn, str(eve), keep=0, grace=0)
+    assert not rot.exists()                            # reaped once closed
+
+
+def test_reaper_holds_until_quiescent(tmp_path):
+    # A fully-read rotated file is held until it has been unmodified for `grace`
+    # seconds (writer finished), then reaped.
+    conn = make_conn(tmp_path)
+    eve = tmp_path / "eve.json"
+    rot = write(tmp_path / "eve.json-20261102-060000", eve_alert(sid=13))
+    dev, ino, new_off, size = alerts.process_file(conn, str(rot), 300)
+    alerts.mark_consumed(conn, dev, ino, size)
+    alerts.reap(conn, str(eve), keep=0, grace=30)      # just written -> held
+    assert rot.exists()
+    # backdate mtime past the grace window -> now quiescent
+    old = os.stat(rot).st_mtime - 120
+    os.utime(rot, (old, old))
+    alerts.reap(conn, str(eve), keep=0, grace=30)
+    assert not rot.exists()
 
 
 # --------------------------------------------------------------------------- #
