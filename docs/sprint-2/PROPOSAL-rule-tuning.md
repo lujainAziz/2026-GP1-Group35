@@ -1,4 +1,12 @@
-# Proposal — Suricata rule-scope tuning (NOT applied; for approval)
+# Proposal — Suricata rule-scope tuning
+
+> **Decision (2026-11-05): Group A (the 12 SIDs) APPROVED for application — and
+> only it.** `appliance/suricata/disable.conf` is the committed source of truth.
+> Group C (STREAM/decoder) stays untouched until the capture/mirror check
+> completes; the IPv6-linking plan stays deferred. No old alerts deleted, no
+> severity changes. Application uses `suricata-update --offline` so ONLY the 12
+> exceptions change (no new ruleset download beyond the approved scope).
+> Deployment results are appended at the bottom when the sudo batch runs.
 
 Goal: alerts should flag **suspicious activity**, not normal usage (opening
 Discord, OS connectivity checks). This tunes **which rules are enabled** — it
