@@ -18,7 +18,7 @@ class _RejectedRepository extends DemoRepository {
   }
 
   @override
-  Future<List<SecurityAlert>?> getAlerts() async {
+  Future<List<SecurityAlert>?> getAlerts({int? limit}) async {
     alertRequests++;
     return [];
   }

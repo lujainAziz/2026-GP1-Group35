@@ -269,6 +269,24 @@ class AlertContractTests(unittest.TestCase):
         self.assertEqual(len(self.phone.get('/alerts').json()), 200)
         self.assertEqual(self.phone.get('/alerts/open_count').json()['open'], 251)  # 250 + setUp's 1
 
+    def test_open_count_and_paging_beyond_2000(self):
+        # Bulk-insert >2000 so the count and paging are exercised past the app cap.
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.executemany(
+                "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+                "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
+                "VALUES (NULL, 'Threat', 'ET X', ?, '2026-11-02T07:00:00', '10.0.0.5', "
+                "'8.8.8.8', 'High', 'New', 1, '2026-11-02T07:00:00')",
+                [(6000 + i,) for i in range(2100)])
+        self.pair()
+        self.assertEqual(self.phone.get('/alerts/open_count').json()['open'], 2101)  # 2100 + setUp's 1
+        # page through all with limit=1000 and confirm the full set is reachable
+        seen = set()
+        for off in (0, 1000, 2000):
+            page = self.phone.get(f'/alerts?limit=1000&offset={off}').json()
+            seen.update(a['id'] for a in page)
+        self.assertEqual(len(seen), 2101)  # every alert reachable by paging (no silent cap server-side)
+
     def test_alerts_pagination_offset_is_stable(self):
         for i in range(250):
             self._insert_alert(state='New', sid=5000 + i, when='2026-11-02T08:00:00')

@@ -42,9 +42,9 @@ class _Repo extends DemoRepository {
   ];
   @override Future<List<Device>> getDevices() async => [_dev];
   @override Future<Device> getDevice(String mac) async => _dev;
-  @override Future<List<SecurityAlert>?> getAlerts() async => _list;
+  @override Future<List<SecurityAlert>?> getAlerts({int? limit}) async => _list;
   @override Future<int?> getOpenAlertCount() async => _list.where((a) => a.isUnresolved).length;
-  @override Future<List<SecurityAlert>?> getDeviceAlerts(String mac) async =>
+  @override Future<List<SecurityAlert>?> getDeviceAlerts(String mac, {int? limit}) async =>
       _list.where((a) => a.deviceMac == mac).toList();
   @override Future<SecurityAlert?> getAlertById(String id) async {
     for (final a in _list) {

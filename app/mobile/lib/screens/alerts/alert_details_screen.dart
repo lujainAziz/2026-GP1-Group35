@@ -67,7 +67,10 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
       body: ListenableBuilder(
         listenable: widget.state,
         builder: (context, _) {
-          final a = widget.state.alertById(widget.alertId) ?? _fetched;
+          // Prefer the copy we fetched directly (set on open-if-missing and after
+          // every state change) over the polled list copy, so a poll that is in
+          // flight can't momentarily show the pre-change state.
+          final a = _fetched ?? widget.state.alertById(widget.alertId);
           if (a == null) {
             return Stack(
               children: [

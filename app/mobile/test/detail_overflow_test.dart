@@ -35,7 +35,7 @@ class _FixtureRepo extends DemoRepository {
   @override
   Future<Device> getDevice(String mac) async => _dev;
   @override
-  Future<List<SecurityAlert>?> getAlerts() async => [
+  Future<List<SecurityAlert>?> getAlerts({int? limit}) async => [
         SecurityAlert.fromApi({
           'id': '1', 'kind': 'threat', 'title': _longTitle,
           'device_mac': _mac, 'device_name': 'Unknown device',

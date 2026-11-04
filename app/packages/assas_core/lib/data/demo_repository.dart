@@ -159,11 +159,11 @@ class DemoRepository implements AssasRepository {
   }
 
   @override
-  Future<List<SecurityAlert>?> getAlerts() async {
+  Future<List<SecurityAlert>?> getAlerts({int? limit}) async {
     await _delay();
     final list = List<SecurityAlert>.from(_alerts)
       ..sort((a, b) => b.time.compareTo(a.time));
-    return list;
+    return limit != null && list.length > limit ? list.sublist(0, limit) : list;
   }
 
   @override
@@ -181,11 +181,11 @@ class DemoRepository implements AssasRepository {
   }
 
   @override
-  Future<List<SecurityAlert>?> getDeviceAlerts(String mac) async {
+  Future<List<SecurityAlert>?> getDeviceAlerts(String mac, {int? limit}) async {
     await _delay();
     final list = _alerts.where((a) => a.deviceMac == mac).toList()
       ..sort((a, b) => b.time.compareTo(a.time));
-    return list;
+    return limit != null && list.length > limit ? list.sublist(0, limit) : list;
   }
 
   @override

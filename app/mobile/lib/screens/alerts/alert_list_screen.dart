@@ -285,11 +285,45 @@ class _AlertListScreenState extends State<AlertListScreen> {
                 ),
               ),
             ],
+            // The list loads the newest `alertLimit` alerts; when it is full
+            // there may be older ones — offer to load them instead of hiding
+            // them silently.
+            if (state.alertsHaveMore) _loadOlder(),
           ],
         ),
       ],
     );
   }
+
+  bool _loadingMore = false;
+
+  Widget _loadOlder() => Padding(
+        padding: const EdgeInsets.only(left: 30, top: 14),
+        child: Pressable(
+          onTap: _loadingMore
+              ? null
+              : () async {
+                  setState(() => _loadingMore = true);
+                  try {
+                    await state.loadMoreAlerts();
+                  } finally {
+                    if (mounted) setState(() => _loadingMore = false);
+                  }
+                },
+          child: Container(
+            width: double.infinity,
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(UiRadius.pill),
+              border: Border.all(color: Ui.line),
+            ),
+            child: _loadingMore
+                ? const UiSpinner(size: 16)
+                : Text('Load older alerts', style: UiText.clearSearch.copyWith(color: Ui.acc)),
+          ),
+        ),
+      );
 
   Widget _empty(String title, String hint, {bool soon = false}) => EmptyDashed(
         action: soon ? const SoonTag(2) : null,

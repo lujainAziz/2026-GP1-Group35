@@ -33,6 +33,22 @@ class AppState extends ChangeNotifier {
   bool alertsError = false;
   DateTime? alertsLastSync;
 
+  /// How many of the newest alerts the list currently loads. Raised by
+  /// loadMoreAlerts() so older alerts are loaded on demand instead of being
+  /// silently dropped at the cap. The open-count figure is always the full DB
+  /// aggregate, independent of this.
+  static const int _alertPageStep = 2000;
+  int alertLimit = _alertPageStep;
+
+  /// True when the loaded list is full to the current cap, so there may be
+  /// older alerts not yet loaded.
+  bool get alertsHaveMore => (alerts?.length ?? 0) >= alertLimit;
+
+  Future<void> loadMoreAlerts() async {
+    alertLimit += _alertPageStep;
+    await refresh();
+  }
+
   /// True when Assas rejected this phone's session (HTTP 401): it was revoked
   /// or the appliance was reset. The phone must pair again.
   bool sessionEnded = false;
@@ -104,7 +120,7 @@ class AppState extends ChangeNotifier {
         try {
           // Fetch the list and the open-count concurrently so alerts add one
           // round-trip of latency, not two.
-          final results = await Future.wait([repo.getAlerts(), repo.getOpenAlertCount()]);
+          final results = await Future.wait([repo.getAlerts(limit: alertLimit), repo.getOpenAlertCount()]);
           if (cancelled()) return;
           alerts = results[0] as List<SecurityAlert>?;
           openAlertCount = results[1] as int?;
@@ -177,7 +193,21 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> setAlertState(String id, AlertState state) async {
+    final old = alertById(id);
     await repo.setAlertState(id, state);
+    // Apply the change locally at once so the list badge and the open-count stay
+    // consistent even if a poll is already in flight (refresh() can be gated by
+    // the in-flight generation). refresh() below reconciles with the server.
+    if (alerts != null) {
+      alerts = [for (final a in alerts!) a.id == id ? a.copyWith(state: state) : a];
+    }
+    if (old != null && openAlertCount != null) {
+      final wasOpen = old.isUnresolved;
+      final nowOpen = state != AlertState.resolved;
+      if (wasOpen && !nowOpen) openAlertCount = openAlertCount! - 1;
+      if (!wasOpen && nowOpen) openAlertCount = openAlertCount! + 1;
+    }
+    notifyListeners();
     await refresh();
   }
 
