@@ -2388,3 +2388,104 @@ class UpdateDeviceIpTrackingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeviceAddressEvidenceTests(unittest.TestCase):
+    """Multi-address ownership evidence (device_addresses) guards."""
+
+    def _conn(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE device_addresses (mac TEXT NOT NULL, addr TEXT NOT NULL, "
+            "family TEXT NOT NULL, source TEXT NOT NULL, first_seen TEXT NOT NULL, "
+            "last_seen TEXT NOT NULL, PRIMARY KEY (mac, addr))")
+        return conn
+
+    def test_parse_ndp_neighbors_discards_unproven_states(self):
+        out = (
+            "2001:16a2:dea6:2200:1111:2222:3333:4444 dev eth0 lladdr aa:bb:cc:dd:ee:01 REACHABLE\n"
+            "2001:16a2:dea6:2200:5555:6666:7777:8888 dev eth0 lladdr aa:bb:cc:dd:ee:02 STALE\n"
+            "2001:16a2:dea6:2200:9999:aaaa:bbbb:cccc dev eth0  INCOMPLETE\n"
+            "2001:16a2:dea6:2200:dddd:eeee:ffff:0000 dev eth0 lladdr aa:bb:cc:dd:ee:03 FAILED\n"
+            "fe80::1 dev eth0 lladdr aa:bb:cc:dd:ee:04 router DELAY\n"
+        )
+        pairs = discovery.parse_ndp_neighbors(out)
+        macs = [m for m, _ in pairs]
+        self.assertIn("aa:bb:cc:dd:ee:01", macs)   # REACHABLE kept
+        self.assertIn("aa:bb:cc:dd:ee:02", macs)   # STALE kept
+        self.assertIn("aa:bb:cc:dd:ee:04", macs)   # DELAY kept
+        self.assertNotIn("aa:bb:cc:dd:ee:03", macs)  # FAILED discarded
+        self.assertEqual(len(pairs), 3)              # INCOMPLETE (no lladdr) discarded
+
+    def test_external_address_never_recorded_even_under_router_mac(self):
+        # Internet traffic arrives with the router's MAC: an external server
+        # address must never become ownership evidence for ANY mac.
+        conn = self._conn()
+        router = "fc:1b:d1:30:cb:6c"
+        nets = [discovery.ipaddress.ip_network("2001:16a2:dea6:2200::/64"),
+                discovery.ipaddress.ip_network("192.168.100.0/24")]
+        ok = discovery.record_device_address(
+            conn.cursor(), router, "2a00:1450:4006:0818::200e", "span",
+            "2026-11-05T02:00:00", networks=nets)
+        self.assertFalse(ok)
+        ok4 = discovery.record_device_address(
+            conn.cursor(), router, "8.8.8.8", "span", "2026-11-05T02:00:00", networks=nets)
+        self.assertFalse(ok4)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM device_addresses").fetchone()[0], 0)
+
+    def test_local_addresses_recorded_with_window_and_source_upgrade(self):
+        conn = self._conn()
+        nets = [discovery.ipaddress.ip_network("2001:16a2:dea6:2200::/64")]
+        cur = conn.cursor()
+        # traffic-derived first; stored exploded lowercase; first/last equal
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "2001:16a2:dea6:2200:79ee:14d2:e191:965e", "span",
+            "2026-11-05T01:00:00", networks=nets))
+        # second sighting from NDP: last_seen bumps, first_seen kept, source upgraded
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "2001:16a2:dea6:2200:79ee:14d2:e191:965e", "ndp",
+            "2026-11-05T02:00:00", networks=nets))
+        row = conn.execute(
+            "SELECT family, source, first_seen, last_seen FROM device_addresses").fetchone()
+        self.assertEqual(row, ("ipv6", "ndp", "2026-11-05T01:00:00", "2026-11-05T02:00:00"))
+        # a later traffic sighting never downgrades the authoritative source
+        discovery.record_device_address(
+            cur, "aa:aa", "2001:16a2:dea6:2200:79ee:14d2:e191:965e", "span",
+            "2026-11-05T03:00:00", networks=nets)
+        row = conn.execute("SELECT source, last_seen FROM device_addresses").fetchone()
+        self.assertEqual(row, ("ndp", "2026-11-05T03:00:00"))
+        # IPv4 (private) + link-local recorded without a monitored-network entry
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "192.168.100.50", "arp", "2026-11-05T02:00:00", networks=nets))
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "fe80::1ff:fe23:4567:890a", "ndp", "2026-11-05T02:00:00", networks=nets))
+
+    def test_global_ipv6_fanout_cap(self):
+        conn = self._conn()
+        nets = [discovery.ipaddress.ip_network("2001:16a2:dea6:2200::/64")]
+        cur = conn.cursor()
+        old_cap = discovery.DEVICE_ADDR_GLOBAL_CAP
+        discovery.DEVICE_ADDR_GLOBAL_CAP = 3
+        try:
+            for i in range(5):
+                discovery.record_device_address(
+                    cur, "bb:bb", f"2001:16a2:dea6:2200::{i+1:x}", "span",
+                    "2026-11-05T02:00:00", networks=nets)
+            n = conn.execute(
+                "SELECT COUNT(*) FROM device_addresses WHERE mac='bb:bb' AND family='ipv6'"
+            ).fetchone()[0]
+            self.assertEqual(n, 3)  # capped; excess skipped, nothing replaced
+            # updates to an EXISTING address still work at the cap
+            self.assertTrue(discovery.record_device_address(
+                cur, "bb:bb", "2001:16a2:dea6:2200::1", "ndp",
+                "2026-11-05T03:00:00", networks=nets))
+        finally:
+            discovery.DEVICE_ADDR_GLOBAL_CAP = old_cap
+
+    def test_normalize_address_forms(self):
+        self.assertEqual(
+            discovery.normalize_address("2001:16a2:dea6:2200:6854:6bc7:cf3:1d4c"),
+            ("2001:16a2:dea6:2200:6854:6bc7:0cf3:1d4c", "ipv6"))
+        self.assertEqual(discovery.normalize_address("192.168.100.5"), ("192.168.100.5", "ipv4"))
+        self.assertEqual(discovery.normalize_address("fe80::1%eth0")[1], "ipv6-ll")
+        self.assertEqual(discovery.normalize_address("not-an-ip"), (None, None))

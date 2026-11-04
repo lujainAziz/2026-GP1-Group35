@@ -59,6 +59,11 @@ from datetime import datetime, timedelta
 from service_fingerprints import parse_nmap_identity
 
 from scapy.all import sniff, Ether, IP, IPv6, ARP, UDP, TCP, DHCP, DNS, DNSQR
+try:  # IPv6 Neighbor Discovery layers (ownership evidence for device_addresses)
+    from scapy.layers.inet6 import (
+        ICMPv6ND_NA, ICMPv6ND_NS, ICMPv6NDOptDstLLAddr, ICMPv6NDOptSrcLLAddr)
+except ImportError:  # scapy built without inet6: passive NDP evidence disabled
+    ICMPv6ND_NA = ICMPv6ND_NS = ICMPv6NDOptDstLLAddr = ICMPv6NDOptSrcLLAddr = None
 from scapy.layers.netbios import (
     NBNSHeader, NBNSQueryResponse, NBNSRegistrationRequest,
     NBNSNodeStatusRequest, NBNSNodeStatusResponse,
@@ -847,6 +852,26 @@ def init_db():
         family = _ip_family_column(ip)
         if family:
             conn.execute(f"UPDATE devices SET {family}=COALESCE({family}, ?) WHERE mac=?", (ip, mac))
+
+    # Multi-address ownership evidence (PBI-14 attribution). One row per
+    # (mac, addr): a device's full set of observed local addresses with the
+    # evidence source and first/last sighting. A new address never replaces a
+    # previous one (unlike the single last_* columns above). Consumed read-only
+    # by the alert ingester to link alerts by event time.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS device_addresses (
+            mac        TEXT NOT NULL,
+            addr       TEXT NOT NULL,
+            family     TEXT NOT NULL,
+            source     TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen  TEXT NOT NULL,
+            PRIMARY KEY (mac, addr)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_device_addresses_addr ON device_addresses(addr)"
+    )
 
     # One-time (but idempotent) cleanup of fake vendor text previously stored
     # for randomized MACs (e.g. "(locally administered / randomized MAC)",
@@ -2049,6 +2074,145 @@ def _ip_family_column(ip):
     return "last_ipv6_global"
 
 
+# --------------------------------------------------------------------------- #
+# Multi-address ownership evidence (PBI-14 attribution).
+# Ownership is proven, never assumed from a frame: routed internet traffic
+# carries the router's MAC, so an off-link address is never recorded under any
+# MAC, and a single MAC may not accumulate unlimited global IPv6 addresses.
+# --------------------------------------------------------------------------- #
+# Cap of distinct global-IPv6 addresses recorded per MAC (router-like fan-out
+# guard; privacy-address rotation stays far below this).
+DEVICE_ADDR_GLOBAL_CAP = int(os.getenv("ASSAS_ADDR_FANOUT_CAP", "16"))
+_ULA_NET = ipaddress.ip_network("fc00::/7")
+_fanout_warned = set()
+
+
+def normalize_address(ip):
+    """Canonical (storage/lookup) address form and family.
+
+    IPv6 is stored exploded lowercase (the form Suricata writes in eve.json);
+    IPv4 dotted. Returns (normalized, family) or (None, None) when unparseable.
+    family is 'ipv4', 'ipv6' (global/ULA) or 'ipv6-ll' (link-local).
+    """
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return None, None
+    if addr.version == 4:
+        return str(addr), "ipv4"
+    return addr.exploded.lower(), ("ipv6-ll" if addr.is_link_local else "ipv6")
+
+
+def address_is_local(ip, networks=None):
+    """True only for an on-link/local address that can be ownership evidence.
+
+    Local = private IPv4 or IPv4 inside a monitored network; IPv6 link-local,
+    ULA, or global IPv6 inside a monitored network. External/off-link addresses
+    return False — this is what prevents internet server addresses (which
+    arrive under the router's MAC) from ever being recorded as device evidence.
+    """
+    nets = monitored_networks if networks is None else networks
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return False
+    if addr.is_loopback or addr.is_multicast or addr.is_unspecified:
+        return False
+    if addr.version == 6:
+        if addr.is_link_local or addr in _ULA_NET:
+            return True
+        return any(n.version == 6 and addr in n for n in nets)
+    if addr.is_private:
+        return True
+    return any(n.version == 4 and addr in n for n in nets)
+
+
+def record_device_address(cur, mac, ip, source, now_iso, networks=None):
+    """Upsert one (mac, addr) evidence row inside the caller's transaction.
+
+    Guards: the address must be local (see address_is_local); at most
+    DEVICE_ADDR_GLOBAL_CAP distinct global-IPv6 rows per MAC (excess is logged
+    once and skipped). first_seen is kept; last_seen is bumped; an
+    authoritative source (ndp/arp/dhcp) may replace a traffic-derived one
+    ('span'/'discovery'), never the reverse. Returns True when recorded.
+    """
+    norm, family = normalize_address(ip)
+    if not norm or not address_is_local(norm, networks):
+        return False
+    if family == "ipv6":
+        known = cur.execute(
+            "SELECT 1 FROM device_addresses WHERE mac=? AND addr=?", (mac, norm)
+        ).fetchone()
+        if not known:
+            count = cur.execute(
+                "SELECT COUNT(*) FROM device_addresses WHERE mac=? AND family='ipv6'",
+                (mac,),
+            ).fetchone()[0]
+            if count >= DEVICE_ADDR_GLOBAL_CAP:
+                if mac not in _fanout_warned:
+                    _fanout_warned.add(mac)
+                    print(f"[!] address fan-out cap reached for {mac}; "
+                          f"not recording further global IPv6 evidence")
+                return False
+    cur.execute(
+        "INSERT INTO device_addresses (mac, addr, family, source, first_seen, last_seen) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(mac, addr) DO UPDATE SET "
+        "last_seen = excluded.last_seen, "
+        "source = CASE WHEN device_addresses.source IN ('span','discovery') "
+        "AND excluded.source IN ('ndp','arp','dhcp') "
+        "THEN excluded.source ELSE device_addresses.source END",
+        (mac, norm, family, source, now_iso, now_iso),
+    )
+    return True
+
+
+def parse_ndp_neighbors(output):
+    """Parse `ip -6 neigh show` output into usable (mac, addr) pairs.
+
+    Entries in INCOMPLETE/FAILED/NONE states are discarded: an unanswered or
+    failed solicitation proves nothing about address ownership.
+    """
+    pairs = []
+    for line in output.splitlines():
+        parts = line.split()
+        if not parts or "lladdr" not in parts:
+            continue
+        state = parts[-1].upper()
+        if state in ("INCOMPLETE", "FAILED", "NONE"):
+            continue
+        try:
+            addr = parts[0]
+            mac = parts[parts.index("lladdr") + 1].lower()
+        except (ValueError, IndexError):
+            continue
+        pairs.append((mac, addr))
+    return pairs
+
+
+def poll_ndp_neighbors():
+    """Record the kernel NDP cache as ownership evidence (source='ndp')."""
+    try:
+        out = subprocess.check_output(["ip", "-6", "neigh", "show"],
+                                      text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[!] NDP neighbor poll failed: {exc}")
+        return
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    try:
+        with db_lock:
+            conn = connect_db()
+            cur = conn.cursor()
+            for mac, addr in parse_ndp_neighbors(out):
+                if not is_valid_host_mac(mac) or is_self_device(mac=mac, ip=addr):
+                    continue
+                record_device_address(cur, mac, addr, "ndp", now_iso)
+            conn.commit()
+            conn.close()
+    except sqlite3.Error as exc:
+        print(f"[!] NDP evidence could not be recorded: {exc}")
+
+
 def is_valid_host_mac(mac):
     try:
         mac = mac.lower()
@@ -2375,7 +2539,7 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                   model=None, model_score=0, model_source=None, dhcp_sig=None,
                   vendor_class=None, upnp_location=None,
                   candidate=None, seen_on_span=False, seen_in_discovery=False,
-                  mark_current=False, monitored_evidence=None):
+                  mark_current=False, monitored_evidence=None, addr_source=None):
     """Merge device identity while keeping discovery/traffic/AP state separate."""
     mac = mac.lower()
     if not is_valid_host_mac(mac):
@@ -2725,6 +2889,19 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 f"UPDATE devices SET {ip_family_column} = ? WHERE mac = ?",
                 (ip, mac),
             )
+            # Multi-address ownership evidence (same transaction). Additive:
+            # the address set grows, previous addresses are never replaced.
+            # record_device_address applies the locality + fan-out guards.
+            try:
+                record_device_address(
+                    cur, mac, ip,
+                    addr_source or ("span" if seen_on_span else "discovery"),
+                    now.isoformat(timespec="seconds"),
+                )
+            except sqlite3.Error:
+                raise
+            except Exception as exc:  # evidence bookkeeping never breaks identity writes
+                print(f"[!] address evidence skipped for {mac}: {exc}")
 
         conn.commit()
         conn.close()
@@ -2954,6 +3131,7 @@ def apply_discovery_snapshot(devices, initial=False):
             seen_on_span=False,
             seen_in_discovery=True,
             mark_current=False,
+            addr_source="arp",
         )
 
     if not initial:
@@ -3016,6 +3194,7 @@ def handle_discovery_arp(packet):
         seen_on_span=False,
         seen_in_discovery=True,
         mark_current=False,
+        addr_source="arp",
     )
 
 
@@ -3037,12 +3216,21 @@ def discovery_arp_observer_loop():
 
 
 def housekeeping():
+    ndp_tick = 0
     while True:
         time.sleep(5)
         # Pick up an active_probes change saved via the API without a restart.
         # This loop always runs (unlike the optional refresh loop), so it is the
         # reliable place to reconcile runtime gates with the persisted setting.
         reload_runtime_settings()
+        # Kernel NDP cache as secondary IPv6 ownership evidence (every ~60 s).
+        ndp_tick += 1
+        if ndp_tick >= 12:
+            ndp_tick = 0
+            try:
+                poll_ndp_neighbors()
+            except Exception as exc:
+                print(f"[!] NDP poll error: {exc}")
         if DELETE_AFTER_DAYS <= 0:
             continue
         stale = (datetime.now() - timedelta(days=DELETE_AFTER_DAYS)).isoformat(
@@ -3130,6 +3318,34 @@ def handle_dhcp(packet):
     return hostname, dhcp_sig, vendor_class, candidate
 
 
+def handle_ndp(packet):
+    """Passive IPv6 Neighbor Discovery (RFC 4861) as ownership evidence.
+
+    A Neighbor Advertisement asserts the sender owns the target address; a
+    Neighbor Solicitation with a source link-layer option asserts the sender
+    owns its source address. Both give an authoritative addr↔MAC pair
+    (source 'ndp') — unlike routed data traffic, ND is link-local and the MAC
+    is the owner's. DAD probes (source ::) carry no proof and are ignored.
+    """
+    if ICMPv6ND_NA is None or IPv6 not in packet:
+        return
+    pairs = []
+    if ICMPv6ND_NA in packet:
+        mac = (packet[ICMPv6NDOptDstLLAddr].lladdr
+               if ICMPv6NDOptDstLLAddr in packet else packet[Ether].src)
+        pairs.append((mac, packet[ICMPv6ND_NA].tgt))
+    elif ICMPv6ND_NS in packet:
+        src = packet[IPv6].src
+        if src != "::" and ICMPv6NDOptSrcLLAddr in packet:
+            pairs.append((packet[ICMPv6NDOptSrcLLAddr].lladdr, src))
+    for mac, addr in pairs:
+        mac = (mac or "").lower()
+        if not is_valid_host_mac(mac) or is_self_device(mac=mac, ip=addr):
+            continue
+        update_device(mac, ip=addr, seen_on_span=False, seen_in_discovery=False,
+                      mark_current=False, addr_source="ndp")
+
+
 def handle(packet):
     if Ether not in packet:
         return
@@ -3137,6 +3353,13 @@ def handle(packet):
     mac = packet[Ether].src.lower()
     if not is_valid_host_mac(mac) or is_self_device(mac=mac):
         return
+
+    # NDP runs before the routed-traffic early-return below: a DAD/ND packet's
+    # IPv6 source (often ::) is not the evidence carrier, its payload is.
+    try:
+        handle_ndp(packet)
+    except Exception:
+        pass  # evidence bookkeeping must never break sniffing
 
     observed_ip = None
     hostname = None
@@ -3495,6 +3718,7 @@ def handle(packet):
         seen_in_discovery=False,
         mark_current=False,
         monitored_evidence=not (int(ether_dst.split(":", 1)[0], 16) & 0x01),
+        addr_source=("dhcp" if dhcp_sig else None),
     )
     # Optional enrichment may be triggered by traffic for any local device; this
     # does not change subnet discovery or Assas-Test association state.

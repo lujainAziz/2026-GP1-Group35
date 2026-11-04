@@ -106,6 +106,123 @@ def test_link_device_one_both_neither(tmp_path):
     assert alerts.link_device(conn, None, None) is None
 
 
+ADDR_TABLE_DDL = (
+    "CREATE TABLE device_addresses (mac TEXT NOT NULL, addr TEXT NOT NULL, "
+    "family TEXT NOT NULL, source TEXT NOT NULL, first_seen TEXT NOT NULL, "
+    "last_seen TEXT NOT NULL, PRIMARY KEY (mac, addr))"
+)
+
+
+def add_addr_table(conn, rows=()):
+    conn.execute(ADDR_TABLE_DDL)
+    conn.executemany(
+        "INSERT INTO device_addresses VALUES (?,?,?,?,?,?)", rows)
+    conn.commit()
+
+
+def test_link_device_missing_address_table_falls_back(tmp_path):
+    # Older discovery (no device_addresses table): behaviour identical to the
+    # column-only matching, no error.
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('aa:aa','10.0.0.5')")
+    conn.commit()
+    assert alerts.link_device(conn, "10.0.0.5", "8.8.8.8", "2026-11-05T10:00:00") == "aa:aa"
+    assert alerts.link_device(conn, "9.9.9.9", None, "2026-11-05T10:00:00") is None
+
+
+def test_link_device_multi_address_ipv4_and_rotating_ipv6(tmp_path):
+    # One device with an IPv4 and TWO global IPv6 addresses (privacy rotation):
+    # the evidence set links both, even though the devices columns only hold the
+    # newest address. Addresses are stored exploded lowercase (eve.json form).
+    conn = make_conn(tmp_path)
+    conn.execute(
+        "INSERT INTO devices(mac,last_ipv4,last_ipv6_global) "
+        "VALUES('dd:dd','192.168.100.50','2001:16a2:0000:0000:0000:0000:0000:0b0b')")
+    old6 = "2001:16a2:0000:0000:0000:0000:0000:0a0a"
+    new6 = "2001:16a2:0000:0000:0000:0000:0000:0b0b"
+    add_addr_table(conn, [
+        ("dd:dd", "192.168.100.50", "ipv4", "arp", "2026-11-01T00:00:00", "2026-11-05T12:00:00"),
+        ("dd:dd", old6, "ipv6", "ndp", "2026-11-01T00:00:00", "2026-11-03T00:00:00"),
+        ("dd:dd", new6, "ipv6", "ndp", "2026-11-04T00:00:00", "2026-11-05T12:00:00"),
+    ])
+    # rotated-out address still links for an event inside ITS window
+    assert alerts.link_device(conn, old6, "8.8.8.8", "2026-11-02T10:00:00") == "dd:dd"
+    # current address links
+    assert alerts.link_device(conn, "2606:4700::1", new6, "2026-11-05T10:00:00") == "dd:dd"
+    # IPv4 links via the table too
+    assert alerts.link_device(conn, "192.168.100.50", "8.8.8.8", "2026-11-05T10:00:00") == "dd:dd"
+    # an event long after the old address's evidence window stays unlinked
+    assert alerts.link_device(conn, old6, "8.8.8.8", "2026-11-05T10:00:00") is None
+
+
+def test_link_device_evidence_window_boundaries(tmp_path):
+    # Window = [first_seen - 2h, last_seen + 24h]; both bounds tested both sides.
+    conn = make_conn(tmp_path)
+    addr = "2001:16a2:0000:0000:0000:0000:0000:0c0c"
+    add_addr_table(conn, [
+        ("ee:ee", addr, "ipv6", "ndp", "2026-11-04T10:00:00", "2026-11-04T12:00:00"),
+    ])
+    link = lambda t: alerts.link_device(conn, "2606:4700::1", addr, t)
+    assert link("2026-11-04T08:01:00") == "ee:ee"   # first - 1h59m: inside pre-slack
+    assert link("2026-11-04T07:59:00") is None      # first - 2h01m: replayed old event
+    assert link("2026-11-05T11:59:00") == "ee:ee"   # last + 23h59m: inside grace
+    assert link("2026-11-05T12:01:00") is None      # last + 24h01m: expired
+
+
+def test_link_device_ownership_conflict_stays_unlinked(tmp_path):
+    # Two MACs with overlapping evidence for one address -> never guess.
+    conn = make_conn(tmp_path)
+    addr = "2001:16a2:0000:0000:0000:0000:0000:0d0d"
+    add_addr_table(conn, [
+        ("aa:aa", addr, "ipv6", "ndp", "2026-11-04T00:00:00", "2026-11-05T00:00:00"),
+        ("bb:bb", addr, "ipv6", "span", "2026-11-04T00:00:00", "2026-11-05T00:00:00"),
+    ])
+    assert alerts.link_device(conn, "2606:4700::1", addr, "2026-11-04T12:00:00") is None
+
+
+def test_link_device_normalizes_column_address_forms(tmp_path):
+    # eve.json writes IPv6 zero-padded exploded; the inventory column holds the
+    # kernel's compressed form. The same address must match regardless of form.
+    conn = make_conn(tmp_path)
+    conn.execute(
+        "INSERT INTO devices(mac,last_ipv6_global) VALUES('cc:cc','2001:16a2:dea6:2200:6854:6bc7:cf3:1d4c')")
+    conn.commit()
+    exploded = "2001:16a2:dea6:2200:6854:6bc7:0cf3:1d4c"
+    assert alerts.link_device(conn, "2606:4700::1", exploded, "2026-11-05T10:00:00") == "cc:cc"
+
+
+def test_relink_recent_repairs_discovery_lag_without_touching_counts(tmp_path):
+    conn = make_conn(tmp_path)
+    addr = "2001:16a2:0000:0000:0000:0000:0000:0e0e"
+    # Two unlinked alerts on that address: one recent, one old (outside window).
+    with conn:
+        conn.execute(
+            "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+            "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
+            "VALUES (NULL,'Threat','ET X',1,?, '2606:4700::1', ?, 'Medium','New',7,?)",
+            ("2026-11-05T10:00:00", addr, "2026-11-05T10:00:00"))
+        conn.execute(
+            "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+            "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
+            "VALUES (NULL,'Threat','ET X',1,?, '2606:4700::1', ?, 'Medium','Reviewed',3,?)",
+            ("2026-11-01T10:00:00", addr, "2026-11-01T10:00:00"))
+    # Evidence arrives AFTER the alerts were stored (discovery lag).
+    add_addr_table(conn, [
+        ("dd:dd", addr, "ipv6", "ndp", "2026-11-05T09:30:00", "2026-11-05T12:00:00"),
+    ])
+    linked = alerts.relink_recent(conn, window_hours=24, now_iso="2026-11-05T12:00:00")
+    assert linked == 1
+    rows = conn.execute(
+        "SELECT device_mac, occurrence_count, state, event_time FROM alerts ORDER BY alert_id"
+    ).fetchall()
+    # recent alert linked; occurrence/state/event_time untouched
+    assert rows[0] == ("dd:dd", 7, "New", "2026-11-05T10:00:00")
+    # old alert outside the bounded window: never rewritten
+    assert rows[1][0] is None and rows[1][1] == 3 and rows[1][2] == "Reviewed"
+    # idempotent: second pass changes nothing
+    assert alerts.relink_recent(conn, window_hours=24, now_iso="2026-11-05T12:00:00") == 0
+
+
 def test_link_device_ambiguous_ip_reuse_stays_unlinked(tmp_path):
     # Review #4: DHCP reuse leaves an offline device and the current device both
     # claiming one IP. Linking to the first match would mislink to the stale

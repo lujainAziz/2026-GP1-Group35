@@ -1587,3 +1587,21 @@ class AlertEndpointTests(_SeededDBTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_alert_device_name_matches_device_details_precedence():
+    """The alert's device name follows the same precedence the app shows on
+    device details: user name -> human hostname (opaque machine identifiers
+    skipped) -> model -> 'Unknown device'. Inventory data only."""
+    # user name always wins
+    assert api._alert_device_name("Dad laptop", "0badc396-c1f4-40db-ba83-c0702b11ae58", "emu") == "Dad laptop"
+    # opaque UUID hostname falls through to the model
+    assert api._alert_device_name(None, "0badc396-c1f4-40db-ba83-c0702b11ae58",
+                                  "emulator (sdk_gphone64_x86_64)") == "emulator (sdk_gphone64_x86_64)"
+    # long-hex hostname falls through
+    assert api._alert_device_name(None, "a7f3e9c1b2d84f60a7f3e9c1b2d84f60", "Smart TV") == "Smart TV"
+    # human hostname is kept
+    assert api._alert_device_name(None, "Living-Room-TV", "X100") == "Living-Room-TV"
+    # nothing usable -> Unknown device (no guessing)
+    assert api._alert_device_name(None, "0badc396-c1f4-40db-ba83-c0702b11ae58", None) == "Unknown device"
+    assert api._alert_device_name(None, None, None) == "Unknown device"

@@ -308,12 +308,24 @@ configuration were untouched. Evidence: `evidence/alert-log-reset.md`.
 
 ## Known limitations
 
-- **IPv6 attribution:** alerts whose only local address is an IPv6 privacy
-  (RFC 4941) address are stored with `device_mac = NULL` — the inventory keeps
-  one IPv6 per family and privacy addresses rotate. Analysis of the production
-  data found zero mislinked and zero ambiguous cases; the limitation is
-  attribution coverage, not correctness
-  (`evidence/partD-alert-data-investigation.md`).
+- **IPv6/IPv4 attribution (implemented 2026-11-05):** discovery records every
+  device's full local address set in the additive `device_addresses` table
+  (MAC, address, family, evidence source, first/last sighting) from ARP, DHCP,
+  passive NDP, the kernel NDP cache (unproven INCOMPLETE/FAILED entries
+  discarded) and locality-guarded observed traffic. External/off-link
+  addresses are never recorded (so internet servers are never attributed to
+  the router's MAC), a fan-out cap bounds router-like behaviour, and network-
+  prefix membership alone never links. The alert reader matches each address
+  against this set with the alert's event time inside
+  [first_seen − 2 h, last_seen + 24 h]; exactly one owning device links the
+  alert, a conflict or missing evidence leaves `device_mac = NULL`, and a
+  bounded relink pass (default 24 h) repairs recent unlinked alerts when
+  evidence arrives late — without touching occurrence counts, states or older
+  rows. Residual limits: linking is evidence-coverage dependent (an address
+  never observed by any evidence source stays unlinked), decoder events
+  without addresses cannot link, and historical alerts outside the relink
+  window are not rewritten (`evidence/partD-alert-data-investigation.md`
+  documents the pre-implementation data).
 - **Protocol/engine events:** SURICATA STREAM and decoder signatures (TCP
   anomalies, truncated IPv6 packets) surface as Medium threat alerts. They are
   diagnostics of traffic/capture quality rather than threat indicators; their

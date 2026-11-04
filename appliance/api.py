@@ -8,6 +8,7 @@ runs in WAL journal mode, so concurrent reads while it writes are safe.
 import os
 import hashlib
 import ipaddress
+import re
 import secrets
 import threading
 import sqlite3
@@ -868,11 +869,43 @@ _SEVERITIES = ("critical", "high", "medium", "low")
 _STATES = ("new", "reviewed", "resolved")
 
 
+_MACHINE_ID_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _looks_like_machine_id(s: str) -> bool:
+    """Opaque machine identifier (UUID / long hex / long vowel-less token).
+
+    Mirrors the app's Device.detectedName rule so the alert's device name and
+    the device-details name come from the same precedence.
+    """
+    if " " in s:
+        return False
+    if _MACHINE_ID_UUID_RE.match(s):
+        return True
+    if len(s) >= 24 and re.fullmatch(r"[0-9a-fA-F]+", s):
+        return True
+    if len(s) >= 24 and "-" not in s and "." not in s:
+        vowels = sum(ch in "AEIOUaeiou" for ch in s)
+        if vowels / len(s) < 0.1:
+            return True
+    return False
+
+
 def _alert_device_name(user_name, hostname, model) -> str:
-    """Same precedence the app uses: user name -> hostname -> model -> Unknown."""
-    for value in (user_name, hostname, model):
-        if value and str(value).strip():
-            return str(value).strip()
+    """Same precedence the app shows on device details: user name, then a
+    human-readable hostname (opaque machine identifiers are skipped), then the
+    model, then 'Unknown device'. Inventory data only — never a guess."""
+    user = (str(user_name).strip() if user_name else "")
+    if user:
+        return user
+    host = (str(hostname).strip() if hostname else "")
+    if host and not _looks_like_machine_id(host):
+        return host
+    m = (str(model).strip() if model else "")
+    if m:
+        return m
     return "Unknown device"
 
 

@@ -24,6 +24,7 @@ eve.json rotation itself is done by appliance/suricata/rotate-eve.sh (PBI-13);
 this daemon only follows it (drains + reaps).
 """
 import glob
+import ipaddress
 import json
 import logging
 import os
@@ -40,6 +41,16 @@ POLL_SECONDS = float(os.getenv("ASSAS_ALERT_POLL_SECONDS", "2"))
 # How many fully-consumed rotated eve files to keep (for debugging) before the
 # reaper deletes them. The reaper NEVER touches an unconsumed file.
 KEEP_CONSUMED_ROTATED = int(os.getenv("ASSAS_ALERT_KEEP_ROTATED", "3"))
+# Address-evidence window for linking (device_addresses, written by discovery):
+# an alert links only when its event time falls inside
+# [first_seen - PRE_SLACK, last_seen + GRACE] of the ownership evidence.
+# PRE_SLACK covers evidence lagging first use of a fresh (privacy) address;
+# GRACE covers a deprecated RFC 4941 address still receiving traffic.
+ADDR_PRE_SLACK_HOURS = int(os.getenv("ASSAS_ADDR_PRE_SLACK_HOURS", "2"))
+ADDR_GRACE_HOURS = int(os.getenv("ASSAS_ADDR_GRACE_HOURS", "24"))
+# Discovery-lag repair: recent unlinked alerts are re-tried against newly
+# arrived evidence. Bounded window — historical alerts are never mass-rewritten.
+RELINK_WINDOW_HOURS = int(os.getenv("ASSAS_ALERT_RELINK_HOURS", "24"))
 # A rotated file is only reaped once it has been quiescent (unmodified) for this
 # many seconds AND no process still holds it open (see _file_in_use). This, with
 # the grow-check, prevents deleting a file Suricata is still writing to after the
@@ -172,32 +183,83 @@ def parse_alert_event(obj):
     }
 
 
-def link_device(conn, src_ip, dst_ip):
-    """Match src/dst IPs against the device inventory.
+def _addr_forms(ip):
+    """Textual forms an address may be stored under.
+
+    Suricata writes IPv6 zero-padded exploded ('2001:16a2:...:0cf3:...'), while
+    the inventory's last_* columns hold the kernel's compressed form
+    ('...:cf3:...'). Both forms are matched so format differences never break a
+    link. Returns a list with the original string as a fallback.
+    """
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return [ip]
+    return sorted({str(addr), addr.exploded.lower(), str(ip)})
+
+
+def link_device(conn, src_ip, dst_ip, event_time=None):
+    """Match src/dst IPs against the inventory and the address-evidence set.
 
     one side -> that device; both -> source device; neither -> None.
     The caller still stores both IPs on the alert, so the other IP is retained.
 
-    IP reuse (DHCP) can leave more than one inventory row claiming the same
-    address (e.g. an offline device that kept its last IP plus the current
-    device that now holds it). Picking the first match would link the alert to
-    the wrong, possibly stale device. We therefore link ONLY when exactly one
-    device owns the address; on ambiguity we leave it unlinked (device_mac NULL)
-    and log the reason, since the latest last_seen alone is not proof of
-    ownership for a (possibly replayed) event.
+    Two sources are consulted per address:
+      - the devices last_* columns (latest address of each family), and
+      - the device_addresses evidence table (full set, written by discovery
+        from ARP/DHCP/NDP/guarded traffic). Evidence counts only when the
+        alert's event time falls inside
+        [first_seen - ADDR_PRE_SLACK_HOURS, last_seen + ADDR_GRACE_HOURS],
+        so a stale record never claims a new event and a replayed old event is
+        not attributed to the address's current owner. A missing table (older
+        discovery) is treated as no rows.
+
+    The link is made ONLY when exactly one device owns the address; a conflict
+    (more than one MAC) or absence of evidence leaves the alert unlinked
+    (device_mac NULL) with the reason logged. Network-prefix membership alone
+    is never used.
     """
     def resolve(ip):
         if not ip:
             return None
-        macs = [
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT mac FROM devices "
-                "WHERE ? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip)",
-                (ip,),
-            ).fetchall()
-        ]
+        macs = set()
+        for form in _addr_forms(ip):
+            macs.update(
+                r[0] for r in conn.execute(
+                    "SELECT DISTINCT mac FROM devices "
+                    "WHERE ? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip)",
+                    (form,),
+                ).fetchall()
+            )
+        try:
+            # device_addresses stores IPv4 dotted / IPv6 exploded lowercase.
+            try:
+                parsed = ipaddress.ip_address(str(ip).split("%", 1)[0])
+                norm = str(parsed) if parsed.version == 4 else parsed.exploded.lower()
+            except ValueError:
+                norm = None
+            if norm:
+                if event_time:
+                    # datetime() on BOTH sides: it renders a space separator,
+                    # while event times use 'T' — mixing the two breaks the
+                    # textual comparison.
+                    rows = conn.execute(
+                        "SELECT DISTINCT mac FROM device_addresses WHERE addr=? "
+                        f"AND datetime(first_seen, '-{ADDR_PRE_SLACK_HOURS} hours') <= datetime(?) "
+                        f"AND datetime(last_seen, '+{ADDR_GRACE_HOURS} hours') >= datetime(?)",
+                        (norm, event_time, event_time),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT DISTINCT mac FROM device_addresses WHERE addr=?",
+                        (norm,),
+                    ).fetchall()
+                macs.update(r[0] for r in rows)
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc).lower():
+                raise
         if len(macs) == 1:
-            return macs[0]
+            return macs.pop()
         if len(macs) > 1:
             log.warning(
                 "ambiguous device link for IP: %d devices claim it; leaving alert "
@@ -210,6 +272,45 @@ def link_device(conn, src_ip, dst_ip):
     if src_mac and dst_mac:
         return src_mac  # both match -> link to the source device
     return src_mac or dst_mac
+
+
+def relink_recent(conn, window_hours=None, now_iso=None):
+    """Retry linking RECENT unlinked alerts once ownership evidence arrives.
+
+    Discovery can lag an address's first use (a fresh privacy IPv6 may alert
+    before NDP/ARP evidence lands). This pass re-runs link_device for alerts
+    with device_mac NULL whose last_event_time lies within the bounded window,
+    and sets ONLY device_mac on a reliable single match. occurrence_count,
+    event times and states are never touched; events are not re-read; alerts
+    older than the window are never rewritten.
+    """
+    hours = RELINK_WINDOW_HOURS if window_hours is None else window_hours
+    now_iso = now_iso or datetime.now().replace(microsecond=0).isoformat(sep="T")
+    try:
+        rows = conn.execute(
+            "SELECT alert_id, src_ip, dst_ip, event_time FROM alerts "
+            "WHERE alert_type='Threat' AND device_mac IS NULL "
+            "AND datetime(last_event_time) >= datetime(?, ?)",
+            (now_iso, f"-{hours} hours"),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return 0
+        raise
+    linked = 0
+    for alert_id, src, dst, event_time in rows:
+        mac = link_device(conn, src, dst, event_time)
+        if mac:
+            with conn:
+                cur = conn.execute(
+                    "UPDATE alerts SET device_mac=? "
+                    "WHERE alert_id=? AND device_mac IS NULL",
+                    (mac, alert_id),
+                )
+                linked += cur.rowcount
+    if linked:
+        log.info("relinked %d recent alert(s) after new address evidence", linked)
+    return linked
 
 
 def _parse_iso(s):
@@ -341,7 +442,7 @@ def process_file(conn, path, window_seconds):
                 continue
             if a is None:
                 continue
-            device_mac = link_device(conn, a["src_ip"], a["dst_ip"])
+            device_mac = link_device(conn, a["src_ip"], a["dst_ip"], a["event_time"])
             upsert_alert(conn, a, device_mac, window_seconds)
         conn.execute(
             "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
@@ -536,6 +637,7 @@ def run_once(conn, eve_path, window_seconds):
             if new_offset >= size:  # rotated file fully read -> safe to reap later
                 mark_consumed(conn, dev, ino, size)
     process_file(conn, eve_path, window_seconds)  # live file last; never "consumed"
+    relink_recent(conn)  # discovery-lag repair for recent unlinked alerts
     reap(conn, eve_path)
 
 

@@ -154,3 +154,34 @@ mobile **76 passed**, `flutter analyze` clean (mobile and display).
   read checkpoints preserved — no historical re-ingestion (0 rows immediately
   after restart; only newer events enter). Devices, trust, pairing and rules
   untouched (`evidence/alert-log-reset.md`).
+
+## Address-evidence attribution tests (2026-11-05)
+
+`appliance/test_discovery.py`: NDP neighbor parsing keeps REACHABLE/STALE/DELAY
+and discards INCOMPLETE/FAILED (unproven); an external address is never
+recorded as evidence even when carried by the router's MAC (IPv4 and IPv6);
+local IPv4/ULA/link-local and monitored-prefix global IPv6 are recorded with
+first_seen kept and last_seen bumped; an authoritative source (ndp/arp/dhcp)
+upgrades a traffic-derived row, never the reverse; the global-IPv6 fan-out cap
+blocks new addresses while still updating known ones; address normalization
+(exploded IPv6 / dotted IPv4).
+
+`appliance/test_alerts.py`: a device with one IPv4 and multiple (rotating)
+IPv6 addresses links through the evidence set, including the rotated-out
+address for events inside its own window; evidence-window boundaries hold on
+both sides (first − 1 h 59 m links, first − 2 h 01 m does not; last + 23 h 59 m
+links, last + 24 h 01 m does not); an ownership conflict (two MACs, one
+address) never links; the compressed-vs-exploded IPv6 form difference between
+the inventory columns and eve.json no longer breaks matching; `relink_recent`
+links a recent unlinked alert after late evidence while leaving
+occurrence_count, state and event times untouched, never rewrites alerts
+outside its bounded window, and is idempotent; a database without the
+`device_addresses` table behaves exactly as before.
+
+`appliance/test_api.py`: the alert device name follows the device-details
+precedence (user name → human hostname with opaque machine identifiers
+skipped → model → "Unknown device"), from inventory data only.
+
+Suites after the change: appliance **531 passed** (108 subtests), mobile
+**76 passed**, `flutter analyze` clean. Live verification of the attribution
+is recorded separately once performed on the appliance.
