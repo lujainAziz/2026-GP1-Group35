@@ -891,11 +891,14 @@ def _state_api(value) -> str:
 _STATE_DB = {"new": "New", "reviewed": "Reviewed", "resolved": "Resolved"}
 
 # PBI-22 allowed forward transitions (a user action; never auto-reverted and
-# never walked backwards). Resolved is terminal.
-_ALLOWED_TRANSITIONS = {
-    "new": {"reviewed", "resolved"},
-    "reviewed": {"resolved"},
-    "resolved": set(),
+# never walked backwards). Resolved is terminal. Expressed as the set of source
+# states from which each target is reachable, so the change can be done as one
+# atomic guarded UPDATE (... WHERE state IN <allowed sources>) with no
+# read-then-write race between two phones.
+_ALLOWED_SOURCES = {
+    "reviewed": ("new",),              # New -> Reviewed
+    "resolved": ("new", "reviewed"),   # New/Reviewed -> Resolved
+    "new": (),                         # nothing transitions *to* New
 }
 
 
@@ -992,28 +995,43 @@ def set_alert_state(alert_id: int, body: AlertStateUpdate):
         raise HTTPException(status_code=503, detail=f"Device database is not available yet: {exc}")
     conn.row_factory = sqlite3.Row  # row_to_alert / row["state"] need key access
     try:
+        allowed = _ALLOWED_SOURCES.get(target, ())
         try:
-            row = conn.execute(
-                "SELECT state FROM alerts WHERE alert_id=? AND alert_type='Threat'",
-                (alert_id,),
-            ).fetchone()
+            changed = 0
+            if allowed:
+                # ATOMIC transition: only flip the row if it is still in an
+                # allowed source state. If a concurrent phone already moved it
+                # (e.g. to Resolved), this matches 0 rows and the move is
+                # rejected below — a late Reviewed can never revert a Resolved
+                # alert.
+                placeholders = ",".join("?" * len(allowed))
+                cur = conn.execute(
+                    f"UPDATE alerts SET state=? "
+                    f"WHERE alert_id=? AND alert_type='Threat' "
+                    f"AND LOWER(state) IN ({placeholders})",
+                    (_STATE_DB[target], alert_id, *allowed),
+                )
+                conn.commit()
+                changed = cur.rowcount
+            if changed == 0:
+                # No transition happened: classify why (not a second write).
+                row = conn.execute(
+                    "SELECT state FROM alerts WHERE alert_id=? AND alert_type='Threat'",
+                    (alert_id,),
+                ).fetchone()
+                if row is None:
+                    raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
+                current = _state_api(row["state"])
+                if current != target:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Cannot change alert state from {current} to {target}",
+                    )
+                # current == target: idempotent no-op, fall through and return it.
         except sqlite3.OperationalError as exc:
             if "no such table" in str(exc).lower():
                 raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
             raise
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
-        current = _state_api(row["state"])
-        if target != current:
-            if target not in _ALLOWED_TRANSITIONS.get(current, set()):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Cannot change alert state from {current} to {target}",
-                )
-            conn.execute(
-                "UPDATE alerts SET state=? WHERE alert_id=?", (_STATE_DB[target], alert_id)
-            )
-            conn.commit()
         rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1)
     finally:
         conn.close()

@@ -254,7 +254,14 @@ class _AlertListScreenState extends State<AlertListScreen> {
     final tab = Released.alertManagement ? _tab : _AlertTab.all;
     final list = alerts.where(tab.matches).toList();
     if (list.isEmpty) {
-      return _empty('All clear.', 'No alerts match this view.');
+      // Tab-appropriate wording (don't imply there are no OPEN alerts on the
+      // Resolved/All views).
+      final (title, hint) = switch (tab) {
+        _AlertTab.resolved => ('No resolved alerts yet', 'Alerts you resolve will be kept here for context.'),
+        _AlertTab.open => ('All clear.', 'No open alerts right now.'),
+        _AlertTab.all => ('No alerts yet', 'Alerts will appear here once detection flags something.'),
+      };
+      return _empty(title, hint);
     }
     return Stack(
       children: [
@@ -286,7 +293,9 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   Widget _empty(String title, String hint, {bool soon = false}) => EmptyDashed(
         action: soon ? const SoonTag(2) : null,
-        margin: const EdgeInsets.only(left: 30, top: 10),
+        // Centered within the page margins (the parent already pads 16 each
+        // side); no extra left-only margin that pushed the box to the right.
+        margin: const EdgeInsets.only(top: 10),
         radius: UiRadius.explainCard,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
         fill: Ui.fade(Ui.surf, .65),

@@ -307,6 +307,43 @@ class AlertContractTests(unittest.TestCase):
         aid = self.phone.get('/alerts').json()[0]['id']
         self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
 
+    def test_resolve_is_idempotent_and_late_review_cannot_revert(self):
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
+        # repeating resolve is a no-op 200 (idempotent), not a 409
+        r = self.phone.patch('/alerts/' + aid, json={'state': 'resolved'})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['state'], 'resolved')
+        # a late Reviewed must NOT revert a Resolved alert
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'}).status_code, 409)
+        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'resolved')
+
+    def test_concurrent_transitions_never_revert_or_corrupt(self):
+        # Two phones hit the same New alert at once: one Resolves, one Reviews.
+        # The atomic guarded UPDATE must leave a consistent result (Resolved
+        # always wins; the alert is never left New and never reverts).
+        import threading
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        codes = {}
+
+        def do(name, state):
+            c = TestClient(api.app, client=('127.0.0.1', 1))  # local-bypass, no token
+            try:
+                codes[name] = c.patch('/alerts/' + aid, json={'state': state}).status_code
+            finally:
+                c.close()
+
+        t1 = threading.Thread(target=do, args=('resolve', 'resolved'))
+        t2 = threading.Thread(target=do, args=('review', 'reviewed'))
+        t1.start(); t2.start(); t1.join(); t2.join()
+
+        final = self.phone.get('/alerts/' + aid).json()['state']
+        self.assertEqual(final, 'resolved')          # resolved wins regardless of interleaving
+        self.assertIn(codes['resolve'], (200,))       # resolve always applies from new/reviewed
+        self.assertIn(codes['review'], (200, 409))    # review either applied-then-superseded or rejected
+
 
 if __name__ == '__main__':
     unittest.main()
