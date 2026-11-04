@@ -6,6 +6,7 @@ import 'package:assas_core/assas_core.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/alerts/alert_list_screen.dart';
 import 'package:assas_mobile/screens/devices/device_details_screen.dart';
+import 'package:assas_mobile/screens/devices/device_list_screen.dart';
 import 'package:assas_mobile/screens/pairing/pairing_screen.dart';
 import 'package:assas_mobile/screens/settings/settings_screen.dart';
 import 'package:assas_mobile/widgets/splash_gate.dart';
@@ -25,9 +26,7 @@ class _Repo extends DemoRepository {
     mac: _mac, ip: '192.168.100.238', ipv6: [_ipv6], hostname: 'Living-Room-TV',
     vendor: 'Samsung', deviceType: 'Smart TV / Media Device',
     presence: Presence.online, trusted: true, monitored: true);
-  @override Future<List<Device>> getDevices() async => [_dev];
-  @override Future<Device> getDevice(String mac) async => _dev;
-  @override Future<List<SecurityAlert>?> getAlerts() async => [
+  final List<SecurityAlert> _list = [
     SecurityAlert.fromApi({
       'id':'1','kind':'threat','title':'ET FILE_SHARING Commonly Abused File Sharing Domain in TLS SNI',
       'device_mac':_mac,'device_name':'Living-Room-TV','time':'2026-11-04T10:04:00',
@@ -41,6 +40,18 @@ class _Repo extends DemoRepository {
       'rule_id':'2210054','occurrence_count':4,
       'first_event_time':'2026-11-04T09:38:00','last_event_time':'2026-11-04T09:40:00'}),
   ];
+  @override Future<List<Device>> getDevices() async => [_dev];
+  @override Future<Device> getDevice(String mac) async => _dev;
+  @override Future<List<SecurityAlert>?> getAlerts() async => _list;
+  @override Future<int?> getOpenAlertCount() async => _list.where((a) => a.isUnresolved).length;
+  @override Future<List<SecurityAlert>?> getDeviceAlerts(String mac) async =>
+      _list.where((a) => a.deviceMac == mac).toList();
+  @override Future<SecurityAlert?> getAlertById(String id) async {
+    for (final a in _list) {
+      if (a.id == id) return a;
+    }
+    return null;
+  }
 }
 
 Future<void> _shot(WidgetTester tester, String name, Widget Function(AppState) build) async {
@@ -70,6 +81,7 @@ void main() {
   testWidgets('alerts-tab', (t) => _shot(t, 'alerts-tab', (s) => AlertListScreen(state: s)), skip: !gen);
   testWidgets('alert-details', (t) => _shot(t, 'alert-details', (s) => AlertDetailsScreen(state: s, alertId: '1')), skip: !gen);
   testWidgets('device-alerts', (t) => _shot(t, 'device-alerts', (s) => DeviceDetailsScreen(state: s, mac: _mac)), skip: !gen);
+  testWidgets('device-list', (t) => _shot(t, 'device-list', (s) => DeviceListScreen(state: s)), skip: !gen);
 
   testWidgets('settings-narrow-maxzoom', (tester) async {
     SharedPreferences.setMockInitialValues({});
