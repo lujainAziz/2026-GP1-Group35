@@ -289,3 +289,64 @@ def test_missing_eve_file_tolerated(tmp_path):
     conn = make_conn(tmp_path)
     # right after rotation eve.json may briefly not exist
     assert alerts.process_file(conn, str(tmp_path / "eve.json"), 300) is None
+
+
+# --------------------------------------------------------------------------- #
+# Review #2: a rotated file that grows AFTER being marked consumed must not be
+# deleted (the writer kept appending past the rename); its consumed flag is
+# revoked so the tail is drained on the next cycle.
+# --------------------------------------------------------------------------- #
+def test_reaper_revokes_consumed_when_file_grows(tmp_path):
+    conn = make_conn(tmp_path)
+    eve = tmp_path / "eve.json"
+    rot = write(tmp_path / "eve.json-20261102-090000", eve_alert(sid=10))
+    dev, ino, new_off, size = alerts.process_file(conn, str(rot), 300)
+    alerts.mark_consumed(conn, dev, ino, size)
+    # writer appends after we considered it fully read
+    with open(rot, "a") as f:
+        f.write(eve_alert(sid=99))
+    alerts.reap(conn, str(eve), keep=0)              # keep=0 would normally delete it
+    assert rot.exists()                               # grown file preserved
+    consumed = conn.execute(
+        "SELECT consumed FROM alert_ingest_state WHERE st_dev=? AND st_ino=?",
+        (dev, ino)).fetchone()[0]
+    assert consumed == 0                              # flag revoked
+    alerts.run_once(conn, str(eve), 300)              # next cycle drains the tail
+    sids = sorted(r[0] for r in conn.execute("SELECT rule_id FROM alerts"))
+    assert sids == [10, 99]                           # appended event not lost
+
+
+# --------------------------------------------------------------------------- #
+# Review #5: valid JSON but a non-object record (null/list/scalar, or an `alert`
+# that is not an object) must be skipped, not crash the cycle; the offset still
+# advances so later valid alerts are not stalled.
+# --------------------------------------------------------------------------- #
+def test_structurally_invalid_records_skipped_not_fatal(tmp_path):
+    conn = make_conn(tmp_path)
+    eve = tmp_path / "eve.json"
+    write(
+        eve,
+        "null\n", "[1,2,3]\n", "123\n",
+        '{"event_type":"alert","timestamp":"2026-11-02T10:00:00+0300","alert":"x"}\n',
+        eve_alert(sig="GOOD", sid=42),
+    )
+    alerts.process_file(conn, str(eve), 300)          # must not raise
+    sids = [r[0] for r in conn.execute("SELECT rule_id FROM alerts")]
+    assert sids == [42]                               # only the well-formed alert
+    st = os.stat(eve)
+    off = conn.execute("SELECT offset FROM alert_ingest_state WHERE st_ino=?",
+                       (st.st_ino,)).fetchone()[0]
+    assert off == st.st_size                          # advanced past every line (no stall)
+
+
+def test_merge_keeps_chronological_first_last_out_of_order(tmp_path):
+    # An older event arriving after a newer one (within the window) must widen
+    # the span: event_time = earliest, last_event_time = latest.
+    conn = make_conn(tmp_path)
+    later = alerts.parse_alert_event(json.loads(eve_alert(sid=5, ts="2026-11-02T10:02:00+0300")))
+    older = alerts.parse_alert_event(json.loads(eve_alert(sid=5, ts="2026-11-02T10:00:00+0300")))
+    with conn:
+        alerts.upsert_alert(conn, later, "dev1", 300)
+        alerts.upsert_alert(conn, older, "dev1", 300)
+    row = conn.execute("SELECT occurrence_count, event_time, last_event_time FROM alerts").fetchone()
+    assert row == (2, "2026-11-02T10:00:00", "2026-11-02T10:02:00")

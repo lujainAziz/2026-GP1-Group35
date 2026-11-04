@@ -115,31 +115,55 @@ def local_naive_iso(ts):
     Matches the DB's existing TEXT-timestamp convention. Returns None if the
     timestamp is missing or unparseable.
     """
-    if not ts:
+    if not ts or not isinstance(ts, str):
         return None
     try:
         dt = datetime.fromisoformat(ts)
-    except ValueError:
+    except (ValueError, TypeError):
         return None
     if dt.tzinfo is not None:
         dt = dt.astimezone().replace(tzinfo=None)
     return dt.replace(microsecond=0).isoformat(sep="T")
 
 
-def parse_alert_event(obj):
-    """Return the alert fields we store, or None if not an alert event."""
-    if obj.get("event_type") != "alert":
+def _as_int(value):
+    """Coerce a JSON value to int, or None (ports/rule ids arrive as numbers)."""
+    if isinstance(value, bool):  # bool is an int subclass; not a valid id/port
         return None
-    a = obj.get("alert") or {}
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_alert_event(obj):
+    """Return the alert fields we store, or None if not an alert event.
+
+    Validates structure before access: a structurally-invalid record (e.g. a
+    bare ``null``/list/scalar JSON line, or a non-object ``alert``) returns None
+    instead of raising, so one bad record is skipped rather than stalling the
+    whole file (the offset still advances past it).
+    """
+    if not isinstance(obj, dict) or obj.get("event_type") != "alert":
+        return None
+    a = obj.get("alert")
+    if not isinstance(a, dict):
+        # A real Suricata alert event always carries an `alert` object; without a
+        # usable one there is nothing to store, so skip rather than invent a
+        # blank alert.
+        return None
+    sig = a.get("signature")
     return {
-        "title": a.get("signature") or "Suricata alert",
-        "rule_id": a.get("signature_id"),
+        "title": sig if isinstance(sig, str) and sig.strip() else "Suricata alert",
+        "rule_id": _as_int(a.get("signature_id")),
         "severity": severity_label(a.get("severity")),
         "event_time": local_naive_iso(obj.get("timestamp")),
-        "src_ip": obj.get("src_ip"),
-        "dst_ip": obj.get("dest_ip"),
-        "src_port": obj.get("src_port"),
-        "dst_port": obj.get("dest_port"),
+        "src_ip": obj.get("src_ip") if isinstance(obj.get("src_ip"), str) else None,
+        "dst_ip": obj.get("dest_ip") if isinstance(obj.get("dest_ip"), str) else None,
+        "src_port": _as_int(obj.get("src_port")),
+        "dst_port": _as_int(obj.get("dest_port")),
     }
 
 
@@ -177,14 +201,14 @@ def upsert_alert(conn, a, device_mac, window_seconds):
     )
     if device_mac is not None:
         row = conn.execute(
-            "SELECT alert_id, last_event_time FROM alerts "
+            "SELECT alert_id, event_time, last_event_time FROM alerts "
             "WHERE alert_type='Threat' AND device_mac=? AND rule_id IS ? "
             "ORDER BY last_event_time DESC LIMIT 1",
             (device_mac, a["rule_id"]),
         ).fetchone()
     else:
         row = conn.execute(
-            "SELECT alert_id, last_event_time FROM alerts "
+            "SELECT alert_id, event_time, last_event_time FROM alerts "
             "WHERE alert_type='Threat' AND device_mac IS NULL AND rule_id IS ? "
             "AND src_ip IS ? AND dst_ip IS ? "
             "ORDER BY last_event_time DESC LIMIT 1",
@@ -192,14 +216,17 @@ def upsert_alert(conn, a, device_mac, window_seconds):
         ).fetchone()
 
     if row is not None:
-        alert_id, last_et = row
-        et_dt, last_dt = _parse_iso(event_time), _parse_iso(last_et)
+        alert_id, first_et, last_et = row
+        et_dt, first_dt, last_dt = _parse_iso(event_time), _parse_iso(first_et), _parse_iso(last_et)
         if et_dt and last_dt and abs(et_dt - last_dt) <= timedelta(seconds=window_seconds):
+            # Keep the chronological span even if events arrive out of order:
+            # first = earliest seen, last = latest seen.
+            new_first = min(first_dt or et_dt, et_dt).replace(microsecond=0).isoformat(sep="T")
             new_last = max(last_dt, et_dt).replace(microsecond=0).isoformat(sep="T")
             conn.execute(
                 "UPDATE alerts SET occurrence_count = occurrence_count + 1, "
-                "last_event_time=? WHERE alert_id=?",
-                (new_last, alert_id),
+                "event_time=?, last_event_time=? WHERE alert_id=?",
+                (new_first, new_last, alert_id),
             )
             return "merged"
 
@@ -234,48 +261,36 @@ def process_file(conn, path, window_seconds):
     Returns (st_dev, st_ino, new_offset, size) or None if the file is absent
     (e.g. the brief window right after rotation before Suricata reopens).
     """
+    # Open FIRST, then take the identity/size from the SAME open descriptor via
+    # os.fstat. Using os.stat(path) and opening the path separately is racy: a
+    # rotation between the two steps would read the new file's bytes but record
+    # them under the old inode's checkpoint (an event lost, another counted
+    # twice). fstat on the held fd makes identity, size and the bytes we read all
+    # refer to one file.
     try:
-        st = os.stat(path)
+        f = open(path, "rb")
     except FileNotFoundError:
         log.debug("eve file %s not present yet (post-rotation window); skipping", path)
         return None
 
-    dev, ino, size = st.st_dev, st.st_ino, st.st_size
-    row = conn.execute(
-        "SELECT offset FROM alert_ingest_state WHERE st_dev=? AND st_ino=?",
-        (dev, ino),
-    ).fetchone()
-    offset = row[0] if row else 0
+    with f:
+        st = os.fstat(f.fileno())
+        dev, ino, size = st.st_dev, st.st_ino, st.st_size
+        row = conn.execute(
+            "SELECT offset FROM alert_ingest_state WHERE st_dev=? AND st_ino=?",
+            (dev, ino),
+        ).fetchone()
+        offset = row[0] if row else 0
 
-    if offset > size:
-        # The file at this identity is smaller than our stored read position
-        # (truncation in place, or inode reuse). Re-reading from 0 would
-        # re-ingest already-stored events and duplicate alerts, so we DO NOT do
-        # that: log the gap explicitly and resume forward at the current EOF.
-        # Persist the clamped offset so the gap is not re-logged every cycle.
-        log.warning(
-            "TRUNCATION/GAP on %s (st_dev=%s st_ino=%s): stored offset %d > size %d; "
-            "resuming at EOF (no re-read, no re-ingest); events in the gap are not recovered",
-            path, dev, ino, offset, size,
-        )
-        offset = size
-        with conn:
-            conn.execute(
-                "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(st_dev, st_ino) DO UPDATE SET offset=excluded.offset, "
-                "path=excluded.path, updated_at=excluded.updated_at",
-                (dev, ino, path, offset,
-                 datetime.now().replace(microsecond=0).isoformat(sep="T")),
-            )
-        return dev, ino, offset, size
+        if offset > size:
+            return _resume_at_eof(conn, path, dev, ino, offset, size)
 
-    if offset == size:
-        return dev, ino, offset, size  # nothing new
+        if offset == size:
+            return dev, ino, offset, size  # nothing new
 
-    with open(path, "rb") as f:
         f.seek(offset)
         data = f.read()
+
     complete, consumed = split_complete_lines(data)
     new_offset = offset + consumed
 
@@ -292,9 +307,16 @@ def process_file(conn, path, window_seconds):
                 # catch both so one bad line is skipped, not fatal. The line's
                 # bytes are still counted in `consumed`, so the offset advances
                 # past it and the daemon never stalls on it.
-                log.warning("skipping malformed eve line in %s", path)
+                log.warning("skipping malformed eve line (bad JSON) in %s", path)
                 continue
-            a = parse_alert_event(obj)
+            try:
+                a = parse_alert_event(obj)
+            except (AttributeError, TypeError, ValueError, KeyError) as exc:
+                # Valid JSON but an unexpected shape (e.g. a bare null/list, or a
+                # non-object `alert`). Skip the record; DO NOT catch DB errors
+                # here, which must roll the transaction back and be retried.
+                log.warning("skipping structurally-invalid eve record in %s (%s)", path, type(exc).__name__)
+                continue
             if a is None:
                 continue
             device_mac = link_device(conn, a["src_ip"], a["dst_ip"])
@@ -307,6 +329,32 @@ def process_file(conn, path, window_seconds):
             (dev, ino, path, new_offset, datetime.now().replace(microsecond=0).isoformat(sep="T")),
         )
     return dev, ino, new_offset, size
+
+
+def _resume_at_eof(conn, path, dev, ino, offset, size):
+    """Handle stored offset > current size (in-place truncation or inode reuse).
+
+    Re-reading from 0 would re-ingest already-stored events and duplicate
+    alerts, so we DO NOT do that: log the gap explicitly and resume forward at
+    the current EOF. Persist the clamped offset so the gap is not re-logged
+    every cycle.
+    """
+    log.warning(
+        "TRUNCATION/GAP on %s (st_dev=%s st_ino=%s): stored offset %d > size %d; "
+        "resuming at EOF (no re-read, no re-ingest); events in the gap are not recovered",
+        path, dev, ino, offset, size,
+    )
+    offset = size
+    with conn:
+        conn.execute(
+            "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(st_dev, st_ino) DO UPDATE SET offset=excluded.offset, "
+            "path=excluded.path, updated_at=excluded.updated_at",
+            (dev, ino, path, offset,
+             datetime.now().replace(microsecond=0).isoformat(sep="T")),
+        )
+    return dev, ino, offset, size
 
 
 def mark_consumed(conn, dev, ino, size):
@@ -323,28 +371,85 @@ def rotated_files(eve_path):
     return sorted(glob.glob(glob.escape(eve_path) + "-*"))
 
 
+def _current_identity_size(path):
+    """(st_dev, st_ino, st_size) from an open fd, or None if the file is gone.
+
+    Uses the held descriptor (like process_file) so identity and size describe
+    the same file even if a rotation races the check.
+    """
+    try:
+        with open(path, "rb") as f:
+            st = os.fstat(f.fileno())
+            return st.st_dev, st.st_ino, st.st_size
+    except FileNotFoundError:
+        return None
+
+
 def reap(conn, eve_path, keep=KEEP_CONSUMED_ROTATED):
     """Delete fully-consumed rotated eve files, keeping the most recent `keep`.
 
-    NEVER touches a file that is not marked consumed in alert_ingest_state, which
-    is the retention guarantee: unread rotated files are always preserved.
+    NEVER touches a file that is not marked consumed in alert_ingest_state, and
+    re-validates each candidate right before deleting: if a file marked consumed
+    has since GROWN past our read offset (the writer kept appending after the
+    rename, before honouring the reopen), it is not actually fully read — we
+    clear its `consumed` flag so the next cycle drains it and we do NOT delete
+    it. This closes the delete-vs-late-write race rather than trusting a stale
+    size.
     """
+    # dev/ino -> (offset, size_at_eof) for every file we think is fully read.
     consumed = {
-        (r[0], r[1])
+        (r[0], r[1]): (r[2], r[3])
         for r in conn.execute(
-            "SELECT st_dev, st_ino FROM alert_ingest_state WHERE consumed=1"
+            "SELECT st_dev, st_ino, offset, COALESCE(size_at_eof, offset) "
+            "FROM alert_ingest_state WHERE consumed=1"
         ).fetchall()
     }
     candidates = []
     for p in rotated_files(eve_path):
-        try:
-            st = os.stat(p)
-        except FileNotFoundError:
+        ident = _current_identity_size(p)
+        if ident is None:
             continue
-        if (st.st_dev, st.st_ino) in consumed:
-            candidates.append((p, st.st_dev, st.st_ino))
+        dev, ino, size = ident
+        mark = consumed.get((dev, ino))
+        if mark is None:
+            continue
+        offset, _size_at_eof = mark
+        if size > offset:
+            # Unread bytes appeared after we marked this consumed: the writer was
+            # still appending. Revoke the flag so run_once drains the tail; never
+            # delete a file with unread data.
+            log.warning(
+                "rotated file %s grew after being marked consumed (size %d > offset %d); "
+                "clearing consumed flag to re-drain, not deleting",
+                p, size, offset,
+            )
+            with conn:
+                conn.execute(
+                    "UPDATE alert_ingest_state SET consumed=0 WHERE st_dev=? AND st_ino=?",
+                    (dev, ino),
+                )
+            continue
+        candidates.append((p, dev, ino))
     to_delete = candidates[:-keep] if keep > 0 else candidates
     for p, dev, ino in to_delete:
+        # Final re-check immediately before unlinking: if it grew in the gap,
+        # revoke consumed and skip (the next cycle drains it).
+        ident = _current_identity_size(p)
+        if ident is None:
+            with conn:
+                conn.execute(
+                    "DELETE FROM alert_ingest_state WHERE st_dev=? AND st_ino=?", (dev, ino)
+                )
+            continue
+        cur_dev, cur_ino, cur_size = ident
+        offset = consumed.get((dev, ino), (0, 0))[0]
+        if (cur_dev, cur_ino) != (dev, ino) or cur_size > offset:
+            with conn:
+                conn.execute(
+                    "UPDATE alert_ingest_state SET consumed=0 WHERE st_dev=? AND st_ino=?",
+                    (dev, ino),
+                )
+            continue
         try:
             os.remove(p)
             log.info("reaped fully-consumed rotated eve file %s", p)
