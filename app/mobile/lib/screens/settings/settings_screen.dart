@@ -158,7 +158,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.only(top: 5),
-                        child: Text('Control\ncenter.', style: UiText.settingsTitle),
+                        // scaleDown keeps the two-line title intact and shrinks it
+                        // to fit instead of wrapping mid-word on narrow / large-font
+                        // layouts.
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text('Control\ncenter.', style: UiText.settingsTitle),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 16),

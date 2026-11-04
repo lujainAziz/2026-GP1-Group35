@@ -6,6 +6,9 @@ import 'package:assas_core/assas_core.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/alerts/alert_list_screen.dart';
 import 'package:assas_mobile/screens/devices/device_details_screen.dart';
+import 'package:assas_mobile/screens/pairing/pairing_screen.dart';
+import 'package:assas_mobile/screens/settings/settings_screen.dart';
+import 'package:assas_mobile/widgets/splash_gate.dart';
 import 'package:assas_mobile/state/app_state.dart';
 import 'package:assas_mobile/theme/assas_ui.dart';
 import 'package:assas_mobile/widgets/design_scale.dart';
@@ -67,4 +70,50 @@ void main() {
   testWidgets('alerts-tab', (t) => _shot(t, 'alerts-tab', (s) => AlertListScreen(state: s)), skip: !gen);
   testWidgets('alert-details', (t) => _shot(t, 'alert-details', (s) => AlertDetailsScreen(state: s, alertId: '1')), skip: !gen);
   testWidgets('device-alerts', (t) => _shot(t, 'device-alerts', (s) => DeviceDetailsScreen(state: s, mac: _mac)), skip: !gen);
+
+  testWidgets('settings-narrow-maxzoom', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    for (final f in ['BricolageGrotesque', 'JetBrainsMono']) {
+      final l = FontLoader(f == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
+      l.addFont(rootBundle.load('assets/fonts/$f.ttf'));
+      await l.load();
+    }
+    final s = AppState(_Repo());
+    addTearDown(s.dispose);
+    await tester.runAsync(s.refresh);
+    addTearDown(tester.view.reset);
+    tester.view.devicePixelRatio = 2;
+    tester.view.physicalSize = const Size(320 * 2, 1100 * 2);
+    await tester.pumpWidget(MaterialApp(theme: MobileTheme.light,
+      home: DesignScale(zoom: 1.2, child: Material(color: Ui.bg, child: SettingsScreen(state: s)))));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 300)); // settle async settings load
+    await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/settings-narrow.png'));
+    await tester.pumpWidget(const SizedBox());
+  }, skip: !gen);
+
+  // Hero-title screens at the narrowest width and max app zoom — verifies the
+  // big multi-line titles reflow cleanly (no mid-word break) at the true max.
+  Future<void> narrow(WidgetTester tester, String name, Widget child) async {
+    SharedPreferences.setMockInitialValues({});
+    for (final f in ['BricolageGrotesque', 'JetBrainsMono']) {
+      final l = FontLoader(f == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
+      l.addFont(rootBundle.load('assets/fonts/$f.ttf'));
+      await l.load();
+    }
+    addTearDown(tester.view.reset);
+    tester.view.devicePixelRatio = 2;
+    tester.view.physicalSize = const Size(320 * 2, 844 * 2);
+    await tester.pumpWidget(MaterialApp(theme: MobileTheme.light,
+      home: Builder(builder: (ctx) => MediaQuery(
+        data: MediaQuery.of(ctx).copyWith(textScaler: const TextScaler.linear(1.3)),
+        child: DesignScale(zoom: 1.2, child: Material(color: Ui.bg, child: child))))));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 300));
+    await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/$name.png'));
+    await tester.pumpWidget(const SizedBox());
+  }
+
+  testWidgets('pairing-narrow-maxzoom', (t) => narrow(t, 'pairing-narrow', const PairingScreen()), skip: !gen);
+  testWidgets('splash-narrow-maxzoom', (t) => narrow(t, 'splash-narrow', const SplashGate(child: SizedBox())), skip: !gen);
 }

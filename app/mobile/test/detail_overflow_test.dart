@@ -8,7 +8,9 @@ import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/alerts/alert_list_screen.dart';
 import 'package:assas_mobile/screens/devices/device_details_screen.dart';
 import 'package:assas_mobile/screens/devices/device_list_screen.dart';
+import 'package:assas_mobile/screens/pairing/pairing_screen.dart';
 import 'package:assas_mobile/screens/settings/settings_screen.dart';
+import 'package:assas_mobile/widgets/splash_gate.dart';
 import 'package:assas_mobile/state/app_state.dart';
 import 'package:assas_mobile/theme/assas_ui.dart';
 import 'package:assas_mobile/widgets/design_scale.dart';
@@ -62,26 +64,41 @@ Future<AppState> _state(WidgetTester tester) async {
   return s;
 }
 
+// Exercises the app's real font-scaling range: the app "Text size" setting
+// (DesignScale zoom, max 1.2) combined with the system font scale (textScaler,
+// clamped to 0.85..1.3 in main.dart). The true maximum is zoom 1.2 × scale 1.3
+// at the narrowest width.
 Future<void> _pumpAll(WidgetTester tester, Widget Function() build) async {
   addTearDown(tester.view.reset);
-  for (final scale in [0.85, 1.0, 1.3]) {        // smallest, default, largest
-    for (final width in [320.0, 400.0]) {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = Size(width, 900);
-      await tester.pumpWidget(MaterialApp(
-        theme: MobileTheme.light,
-        home: Builder(builder: (context) => MediaQuery(
-              data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
-              // Material ancestor for screens normally hosted in the shell
-              // Scaffold (e.g. the device list); detail screens bring their own.
-              child: DesignScale(zoom: 1, child: Material(color: Ui.bg, child: build())),
-            )),
-      ));
-      await tester.pump(const Duration(milliseconds: 60));
-      expect(tester.takeException(), isNull, reason: 'scale=$scale width=$width');
+  for (final zoom in [1.0, 1.2]) {                 // app Text-size setting (min..max)
+    for (final scale in [0.85, 1.0, 1.3]) {        // system font scale (clamped range)
+      for (final width in [320.0, 400.0]) {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = Size(width, 900);
+        await tester.pumpWidget(MaterialApp(
+          theme: MobileTheme.light,
+          home: Builder(builder: (context) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+                // Material ancestor for screens normally hosted in the shell
+                // Scaffold (e.g. the device list); detail screens bring their own.
+                child: DesignScale(zoom: zoom, child: Material(color: Ui.bg, child: build())),
+              )),
+        ));
+        await tester.pump(const Duration(milliseconds: 60));
+        expect(tester.takeException(), isNull, reason: 'first build zoom=$zoom scale=$scale width=$width');
+        // Settle the async settings load (DemoRepository delays ~250ms) and any
+        // implicit animations, then check the resting layout too.
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(tester.takeException(), isNull, reason: 'settled zoom=$zoom scale=$scale width=$width');
+        // Dispose the subtree so each combo is an independent first build. Without
+        // this the loop reuses the same element and implicit (AnimatedContainer)
+        // width animations carry over from the previous, wider canvas — a mid-
+        // animation overflow that no real first-display or text-size change can
+        // produce (box widths depend on canvas width, not on the selected size).
+        await tester.pumpWidget(const SizedBox());
+      }
     }
   }
-  await tester.pumpWidget(const SizedBox());
 }
 
 void main() {
@@ -128,6 +145,19 @@ void main() {
     await _loadFonts();
     final s = await _state(tester);
     await _pumpAll(tester, () => SettingsScreen(state: s));
+  });
+
+  // Pairing screen (QR scan screen itself needs the camera plugin, so it is
+  // reviewed statically; its layout is just a BackPill + kicker title + a fixed
+  // 240px frame that fits the min canvas).
+  testWidgets('Pairing: no overflow at all font sizes', (tester) async {
+    await _loadFonts();
+    await _pumpAll(tester, () => const PairingScreen());
+  });
+
+  testWidgets('Splash: no overflow at all font sizes', (tester) async {
+    await _loadFonts();
+    await _pumpAll(tester, () => const SplashGate(child: SizedBox()));
   });
 
   test('opaque hostname falls back to Unknown device (MAC + rename unaffected)', () {
