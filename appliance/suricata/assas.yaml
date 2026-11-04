@@ -18,12 +18,23 @@ suricata-version: "7.0"
 ##
 
 vars:
-  # more specific is better for alert accuracy and performance
+  # more specific is better for alert accuracy and performance.
+  #
+  # Source of these ranges (read-only inspection, 2026-11-04):
+  #   - IPv4: RFC1918 private space; the monitored LAN is 192.168.100.0/24
+  #     (eth0 = 192.168.100.236/24), inside 192.168.0.0/16.
+  #   - IPv6 local: fc00::/7 (ULA, RFC 4193) and fe80::/10 (link-local,
+  #     RFC 4291) are standard local ranges and are always home-side.
+  # DEFERRED (not guessed): the global IPv6 prefix. eth0 currently has
+  #   2001:16a2:c83e:5700::/64, but that is ISP-delegated and dynamic, so
+  #   hardcoding it would silently break when it changes. Add the stable
+  #   monitored-LAN prefix here only after the operator confirms it.
   address-groups:
-    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
+    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,fc00::/7,fe80::/10]"
     #HOME_NET: "[192.168.0.0/16]"
     #HOME_NET: "[10.0.0.0/8]"
     #HOME_NET: "[172.16.0.0/12]"
+    # Add the confirmed global IPv6 prefix, e.g.: ,2001:16a2:c83e:5700::/64
     #HOME_NET: "any"
 
     EXTERNAL_NET: "!$HOME_NET"

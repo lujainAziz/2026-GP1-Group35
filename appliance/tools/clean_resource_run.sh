@@ -56,7 +56,11 @@ ASSAS_RES_OUTDIR="$OUTDIR" ASSAS_CAPTURE_IFACE="${ASSAS_CAPTURE_IFACE:-eth1}" \
 kill "$guard_pid" 2>/dev/null || true
 echo "$(date -u +%FT%TZ) end" >> "$GUARD"
 
-present=$(grep -c ' PRESENT$' "$GUARD" 2>/dev/null || echo 0)
+# grep -c prints "0" AND exits 1 when there is no match; `|| echo 0` would then
+# append a second line and break the numeric test below (false warning). Capture
+# the single count and default to 0 only when grep could not read the file.
+present=$(grep -c ' PRESENT$' "$GUARD" 2>/dev/null) || present=0
+[ -n "$present" ] || present=0
 echo "clean run finished. agent-PRESENT samples: $present (must be 0 for a valid result)."
 echo "results: $OUTDIR/resource-2h-summary.json ; guard: $GUARD"
 [ "$present" -eq 0 ] || echo "WARNING: agent appeared during the run — result is NOT valid; re-run." >&2

@@ -90,6 +90,18 @@ def read_suri_stats():
     return None
 
 
+def read_suri_pid():
+    """PID of the running suricata process (to detect a restart during the run)."""
+    for p in glob.glob("/proc/[0-9]*/comm"):
+        try:
+            with open(p) as f:
+                if f.read().strip() == "suricata":
+                    return int(p.rsplit("/", 2)[1])
+        except OSError:
+            continue
+    return None
+
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -100,6 +112,16 @@ def main():
     idle0, tot0 = read_cpu()
     net0 = read_net(IFACE)
     suri_first = read_suri_stats()
+    suri_pid_start = read_suri_pid()
+
+    # Reset-aware Suricata counters: kernel_packets/kernel_drops are cumulative
+    # and reset to 0 when suricata restarts, so a simple last-first can go
+    # negative / under-count. We sum per-sample deltas and start a fresh segment
+    # whenever a counter decreases (a restart). Missing samples (stats not yet
+    # written) are recorded as blank, never 0, so "no measurement" != "zero".
+    suri_pkts_acc = suri_drops_acc = 0
+    suri_prev = suri_first
+    suri_resets = suri_missing = suri_valid_deltas = 0
 
     cpu_samples, mem_used_samples, rxbps_samples, txbps_samples = [], [], [], []
     new = not os.path.exists(CSV)
@@ -130,20 +152,45 @@ def main():
                 rx_bps = tx_bps = rx_pps = tx_pps = 0
             last_net = net1 or last_net
             last_t = t
-            suri = read_suri_stats() or (0, 0)
+
+            suri = read_suri_stats()
+            if suri is None:
+                suri_missing += 1
+                suri_pkts_str = suri_drops_str = ""  # blank: measurement missing, not 0
+            else:
+                suri_pkts_str, suri_drops_str = str(suri[0]), str(suri[1])
+                if suri_prev is not None:
+                    dp, dd = suri[0] - suri_prev[0], suri[1] - suri_prev[1]
+                    if dp >= 0 and dd >= 0:
+                        suri_pkts_acc += dp
+                        suri_drops_acc += dd
+                        suri_valid_deltas += 1
+                    else:
+                        suri_resets += 1  # counter went backwards -> suricata restarted
+                suri_prev = suri
 
             csv.write(f"{now_iso()},{cpu_pct},{mem_used},{mem_total},{rx_bps},{tx_bps},"
-                      f"{rx_pps},{tx_pps},{suri[0]},{suri[1]}\n")
+                      f"{rx_pps},{tx_pps},{suri_pkts_str},{suri_drops_str}\n")
             cpu_samples.append(cpu_pct)
             mem_used_samples.append(mem_used)
             rxbps_samples.append(rx_bps)
             txbps_samples.append(tx_bps)
 
+    # Fold in the final sample's delta, then use the reset-aware accumulators.
     suri_last = read_suri_stats()
-    d_pkts = d_drops = None
-    if suri_first and suri_last:
-        d_pkts = suri_last[0] - suri_first[0]
-        d_drops = suri_last[1] - suri_first[1]
+    if suri_last is not None and suri_prev is not None:
+        dp, dd = suri_last[0] - suri_prev[0], suri_last[1] - suri_prev[1]
+        if dp >= 0 and dd >= 0:
+            suri_pkts_acc += dp
+            suri_drops_acc += dd
+            suri_valid_deltas += 1
+        else:
+            suri_resets += 1
+    suri_pid_end = read_suri_pid()
+    # d_pkts/d_drops are the sum of valid per-segment deltas (restart-safe).
+    have_suri = suri_valid_deltas > 0
+    d_pkts = suri_pkts_acc if have_suri else None
+    d_drops = suri_drops_acc if have_suri else None
 
     def avg(xs):
         return round(sum(xs) / len(xs), 2) if xs else None
@@ -167,6 +214,19 @@ def main():
         "suricata_drops_during": d_drops,
         "suricata_drop_rate_pct": (round(100.0 * d_drops / d_pkts, 4)
                                    if d_pkts and d_pkts > 0 else None),
+        # Continuity / validity of the Suricata drop measurement.
+        "suricata_resets_detected": suri_resets,
+        "suricata_missing_samples": suri_missing,
+        "suricata_valid_delta_samples": suri_valid_deltas,
+        "suricata_pid_start": suri_pid_start,
+        "suricata_pid_end": suri_pid_end,
+        "suricata_pid_changed": (suri_pid_start != suri_pid_end),
+        # The drop rate is only an unqualified pass if suricata ran continuously
+        # and every interval had a stats sample.
+        "suricata_drop_measurement_valid": (
+            have_suri and suri_resets == 0 and suri_missing == 0
+            and suri_pid_start is not None and suri_pid_start == suri_pid_end
+        ),
     }
     with open(SUMMARY, "w") as f:
         json.dump(summary, f, indent=2)
