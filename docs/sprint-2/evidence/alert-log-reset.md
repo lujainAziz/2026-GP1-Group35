@@ -35,8 +35,8 @@ appearing until that decision is made. `alert_id` numbering continues (no id
 reuse). All three services `active`; the app refreshes itself via polling.
 
 ## Chain of decisions this evidence completes
-1. Rule tuning (Group A, 12 SIDs) applied + verified — `PROPOSAL-rule-tuning.md`,
-   `evidence/rule-tuning/`.
+1. Rule tuning (12 normal-usage SIDs) applied + verified — `README.md` §Rule-scope tuning,
+   `evidence/rule-tuning/`, `appliance/suricata/disable.conf`.
 2. Fresh alert log (this file): old 645 rows archived in the backup, table
    restarted clean.
 3. Still pending: testmynids detection self-test (mirrored device over plain

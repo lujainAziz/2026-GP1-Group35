@@ -228,7 +228,7 @@ own flags.
 `alertSeverityBadges`, `alertDisplay`, `alertExplanations` all **false**; `alertManagement`, `risk`
 stay false.
 
-**Scope (per `DECISIONS.md` D4–D8).** PBI-14 is live: the alerts list, alert
+**Current scope.** PBI-14 is live: the alerts list, alert
 details (including Last seen), and device alerts with device linking. PBI-09/10
 is live: unresolved linked alerts feed the device signals (Attention, Home
 priority, severity colours). PBI-22 (alert state management) is deferred:
@@ -260,7 +260,7 @@ outstanding — screenshots are captured on a dev machine (the Pi session is hea
 ## Evaluation
 Dataset download and detection replay are outstanding; the resource baseline is in progress. See
 `PLAN.md` / `EVALUATION.md`.
-`REPORT-NOTES.md` (evidence → report sections 4/5/6) is added at sprint end.
+The sprint report maps this document's evidence to its sections directly.
 
 ## Documentation discipline
 - Software/package versions, final configs, file/service paths, changes vs Sprint 1, and commit
@@ -270,3 +270,57 @@ Dataset download and detection replay are outstanding; the resource baseline is 
   SHA-256) is recorded in `EVALUATION.md`; **no dataset is downloaded before explicit approval**.
 - Raw results and test logs are stored under `docs/sprint-2/evidence/` with clear paths.
 - **No passwords, tokens, or private network data (real MACs/IPs/hostnames) are committed.**
+
+---
+
+## Rule-scope tuning (applied 2026-11-05)
+
+Alerts must flag suspicious activity rather than normal usage. Twelve
+informational ET Open signatures that only record ordinary usage (Discord
+domain lookups/SNI, Android/Windows connectivity checks, standard STUN, a CDN
+lookup) are disabled per SID via `/etc/suricata/disable.conf`;
+`appliance/suricata/disable.conf` is the committed source of truth and lists
+each SID with its name and reason. `suricata-update` re-applies the file on
+every run, so the exceptions persist across rule updates.
+
+Application and verification (evidence: `evidence/rule-tuning/`):
+- Applied with `suricata-update --offline` (cached ruleset; no download), after
+  backups of the rules file and the previous configuration.
+- Enabled rules **53,305 → 53,293 (−12)**; the enabled-SID diff equals exactly
+  the 12 approved SIDs (nothing else removed, nothing added); `suricata -T`
+  passed; the service remained active.
+- Post-apply monitoring (live + rotated eve.json, by event timestamp): new
+  alerts continue from other rules while the 12 disabled SIDs produced **zero**
+  new events.
+- The severity mapping is unchanged, no stored alerts were altered, and the
+  SURICATA STREAM/decoder rule group is unchanged pending the capture-path
+  check (see Known limitations).
+
+## Alert-log reset (2026-11-05)
+
+To start a clean log after the rule tuning, the 645 existing `alerts` rows were
+deleted in a single transaction after a validated WAL-aware SQLite backup
+(stored outside the repository with a JSON manifest). Read checkpoints
+(`alert_ingest_state`) were preserved, so no historical event was re-ingested;
+immediately after the reader restarted the table held 0 rows, and only events
+newer than the reset enter the new log. Devices, names, trust, pairing and rule
+configuration were untouched. Evidence: `evidence/alert-log-reset.md`.
+
+## Known limitations
+
+- **IPv6 attribution:** alerts whose only local address is an IPv6 privacy
+  (RFC 4941) address are stored with `device_mac = NULL` — the inventory keeps
+  one IPv6 per family and privacy addresses rotate. Analysis of the production
+  data found zero mislinked and zero ambiguous cases; the limitation is
+  attribution coverage, not correctness
+  (`evidence/partD-alert-data-investigation.md`).
+- **Protocol/engine events:** SURICATA STREAM and decoder signatures (TCP
+  anomalies, truncated IPv6 packets) surface as Medium threat alerts. They are
+  diagnostics of traffic/capture quality rather than threat indicators; their
+  tuning is deliberately deferred until the capture path (mirror/offload
+  settings) is examined.
+- **Detection evaluation:** the replayed-dataset evaluation has not been run
+  (datasets on hold); unit and live tests do not substitute for it
+  (`EVALUATION.md`).
+- **Memory target:** the 2-hour baseline included a co-resident development
+  agent; the <4 GB judgement awaits a clean run (`EVALUATION.md §4`).

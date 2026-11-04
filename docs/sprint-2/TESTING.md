@@ -106,3 +106,51 @@ Currently: Suricata Configuration, Threat Alert Ingestion, Alert API, and Mobile
 tested (see each section above); the 2-hour resource baseline is complete (CPU + drop-rate pass,
 memory pending a dev-agent-free run); the Evaluation **detection replay** and the **mobile visual
 review** remain outstanding.
+
+
+---
+
+## Robustness and revision testing (post-review hardening, 2026-11-04/05)
+
+**Ingester (`appliance/test_alerts.py`):** file identity is taken from the open
+descriptor (`os.fstat`), closing the rotation race between path lookup and open;
+the reaper deletes a rotated file only when it has not grown past the read
+offset, has been quiescent for a grace period, and no process still holds it
+open (verified with a concurrent-open-writer test); structurally invalid eve
+records (null/list/scalar lines, non-object `alert`) are skipped with the
+offset still advancing; out-of-order events within the dedup window keep the
+chronological first/last span; an IP claimed by more than one inventory row is
+never linked (ambiguity → `device_mac` NULL).
+
+**Alert API (`appliance/test_frontend_contract.py`):** `GET /alerts/open_count`
+equals the database aggregate (verified against >200 and >2000 inserted rows);
+`LIMIT/OFFSET` pagination returns disjoint, complete pages; the state-change
+endpoint applies transitions as a single guarded UPDATE — concurrent
+Review/Resolve requests from two clients cannot revert a Resolved alert
+(threaded test). The state-management UI is gated off; the endpoints and their
+tests remain part of the codebase.
+
+**Mobile (`app/mobile/test/`):** overflow-free rendering across the full
+supported font range (app text-size zoom {1.0, 1.2} × system scale
+{0.85, 1.0, 1.3} × widths {320, 400}) for the alerts, devices, settings,
+pairing and splash screens; live text-size switching (all four sizes, forward
+and back, without rebuilding the screen) does not overflow mid-animation;
+device-filter labels stay fully visible while the font size changes with the
+menu open; the alerts list loads older alerts on demand instead of a silent
+cap; opaque machine-identifier names display as "Unknown device" on all alert
+surfaces while rename and MAC are unaffected.
+
+**Suite totals after the revision:** appliance **519 passed** (108 subtests);
+mobile **76 passed**, `flutter analyze` clean (mobile and display).
+
+## Operational verifications (2026-11-05)
+
+- **Rule-scope tuning:** enabled rules 53,305 → 53,293; the enabled-SID diff
+  equals exactly the 12 approved normal-usage SIDs; `suricata -T` passed;
+  post-apply monitoring shows zero new events from the disabled SIDs while
+  other detection continues (`README.md` §Rule-scope tuning,
+  `evidence/rule-tuning/`).
+- **Alert-log reset:** 645 rows deleted after a validated WAL-aware backup;
+  read checkpoints preserved — no historical re-ingestion (0 rows immediately
+  after restart; only newer events enter). Devices, trust, pairing and rules
+  untouched (`evidence/alert-log-reset.md`).

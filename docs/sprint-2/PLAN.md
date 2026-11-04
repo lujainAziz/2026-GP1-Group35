@@ -152,8 +152,7 @@ belong to later sprints (for example the Home open-alerts count, recent-alerts s
 device-signal badges, and network risk) stay hidden or move behind their own later-sprint flag.
 The flag is enabled only after that audit is approved.
 
-With the existing design and styling preserved (feature-flag state per the decision log,
-`DECISIONS.md` D4–D8):
+With the existing design and styling preserved, the released feature-flag state is:
 - `FeatureRelease.alerts` is `true`; `FeatureRelease.alertManagement` is `false` — PBI-22 is
   deferred: no All/Open/Resolved tabs, no Review/Resolve actions, no state badges, no live
   open-count (the hero retains the count design with the standard deferred marker). The
