@@ -72,6 +72,37 @@ each device's *set* of current IPv6 addresses (from the NDP neighbour cache /
 observed traffic), so privacy-address flows resolve to the owning MAC. Prefix-only
 matching is not added because it is not a reliable host match.
 
+## Follow-up: the 22:15 "CLOSEWAIT FIN out of window" group (rule 2210016)
+
+Requested spot-check of the cluster visible in the app at ~10:15 PM on 2026-11-04
+(read-only; nothing deleted, no rule disabled, no dedup change).
+
+**Facts (matched 1:1 against eve.json):** 26 rows, SUM(occurrence)=**32**, and
+eve.json holds exactly **32** matching events in the window — two synchronized
+bursts (23+1 events at 22:15:48–:49, 8 at 22:25:03). Source/destination pairs are
+**different**: 21 distinct CDN IPv6 sources (Google/Cloudflare/Amazon/Microsoft…)
+toward one local privacy-IPv6 destination (unlinked by design) plus one linked
+IPv4 row (→ the TV). Dedup integrity: 22 distinct keys; the only repeated keys
+recur **555 s apart (> the 300 s window)** → correctly separate rows; **0 pairs
+should have merged**. So: not duplicate storage, and not 26 attacks — a stream-
+engine protocol anomaly, one event-set per row.
+
+**Interpretation — calibrated:** the pattern (many idle sessions to unrelated
+CDNs tearing down in the same second, twice) is **consistent with** a single
+device closing its connection pool at once (app close / wake). This is a
+**plausible hypothesis, not a confirmed cause** — the capture does not identify
+the initiating process. Likewise, `kernel_drops = 0` across the window (~1 M
+packets) rules out drops **at the host's AF_PACKET layer only**; it does **not**
+prove the whole capture path (switch SPAN port, mirror congestion, asymmetric
+mirroring) was loss-free, so a capture-path contribution to the out-of-window
+condition cannot be excluded.
+
+**Decision recorded:** no dedup/grouping change and no deletions on account of
+this group. Two proposals remain open for a product decision (not implemented):
+(1) visually distinguishing protocol/stream-engine events from threat-indicative
+rules; (2) improving IPv6 attribution by tracking each device's current IPv6
+address set.
+
 ## Item 2 — missing source/destination addresses are genuinely absent
 
 Only **2** alerts have no src/dst, both `SURICATA IPv6 truncated packet` decoder
