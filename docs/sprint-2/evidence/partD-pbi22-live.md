@@ -1,5 +1,9 @@
 # PBI-22 — live verification on the appliance (post-deploy)
 
+> **Note (added after reversal):** PBI-22 was subsequently deferred again; the
+> UI is hidden behind `alertManagement=false`. The results below remain valid
+> evidence for the backend (endpoints stay deployed; stored states kept).
+
 Deployed `sprint-2 @ 16a4de2` on 2026-11-04 (backup
 `/etc/suricata/assas.yaml.bak-20261104T160917Z`; `suricata -T` passed with the
 IPv6 HOME_NET; all five services `active`; `/healthz` ok). No token value is

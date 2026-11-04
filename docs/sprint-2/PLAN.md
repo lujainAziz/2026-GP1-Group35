@@ -152,12 +152,14 @@ belong to later sprints (for example the Home open-alerts count, recent-alerts s
 device-signal badges, and network risk) stay hidden or move behind their own later-sprint flag.
 The flag is enabled only after that audit is approved.
 
-With the existing design and styling preserved (**updated — PBI-22 and the PBI-09/10 signal
-linkage were later approved into Sprint 2; the original plan text kept them off**):
-- `FeatureRelease.alerts` and `FeatureRelease.alertManagement` are `true`: the All/Open/Resolved
-  tabs and the Review/Resolve actions are live (PBI-22). `alertSeverityBadges` is `true`:
-  unresolved linked alerts feed the device signals (Attention + Home priority, severity palette).
-  The Home open-alerts count/summary (PBI-24) and the 7-inch display count stay hidden.
+With the existing design and styling preserved (**final — PBI-22 was briefly moved into
+Sprint 2 and then deferred again by team decision; PBI-09/10 signal linkage stays approved**):
+- `FeatureRelease.alerts` is `true`; `FeatureRelease.alertManagement` is **`false`** (PBI-22
+  deferred): no All/Open/Resolved tabs, no Review/Resolve, no state badges, no live open-count
+  (the hero keeps the count design, muted). The PATCH/open_count endpoints and any stored states
+  remain in place, untouched. `alertSeverityBadges` is `true` (PBI-09/10): unresolved linked
+  alerts feed the device signals (Attention + Home priority, severity palette). The Home
+  open-alerts count/summary (PBI-24) and the 7-inch display count stay hidden.
 - `SecurityAlert` and its `fromApi` factory are extended additively with `occurrence_count`, first
   and last event times, `src_port` / `dst_port`, and `rule_id` (kept in the DB and API).
 - **Alerts tab:** hero = true open count (DB aggregate of New+Reviewed) + "open alerts"; a list of

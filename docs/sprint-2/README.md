@@ -228,17 +228,20 @@ own flags.
 `alertSeverityBadges`, `alertDisplay`, `alertExplanations` all **false**; `alertManagement`, `risk`
 stay false.
 
-> **Scope update:** PBI-22 (alert state management — New/Reviewed/Resolved,
-> All/Open/Resolved tabs, Review/Resolve) was **moved into Sprint 2**. The
-> `alertManagement` flag is ON and is independent of the still-deferred Home
-> surfaces (PBI-24). Per the field-hiding decision, occurrences / first & last
-> seen / rule id / ports are hidden in the UI but kept in the DB and API. See
-> `REVIEW-RESPONSE.md` and `partD-*` for the current behaviour and live results.
+> **Scope update (final):** the earlier move of PBI-22 (alert state management)
+> into Sprint 2 was **reversed — PBI-22 is deferred again**. `alertManagement`
+> is OFF: Review/Resolve, the New/Reviewed/Resolved badges, the All/Open/Resolved
+> tabs and the live open-alerts counter are hidden (the hero keeps its count
+> design, muted). The backend endpoints and stored states remain untouched —
+> nothing deleted, nothing reset to New. PBI-14 stays live (list, details with
+> Last seen, device alerts + linking) and PBI-09/10 stays live (Attention,
+> priority, severity colours). Occurrences / first seen / rule id / ports stay
+> hidden in the UI but kept in the DB and API.
 
 | Surface | Sprint 2 | How |
 |---|---|---|
-| Alerts tab (list) | ✓ shown | open count + "open alerts" hero (DB aggregate New+Reviewed); title, severity, device, last event time, state; newest first; **All/Open/Resolved tabs ON** (PBI-22 moved into Sprint 2). Occurrence `N×` is **hidden**. |
-| Alert details | ✓ shown | title, time, device (+nav), **state badge**, and in Signal details: alert type, severity, source/destination IP. **Review/Resolve actions ON** (PBI-22). Occurrences, first/last seen, rule ID and ports are **hidden** (kept in DB + API); explanation block hidden (`alertExplanations`). |
+| Alerts tab (list) | ✓ shown | hero keeps the count design but shows a muted "—" (live count = PBI-22, deferred); title, severity, device, last event time; newest first. Tabs, state pills and occurrence `N×` **hidden** (`alertManagement` off). |
+| Alert details | ✓ shown | title, time, device (+nav), and Signal details: alert type, severity, **Last seen** (= last event time), source/destination IP. Review/Resolve + state badge **hidden** (PBI-22 deferred → SOON tag). Occurrences, first seen, rule ID and ports **hidden** (kept in DB + API); explanation block hidden. |
 | Device details → alerts | ✓ shown | this device's alerts replace "Coming soon" |
 | Home open-alerts count + recent summary | ✗ hidden | gated on `alertsHome` → stays "SOON" |
 | Device-list severity badges / sort | ✗ hidden | gated on `alertSeverityBadges` |

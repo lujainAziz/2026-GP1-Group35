@@ -1,5 +1,14 @@
 # Sprint 2 — Code-review response, PBI-22 move & UI pass
 
+> **Scope reversal (final):** after everything below was delivered and live-verified,
+> the team **deferred PBI-22 again**. `alertManagement` is now OFF: Review/Resolve,
+> state badges, All/Open/Resolved tabs and the live open-count are hidden (the hero
+> keeps its count design, muted). The PATCH/open_count endpoints, their tests, and
+> all stored states remain in place untouched (nothing deleted, nothing reset to
+> New) — the feature re-enables by flipping the flag. PBI-14 (list, details with
+> Last seen, device alerts + linking) and PBI-09/10 (Attention/priority/severity
+> colours) remain live.
+
 Covers: the external code review of `959d2af`, the approved move of **PBI-22
 (alert state management) into Sprint 2**, and the whole-app UI changes. Work is
 on branch `sprint-2` only — **not merged to `main`, nothing deployed to the

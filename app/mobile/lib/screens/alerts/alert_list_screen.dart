@@ -103,9 +103,12 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   Widget _hero() {
     // Original design: a big OPEN count on the left, "open alerts" on the right.
-    // The count is the DB aggregate of New+Reviewed (openAlertCount), not the
-    // length of the loaded page.
-    final count = state.openAlertCount;
+    // The live figure (DB aggregate of New+Reviewed) belongs to alert state
+    // management (PBI-22, deferred): with the flag off the hero keeps the count
+    // design but shows the app's deferred marker ("Soon", muted — same pattern
+    // as the dashboard risk word) instead of a number.
+    final live = Released.alerts && Released.alertManagement;
+    final count = live ? state.openAlertCount : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -123,8 +126,8 @@ class _AlertListScreenState extends State<AlertListScreen> {
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    Released.alerts ? (count?.toString() ?? '—') : '—',
-                    style: UiText.alertsHero.copyWith(color: Released.alerts ? Ui.ink : Ui.mute),
+                    count?.toString() ?? (live ? '—' : 'Soon'),
+                    style: UiText.alertsHero.copyWith(color: live ? Ui.ink : Ui.mute),
                   ),
                 ),
               ),

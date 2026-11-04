@@ -8,10 +8,13 @@ abstract final class FeatureRelease {
   static bool get alerts => true;
   static bool get risk => false; // Sprint 4
   static bool get baseline => false; // Sprint 3
-  // PBI-22 (alert state management) moved into Sprint 2: New/Reviewed/Resolved
-  // transitions, the Open/Resolved tabs, and the Review/Resolve actions. This
-  // flag is independent of the deferred Home surfaces below.
-  static bool get alertManagement => true;
+  // PBI-22 (alert state management) is DEFERRED again (team reversal of the
+  // earlier Sprint-2 move). Hidden behind this flag: Review/Resolve actions,
+  // the New/Reviewed/Resolved badges, the All/Open/Resolved tabs, and the live
+  // open-alerts counter (the hero keeps its count design as a deferred
+  // feature). The backend endpoints and any stored states remain untouched —
+  // nothing is deleted or reset to New.
+  static bool get alertManagement => false;
 
   // PBI-09/PBI-10 (approved for Sprint 2): unresolved alerts feed the device
   // signals — Attention computation, Home device priority, and the per-row
