@@ -117,10 +117,12 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: MobileTheme.light,
         home: DesignScale(zoom: 1, child: AlertDetailsScreen(state: s, alertId: '1'))));
     await tester.pump(const Duration(milliseconds: 60));
-    // SpecList uppercases labels; hidden fields must be absent in any case
-    for (final f in ['OCCURRENCES', 'FIRST SEEN', 'LAST SEEN', 'RULE ID', 'DEVICE']) {
+    // SpecList uppercases labels; hidden fields must be absent in any case.
+    // (LAST SEEN is intentionally shown again = last_event_time; FIRST SEEN stays hidden.)
+    for (final f in ['OCCURRENCES', 'FIRST SEEN', 'RULE ID', 'DEVICE']) {
       expect(find.text(f), findsNothing, reason: '$f should be hidden');
     }
+    expect(find.text('LAST SEEN'), findsOneWidget, reason: 'Last seen (last_event_time) is shown');
     // ports hidden: value shows IP only, never ip:port
     expect(find.textContaining(':51000'), findsNothing);
     expect(find.textContaining(':443'), findsNothing);

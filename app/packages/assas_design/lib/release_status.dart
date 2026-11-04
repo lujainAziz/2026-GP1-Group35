@@ -13,13 +13,17 @@ abstract final class FeatureRelease {
   // flag is independent of the deferred Home surfaces below.
   static bool get alertManagement => true;
 
-  // Later-sprint surfaces kept hidden even though `alerts` + `alertManagement`
-  // are live (PBI-24 and friends are NOT part of the PBI-22 move):
-  //  - Home (dashboard) open-alerts count + recent-alerts summary,
-  //  - device-list per-row alert-severity badges / alert-based sorting,
+  // PBI-09/PBI-10 (approved for Sprint 2): unresolved alerts feed the device
+  // signals — Attention computation, Home device priority, and the per-row
+  // alert-severity accent using the severity palette (never blended with the
+  // trust/monitoring colours). Only LINKED alerts count; device_mac NULL ones
+  // are attributed to no device.
+  static bool get alertSeverityBadges => true;
+
+  // Still-deferred surfaces (NOT part of the PBI-22/PBI-09/10 scope):
+  //  - Home (dashboard) open-alerts count + recent-alerts summary (PBI-24),
   //  - the 7-inch display's alert count.
   static bool get alertsHome => false;
-  static bool get alertSeverityBadges => false;
   static bool get alertDisplay => false;
   // Plain-language explanations are a later sprint; hidden here (explanation is
   // NULL for Sprint 2 threat alerts).

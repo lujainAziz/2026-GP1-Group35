@@ -468,8 +468,15 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
           children: [
             GlowDot(p.dot, size: 7, glow: 0),
             const SizedBox(width: 7),
+            // Full label always visible: shrink-to-fit instead of ellipsis, so
+            // "Not attention"/"Not monitored" are never clipped at large fonts
+            // while the two-per-row layout is kept.
             Expanded(
-              child: Text(p.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: UiText.menuItem),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(p.label, maxLines: 1, style: UiText.menuItem),
+              ),
             ),
             if (on) Text('✓', style: UiText.sans(12, 800, color: Ui.acc)),
           ],
@@ -671,6 +678,14 @@ class _DeviceRow extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text('● ${d.onlineLabel}', style: UiText.listStatus.copyWith(color: s.dotColor)),
+                      // PBI-09/10: worst UNRESOLVED alert severity, in the
+                      // severity palette (own line — never blended with the
+                      // trust/monitoring flag colours below).
+                      if (s.hasAlert) ...[
+                        const SizedBox(height: 3),
+                        Text('${sevUpper(s.alertSev!)} ALERT',
+                            style: UiText.listFlag.copyWith(color: s.alertColor)),
+                      ],
                       if (s.unrec) ...[
                         const SizedBox(height: 3),
                         Text('UNRECOGNIZED', style: UiText.listFlag.copyWith(color: Ui.med)),

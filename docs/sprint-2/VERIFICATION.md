@@ -64,9 +64,13 @@ isolated test backend. On a machine with Flutter:
 ```
 cd app/mobile && flutter pub get && flutter run   # or: flutter run -d chrome
 ```
-Pair using the code on the 7-inch display, then capture into `docs/sprint-2/evidence/ui/`:
-1. `alerts-tab.png` — list: title, severity, device, last event time, occurrence `N×`, newest first.
-2. `alert-details.png` — first/last seen, occurrences, src/dst address:port, rule ID; navigate to
-   device details; **no** explanation block / Review·Resolve.
+Pair using the code on the 7-inch display, then capture into `docs/sprint-2/evidence/ui/`
+(**updated for the PBI-22 move + field-hiding decisions**):
+1. `alerts-tab.png` — hero: open count + "open alerts" (DB aggregate); All/Open/Resolved tabs;
+   list rows: title, severity, device, last event time, state pill; newest first (no occurrence `N×`).
+2. `alert-details.png` — title, time, device pill (navigates to device details), state badge,
+   Review/Resolve buttons; Signal details: alert type, severity, last seen, source/destination IP
+   (no occurrences / first seen / rule ID / ports; explanation block still hidden).
 3. `device-alerts.png` — the device's alerts (no "Coming soon").
+4. `device-list.png` — severity flag on alerting devices (severity palette, PBI-09/10).
 Confirm each screen's values match `GET /alerts` / `/alerts/{id}` / `/devices/{mac}/alerts`.

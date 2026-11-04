@@ -87,39 +87,75 @@ void main() {
     test('alerts + state management are enabled; later-sprint surfaces hidden', () {
       expect(FeatureRelease.alerts, isTrue); // Alerts tab, details, device alerts
       expect(FeatureRelease.alertManagement, isTrue); // PBI-22 moved into Sprint 2
+      expect(FeatureRelease.alertSeverityBadges, isTrue); // PBI-09/10: signals + priority
       // Everything else stays hidden until its own sprint:
       expect(FeatureRelease.alertsHome, isFalse); // Home count + recent summary (PBI-24)
-      expect(FeatureRelease.alertSeverityBadges, isFalse); // device-list badges
       expect(FeatureRelease.alertDisplay, isFalse); // 7-inch display count
       expect(FeatureRelease.alertExplanations, isFalse); // "What happened" block
       expect(FeatureRelease.risk, isFalse); // network risk
     });
   });
 
-  group('Device-list alert badges stay hidden (alertSeverityBadges off)', () {
-    test('worstByMac still computes the worst unresolved severity per mac', () {
+  group('PBI-09/10: unresolved alerts feed the device signals', () {
+    test('worstByMac: worst unresolved severity per mac; unlinked/resolved excluded', () {
       final worst = Signals.worstByMac([
         SecurityAlert.fromApi(_apiAlert(over: {'device_mac': 'm1', 'severity': 'low'})),
         SecurityAlert.fromApi(_apiAlert(over: {'device_mac': 'm1', 'severity': 'high'})),
         SecurityAlert.fromApi(_apiAlert(over: {'device_mac': null, 'severity': 'critical'})),
+        SecurityAlert.fromApi(_apiAlert(over: {'device_mac': 'm2', 'severity': 'critical', 'state': 'resolved'})),
       ]);
       expect(worst['m1'], Severity.high);
-      expect(worst.keys.toList(), ['m1']); // unlinked alert (null mac) badges no device
+      // unlinked (null mac) and resolved alerts are attributed to no device
+      expect(worst.keys.toList(), ['m1']);
     });
 
-    test('Signals.all yields no severity badges while the gate is off', () {
+    test('New/Reviewed alert → severity signal; resolving all clears it but keeps Attention when due', () {
       final state = AppState(DemoRepository());
+      addTearDown(state.dispose);
       state.devices = const [
-        Device(mac: 'm1', presence: Presence.online, trusted: true),
-        Device(mac: 'm2', presence: Presence.online, trusted: true),
+        // Unrecognized + not monitored device with an alert.
+        Device(mac: 'm1', presence: Presence.online, trusted: false, monitored: false),
+        // Fully-trusted, monitored device with an alert.
+        Device(mac: 'm2', presence: Presence.online, trusted: true, monitored: true),
       ];
       state.alerts = [
-        SecurityAlert.fromApi(_apiAlert(over: {'device_mac': 'm1', 'severity': 'critical'})),
+        SecurityAlert.fromApi(_apiAlert(over: {'device_mac': 'm1', 'severity': 'medium', 'state': 'reviewed'})),
+        SecurityAlert.fromApi(_apiAlert(over: {'id': 'b', 'device_mac': 'm2', 'severity': 'high', 'state': 'new'})),
       ];
-      final signals = Signals.all(state);
-      expect(signals.every((s) => s.alertSev == null), isTrue);
-      expect(signals.any((s) => s.hasAlert), isFalse);
-      state.dispose();
+      var s1 = Signals.of(state, state.devices[0]);
+      var s2 = Signals.of(state, state.devices[1]);
+      // Reviewed still counts as unresolved; severity shown in the severity palette.
+      expect(s1.hasAlert, isTrue);
+      expect(s1.alertSev, Severity.medium);
+      expect(s1.rowAccent, sevColor(Severity.medium));
+      expect(s2.alertSev, Severity.high);
+      expect(s1.needsAttention && s2.needsAttention, isTrue);
+
+      // Resolve ALL alerts: the severity signal disappears...
+      state.alerts = [
+        for (final a in state.alerts!) a.copyWith(state: AlertState.resolved),
+      ];
+      s1 = Signals.of(state, state.devices[0]);
+      s2 = Signals.of(state, state.devices[1]);
+      expect(s1.hasAlert, isFalse);
+      expect(s2.hasAlert, isFalse);
+      // ...but m1 stays Attention (unrecognized + not monitored), m2 does not.
+      expect(s1.needsAttention, isTrue);
+      expect(s2.needsAttention, isFalse);
+    });
+
+    test('Home priority: the device with the open alert sorts first among online', () {
+      final state = AppState(DemoRepository());
+      addTearDown(state.dispose);
+      state.devices = const [
+        Device(mac: 'aa', hostname: 'Quiet', presence: Presence.online, trusted: true, monitored: true),
+        Device(mac: 'bb', hostname: 'Alerting', presence: Presence.online, trusted: true, monitored: true),
+      ];
+      state.alerts = [
+        SecurityAlert.fromApi(_apiAlert(over: {'device_mac': 'bb', 'severity': 'high'})),
+      ];
+      final sorted = Signals.sorted(state);
+      expect(sorted.first.device.mac, 'bb');
     });
   });
 }

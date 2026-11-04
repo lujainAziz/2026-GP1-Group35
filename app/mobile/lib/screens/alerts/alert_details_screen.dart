@@ -141,6 +141,9 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                     rows: [
                       ('Alert type', a.kindLabel, Ui.ink),
                       ('Severity', a.severityLabel, c),
+                      // Last seen = the actual last event time (dedup bumps it).
+                      // First seen stays hidden per the field-hiding decision.
+                      ('Last seen', TimeFormat.alertTime(a.lastTime ?? a.time), Ui.ink),
                       if (a.kind == AlertKind.threat && a.sourceIp != null)
                         ('Source IP', a.sourceIp!, Ui.ink),
                       if (a.kind == AlertKind.threat && a.destinationIp != null)

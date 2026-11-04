@@ -152,17 +152,21 @@ belong to later sprints (for example the Home open-alerts count, recent-alerts s
 device-signal badges, and network risk) stay hidden or move behind their own later-sprint flag.
 The flag is enabled only after that audit is approved.
 
-With the existing design and styling preserved:
-- `FeatureRelease.alerts` is set to `true`; `FeatureRelease.alertManagement` stays `false`, so
-  there are no All/Open/Resolved tabs and no Review/Resolve actions.
+With the existing design and styling preserved (**updated — PBI-22 and the PBI-09/10 signal
+linkage were later approved into Sprint 2; the original plan text kept them off**):
+- `FeatureRelease.alerts` and `FeatureRelease.alertManagement` are `true`: the All/Open/Resolved
+  tabs and the Review/Resolve actions are live (PBI-22). `alertSeverityBadges` is `true`:
+  unresolved linked alerts feed the device signals (Attention + Home priority, severity palette).
+  The Home open-alerts count/summary (PBI-24) and the 7-inch display count stay hidden.
 - `SecurityAlert` and its `fromApi` factory are extended additively with `occurrence_count`, first
-  and last event times, `src_port` / `dst_port`, and `rule_id`.
-- **Alerts tab:** a list of Threat Alerts showing title, severity, affected device, last event
-  time, and occurrence count, newest first by last event time.
-- **Alert details:** title, severity, device, first and last event time, occurrence count, source
-  and destination addresses and ports, and rule ID, with navigation to the related device details.
-  The explanation and anomaly block is hidden behind a later-sprint flag, as those fields are NULL
-  this sprint.
+  and last event times, `src_port` / `dst_port`, and `rule_id` (kept in the DB and API).
+- **Alerts tab:** hero = true open count (DB aggregate of New+Reviewed) + "open alerts"; a list of
+  Threat Alerts showing title, severity, affected device, last event time and state, newest first.
+  Occurrence count is hidden in the UI per the field-hiding decision.
+- **Alert details:** title, time, device (shown once, with navigation), state badge, Review/Resolve,
+  and Signal details = alert type, severity, last seen (= last event time), source/destination IP.
+  Occurrences, first seen, rule ID and ports are hidden in the UI (kept in DB/API). The explanation
+  and anomaly block is hidden behind a later-sprint flag, as those fields are NULL this sprint.
 - **Device details:** the device's alerts replace the "Coming soon" section once the alerts flag is
   enabled.
 - Flutter widget tests cover the list and details screens.
