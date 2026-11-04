@@ -90,7 +90,7 @@ class _PairingResultScreenState extends State<PairingResultScreen> {
                 const SizedBox(height: 14),
                 Text(
                   ok
-                      ? 'This phone is now paired with ASSAS. Only this phone can see your network.'
+                      ? 'This phone is now paired with ASSAS.'
                       : (widget.reason ?? 'Pairing failed. Try again.'),
                   textAlign: TextAlign.center,
                   style: UiText.pairBody.copyWith(color: Ui.mute),

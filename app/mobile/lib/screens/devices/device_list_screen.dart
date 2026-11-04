@@ -10,35 +10,59 @@ import '../../widgets/ui_kit.dart';
 import '../../widgets/ui_memory.dart';
 import 'device_details_screen.dart';
 
-enum DeviceFilter { all, attention, trusted, unrecognized, notMonitored, offline }
+/// Device filter poles, grouped into four mutually-exclusive pairs (one axis per
+/// pair, pole index ^ 1 = the opposite pole in the same pair). "All" is the
+/// empty set. Poles across different pairs combine (AND); the two poles of one
+/// pair never apply together.
+enum FilterPole {
+  attention, notAttention,     // axis 0
+  trusted, untrusted,          // axis 1
+  online, offline,             // axis 2
+  monitored, notMonitored,     // axis 3
+}
 
-extension on DeviceFilter {
+extension FilterPoleX on FilterPole {
+  FilterPole get opposite => FilterPole.values[index ^ 1];
+
   String get label => switch (this) {
-        DeviceFilter.all => 'All',
-        DeviceFilter.attention => 'Attention',
-        DeviceFilter.trusted => 'Trusted',
-        DeviceFilter.unrecognized => 'Unrecognized',
-        DeviceFilter.notMonitored => 'Not Monitored',
-        DeviceFilter.offline => 'Offline',
+        FilterPole.attention => 'Attention',
+        FilterPole.notAttention => 'Not attention',
+        FilterPole.trusted => 'Trusted',
+        FilterPole.untrusted => 'Untrusted',
+        FilterPole.online => 'Online',
+        FilterPole.offline => 'Offline',
+        FilterPole.monitored => 'Monitored',
+        FilterPole.notMonitored => 'Not monitored',
       };
 
   Color get dot => switch (this) {
-        DeviceFilter.all => Ui.acc,
-        DeviceFilter.attention => Ui.high,
-        DeviceFilter.trusted => Ui.low,
-        DeviceFilter.unrecognized => Ui.med,
-        DeviceFilter.notMonitored => Ui.high,
-        DeviceFilter.offline => Ui.mute,
+        FilterPole.attention => Ui.high,
+        FilterPole.notAttention => Ui.low,
+        FilterPole.trusted => Ui.low,
+        FilterPole.untrusted => Ui.med,
+        FilterPole.online => Ui.low,
+        FilterPole.offline => Ui.mute,
+        FilterPole.monitored => Ui.low,
+        FilterPole.notMonitored => Ui.high,
       };
 
   bool matches(DeviceSignal s) => switch (this) {
-        DeviceFilter.all => true,
-        DeviceFilter.attention => s.needsAttention,
-        DeviceFilter.trusted => s.device.trusted,
-        DeviceFilter.unrecognized => s.unrec,
-        DeviceFilter.notMonitored => s.notMonitored,
-        DeviceFilter.offline => !s.online,
+        FilterPole.attention => s.needsAttention,
+        FilterPole.notAttention => !s.needsAttention,
+        FilterPole.trusted => s.device.trusted,
+        FilterPole.untrusted => !s.device.trusted,
+        FilterPole.online => s.online,
+        FilterPole.offline => !s.online,
+        FilterPole.monitored => !s.notMonitored,
+        FilterPole.notMonitored => s.notMonitored,
       };
+
+  static FilterPole? byName(String name) {
+    for (final p in FilterPole.values) {
+      if (p.name == name) return p;
+    }
+    return null;
+  }
 }
 
 /// Device inventory (PBI-04, PBI-06, PBI-07): all discovered devices,
@@ -48,8 +72,8 @@ class DeviceListScreen extends StatefulWidget {
 
   final AppState state;
 
-  /// Set by the dashboard to open this tab with a filter.
-  final ValueNotifier<DeviceFilter?>? filterRequest;
+  /// Set by the dashboard to open this tab with a specific filter (empty = All).
+  final ValueNotifier<Set<FilterPole>?>? filterRequest;
 
   @override
   State<DeviceListScreen> createState() => _DeviceListScreenState();
@@ -59,7 +83,8 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
   final _search = TextEditingController();
   final _menu = OverlayPortalController();
   final _menuLink = LayerLink();
-  DeviceFilter _filter = DeviceFilter.all;
+  // Selected poles, at most one per axis. Empty = All.
+  final Set<FilterPole> _poles = {};
   bool _filterChanged = false;
 
   @override
@@ -76,19 +101,44 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
 
   /// Bring back the filter and search from last time.
   Future<void> _restore() async {
-    final name = await UiMemory.deviceFilter();
+    final stored = await UiMemory.deviceFilter() ?? ''; // comma-joined pole names
     final q = await UiMemory.deviceSearch();
     if (!mounted) return;
-    for (final f in DeviceFilter.values) {
-      if (f.name == name && !_filterChanged) setState(() => _filter = f);
+    if (!_filterChanged && stored.isNotEmpty) {
+      final restored = <FilterPole>{};
+      for (final name in stored.split(',')) {
+        final p = FilterPoleX.byName(name.trim());
+        if (p != null) restored.add(p);
+      }
+      if (restored.isNotEmpty) setState(() => _poles..clear()..addAll(restored));
     }
     if (_search.text.isEmpty && q.isNotEmpty) _search.text = q;
   }
 
-  void _setFilter(DeviceFilter f) {
+  void _persist() => UiMemory.setDeviceFilter(_poles.map((p) => p.name).join(','));
+
+  /// Toggle a pole; selecting one clears the opposite pole in its pair.
+  void _togglePole(FilterPole p) {
     _filterChanged = true;
-    setState(() => _filter = f);
-    UiMemory.setDeviceFilter(f.name);
+    setState(() {
+      if (!_poles.remove(p)) {
+        _poles.remove(p.opposite);
+        _poles.add(p);
+      }
+    });
+    _persist();
+  }
+
+  void _selectAll() {
+    _filterChanged = true;
+    setState(_poles.clear);
+    _persist();
+  }
+
+  void _applyPoles(Set<FilterPole> poles) {
+    _filterChanged = true;
+    setState(() => _poles..clear()..addAll(poles));
+    _persist();
   }
 
   @override
@@ -111,15 +161,16 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
   void _onFilterRequest() {
     final f = widget.filterRequest?.value;
     if (f == null) return;
-    _setFilter(f);
+    _applyPoles(f);
     widget.filterRequest?.value = null;
   }
 
-  /// PBI-07: search by device name, IP address, or MAC address.
+  /// PBI-07: search by device name, IP address, or MAC address. Selected poles
+  /// combine (AND); empty set = All.
   List<DeviceSignal> _visible(List<DeviceSignal> all) {
     final q = _search.text.trim().toLowerCase();
     return all.where((s) {
-      if (!_filter.matches(s)) return false;
+      if (!_poles.every((p) => p.matches(s))) return false;
       if (q.isEmpty) return true;
       final d = s.device;
       return [d.displayName, d.ip ?? '', d.mac].any((v) => v.toLowerCase().contains(q));
@@ -129,8 +180,14 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
 
   void _clear() {
     _search.clear();
-    _setFilter(DeviceFilter.all);
+    _selectAll();
   }
+
+  String get _filterSummary => _poles.isEmpty
+      ? 'All'
+      : _poles.length == 1
+          ? _poles.first.label
+          : '${_poles.length} filters';
 
   @override
   Widget build(BuildContext context) {
@@ -179,19 +236,9 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
             children: [
               Text('${state.totalCount}', style: UiText.devicesHero),
               const SizedBox(width: 10),
-              Text('devices', style: UiText.heroSuffix),
-              const SizedBox(width: 10),
-              // Shrinks instead of going off screen with 3-digit counts.
-              Expanded(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    '● ${state.onlineCount} online',
-                    style: UiText.mono(12, 500, color: Ui.low),
-                  ),
-                ),
-              ),
+              // The online count already lives in the stats card below, so it is
+              // not repeated next to the title.
+              Expanded(child: Text('devices', style: UiText.heroSuffix)),
             ],
           ),
         ),
@@ -234,7 +281,7 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
   Widget _divider() => Container(width: 1, color: Ui.line);
 
   Widget _searchBar(List<DeviceSignal> all) {
-    final active = _filter != DeviceFilter.all || _menu.isShowing;
+    final active = _poles.isNotEmpty || _menu.isShowing;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 13, 16, 8),
       child: DecoratedBox(
@@ -292,7 +339,7 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
                 overlayChildBuilder: (context) => _menuOverlay(all),
                 child: Pressable(
                   onTap: () => setState(_menu.toggle),
-                  semanticLabel: 'Filter devices, ${_filter.label}',
+                  semanticLabel: 'Filter devices, $_filterSummary',
                   child: Glass(
                     color: active ? Ui.mix(Ui.acc, .22, Ui.surf) : Ui.fade(Ui.surf, .82),
                     border: active ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
@@ -304,11 +351,11 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         UiIcon(UiIcons.filter, size: 18, stroke: 2, color: Ui.ink),
-                        if (_filter != DeviceFilter.all) ...[
+                        if (_poles.isNotEmpty) ...[
                           const SizedBox(width: 8),
-                          GlowDot(_filter.dot, glow: 0),
+                          GlowDot(_poles.first.dot, glow: 0),
                           const SizedBox(width: 6),
-                          Text(_filter.label, style: UiText.sans(12, 700)),
+                          Text(_filterSummary, style: UiText.sans(12, 700)),
                         ],
                       ],
                     ),
@@ -339,7 +386,7 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
           child: FadeSlideIn(
             duration: const Duration(milliseconds: 250),
             child: SizedBox(
-              width: 236,
+              width: 260,
               child: Glass(
                 color: Ui.fade(Ui.surf2, .92),
                 radius: UiRadius.dropdown,
@@ -349,7 +396,20 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    for (final f in DeviceFilter.values) _menuRow(f, all.where(f.matches).length),
+                    // All = full-width row; selecting it clears every pole.
+                    _allRow(all.length),
+                    const SizedBox(height: 4),
+                    // Four mutually-exclusive pairs, two equal columns.
+                    for (var axis = 0; axis < 4; axis++) ...[
+                      if (axis > 0) const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(child: _poleChip(FilterPole.values[axis * 2], all)),
+                          const SizedBox(width: 4),
+                          Expanded(child: _poleChip(FilterPole.values[axis * 2 + 1], all)),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -360,16 +420,16 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
     );
   }
 
-  Widget _menuRow(DeviceFilter f, int count) {
-    final on = f == _filter;
+  Widget _allRow(int count) {
+    final on = _poles.isEmpty;
     return Pressable(
       onTap: () {
         _menu.hide();
-        _setFilter(f);
+        _selectAll();
       },
-      semanticLabel: '${f.label}, $count devices${on ? ', selected' : ''}',
+      semanticLabel: 'All, $count devices${on ? ', selected' : ''}',
       child: Container(
-        height: 42,
+        height: 40,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: on ? Ui.fade(Ui.acc, .16) : Colors.transparent,
@@ -377,15 +437,41 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
         ),
         child: Row(
           children: [
-            GlowDot(f.dot, size: 8, glow: 0),
+            GlowDot(Ui.acc, size: 8, glow: 0),
             const SizedBox(width: 10),
-            Expanded(child: Text(f.label, style: UiText.menuItem)),
+            Expanded(child: Text('All', style: UiText.menuItem)),
             Text('$count', style: UiText.tabCount.copyWith(color: Ui.mute)),
             const SizedBox(width: 10),
-            SizedBox(
-              width: 14,
-              child: Text(on ? '✓' : '', style: UiText.sans(13, 800, color: Ui.acc)),
+            SizedBox(width: 14, child: Text(on ? '✓' : '', style: UiText.sans(13, 800, color: Ui.acc))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _poleChip(FilterPole p, List<DeviceSignal> all) {
+    final on = _poles.contains(p);
+    final count = all.where(p.matches).length;
+    return Pressable(
+      // Multi-select: tapping keeps the menu open so several pairs can be set.
+      onTap: () => _togglePole(p),
+      semanticLabel: '${p.label}, $count devices${on ? ', selected' : ''}',
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: on ? Ui.fade(Ui.acc, .16) : Colors.transparent,
+          borderRadius: BorderRadius.circular(UiRadius.dropdownItem),
+          border: Border.all(color: on ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line),
+        ),
+        child: Row(
+          children: [
+            GlowDot(p.dot, size: 7, glow: 0),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(p.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: UiText.menuItem),
             ),
+            if (on) Text('✓', style: UiText.sans(12, 800, color: Ui.acc)),
           ],
         ),
       ),
@@ -430,8 +516,8 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
       final hint = noDevices
           ? 'Devices will appear here once ASSAS discovers them.'
           : q.isNotEmpty
-              ? 'Nothing matches “$q”${_filter != DeviceFilter.all ? ' in ${_filter.label}' : ''}.'
-              : 'No devices in ${_filter.label}.';
+              ? 'Nothing matches “$q”${_poles.isNotEmpty ? ' in $_filterSummary' : ''}.'
+              : 'No devices in $_filterSummary.';
       return [
         SliverToBoxAdapter(
           child: EmptyDashed(

@@ -26,11 +26,30 @@ class AlertDetailsScreen extends StatefulWidget {
 
 class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
   bool _saving = false;
+  // Fetched directly by id so the alert survives leaving the loaded/paginated
+  // list (the global page can scroll past it while this screen is open).
+  SecurityAlert? _fetched;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.state.alertById(widget.alertId) == null) _fetch();
+  }
+
+  Future<void> _fetch() async {
+    try {
+      final a = await widget.state.repo.getAlertById(widget.alertId);
+      if (mounted && a != null) setState(() => _fetched = a);
+    } catch (e) {
+      if (mounted) widget.state.handleFailure(e);
+    }
+  }
 
   Future<void> _setState(AlertState s) async {
     setState(() => _saving = true);
     try {
       await widget.state.setAlertState(widget.alertId, s);
+      await _fetch(); // reflect the new state even if it is off the loaded page
       if (!mounted) return;
       showToast(context, s == AlertState.resolved ? 'Marked as resolved' : 'Marked as reviewed');
     } catch (e) {
@@ -48,7 +67,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
       body: ListenableBuilder(
         listenable: widget.state,
         builder: (context, _) {
-          final a = widget.state.alertById(widget.alertId);
+          final a = widget.state.alertById(widget.alertId) ?? _fetched;
           if (a == null) {
             return Stack(
               children: [
@@ -196,12 +215,16 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
   /// Device name pill; opens the device when it is known.
   Widget _deviceLink(BuildContext context, SecurityAlert a) {
     final mac = a.deviceMac;
-    final known = mac != null && widget.state.deviceByMac(mac) != null;
+    final device = mac == null ? null : widget.state.deviceByMac(mac);
+    final known = device != null;
+    // Prefer the inventory's display name (already machine-id-aware); otherwise
+    // sanitize the alert's own name so opaque identifiers show "Unknown device".
+    final name = device?.displayName ?? a.displayDeviceName;
     return Pressable(
       onTap: known
           ? () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => DeviceDetailsScreen(state: widget.state, mac: mac),
+                  builder: (_) => DeviceDetailsScreen(state: widget.state, mac: mac!),
                 ),
               )
           : null,
@@ -216,7 +239,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
           children: [
             Flexible(
               child: Text(
-                a.deviceName,
+                name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: UiText.secondary,

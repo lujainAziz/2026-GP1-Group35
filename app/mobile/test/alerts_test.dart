@@ -84,14 +84,14 @@ void main() {
   });
 
   group('Sprint-2 feature gating', () {
-    test('only the three approved mobile surfaces are enabled', () {
+    test('alerts + state management are enabled; later-sprint surfaces hidden', () {
       expect(FeatureRelease.alerts, isTrue); // Alerts tab, details, device alerts
+      expect(FeatureRelease.alertManagement, isTrue); // PBI-22 moved into Sprint 2
       // Everything else stays hidden until its own sprint:
-      expect(FeatureRelease.alertsHome, isFalse); // Home count + recent summary
+      expect(FeatureRelease.alertsHome, isFalse); // Home count + recent summary (PBI-24)
       expect(FeatureRelease.alertSeverityBadges, isFalse); // device-list badges
       expect(FeatureRelease.alertDisplay, isFalse); // 7-inch display count
       expect(FeatureRelease.alertExplanations, isFalse); // "What happened" block
-      expect(FeatureRelease.alertManagement, isFalse); // Review/Resolve + tabs
       expect(FeatureRelease.risk, isFalse); // network risk
     });
   });

@@ -251,10 +251,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(width: 14),
-          _Toggle(
-            value: on,
-            onChanged: _saving ? null : (s == null ? (_) => _loadSettings() : (_loading ? null : _toggleProbes)),
-          ),
+          // Until the real state is known, do NOT show a toggle (it would read as
+          // a confirmed "off"): show an explicit error+retry or a loading spinner.
+          if (_settingsUnavailable)
+            Pressable(
+              onTap: _loading ? null : _loadSettings,
+              semanticLabel: 'Retry loading settings',
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(UiRadius.pill),
+                  border: Border.all(color: Ui.mix(Ui.med, .4, Ui.line)),
+                ),
+                child: Text('RETRY', style: UiText.mono(10.5, 700, em: .1, color: Ui.med)),
+              ),
+            )
+          else if (s == null)
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: UiSpinner(size: 18))
+          else
+            _Toggle(
+              value: on,
+              onChanged: _saving || _loading ? null : _toggleProbes,
+            ),
         ],
       ),
     );

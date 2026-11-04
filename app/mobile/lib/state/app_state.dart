@@ -21,6 +21,18 @@ class AppState extends ChangeNotifier {
   ConnectionStatus connection = ConnectionStatus.checking;
   bool loadedOnce = false;
 
+  /// Open-alerts total (New + Reviewed) as a DB aggregate for the Alerts hero —
+  /// not the length of the loaded page. null = not available yet.
+  int? openAlertCount;
+
+  /// Alerts have their own freshness/error state, independent of devices/health:
+  /// getAlerts can fail while health + devices succeed, and on a security screen
+  /// the user must not see stale alerts presented as current. [alertsError] is
+  /// true when the last alerts refresh failed (old data is kept but flagged);
+  /// [alertsLastSync] is when alerts last loaded successfully.
+  bool alertsError = false;
+  DateTime? alertsLastSync;
+
   /// True when Assas rejected this phone's session (HTTP 401): it was revoked
   /// or the appliance was reset. The phone must pair again.
   bool sessionEnded = false;
@@ -89,11 +101,22 @@ class AppState extends ChangeNotifier {
         if (handleFailure(e)) return;
       }
       if (FeatureRelease.alerts) {
-      try {
-        alerts = await repo.getAlerts();
-      } catch (_) {
-        // keep last alerts
-      }
+        try {
+          // Fetch the list and the open-count concurrently so alerts add one
+          // round-trip of latency, not two.
+          final results = await Future.wait([repo.getAlerts(), repo.getOpenAlertCount()]);
+          if (cancelled()) return;
+          alerts = results[0] as List<SecurityAlert>?;
+          openAlertCount = results[1] as int?;
+          alertsError = false;
+          alertsLastSync = DateTime.now();
+        } catch (e) {
+          if (cancelled()) return;
+          // Keep the last alerts on screen but flag them as not current; apply
+          // the same revoked-session handling as other protected calls.
+          alertsError = true;
+          if (handleFailure(e)) return;
+        }
       }
       if (FeatureRelease.risk) {
       try {

@@ -93,10 +93,13 @@ class DeviceSignal {
 class ConnectionLook {
   ConnectionLook._();
 
+  // User-facing connection is Online / Offline, with Outdated when the last data
+  // could not be refreshed. This describes the app<->appliance link only; each
+  // device keeps its own Online/Offline presence regardless of this.
   static String text(ConnectionStatus c) => switch (c) {
         ConnectionStatus.checking => 'CONNECTING',
-        ConnectionStatus.live => 'CONNECTED',
-        ConnectionStatus.stale => 'OUTDATED DATA',
+        ConnectionStatus.live => 'ONLINE',
+        ConnectionStatus.stale => 'OUTDATED',
         ConnectionStatus.unreachable => 'OFFLINE',
       };
 
@@ -109,6 +112,8 @@ class ConnectionLook {
 
   /// "SYNCED NOW" while fresh, otherwise how long ago the last sync was.
   static String synced(ConnectionStatus c, DateTime? last) {
+    // When the data is stale, say so plainly instead of a fresh "synced" phrase.
+    if (c == ConnectionStatus.stale) return 'OUTDATED';
     if (last == null) return c == ConnectionStatus.live ? 'SYNCING…' : 'NOT SYNCED YET';
     final age = DateTime.now().difference(last);
     if (c == ConnectionStatus.live && age.inSeconds < 15) return 'SYNCED NOW';

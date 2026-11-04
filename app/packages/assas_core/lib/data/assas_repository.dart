@@ -41,8 +41,21 @@ abstract class AssasRepository {
 
   // ---------- Alerts (Sprint 2+) ----------
   /// null = alerts are not available yet. Empty list = no alerts.
+  /// Paginated server-side; the result is the full set, not a single page.
   Future<List<SecurityAlert>?> getAlerts();
   Future<void> setAlertState(String id, AlertState state);
+
+  /// Total OPEN alerts (New + Reviewed) as a DB aggregate — not the length of a
+  /// loaded page. null = not available yet.
+  Future<int?> getOpenAlertCount();
+
+  /// Alerts for one device, fetched independently of the global list so older
+  /// ones are never hidden behind the page limit. null = not available.
+  Future<List<SecurityAlert>?> getDeviceAlerts(String mac);
+
+  /// One alert by id, fetched directly (so it survives leaving the loaded page).
+  /// null = not found / not available.
+  Future<SecurityAlert?> getAlertById(String id);
 
   // ---------- Pairing (Sprint 1) ----------
   /// Phone: sends the code (and the phone's name), returns the session token.

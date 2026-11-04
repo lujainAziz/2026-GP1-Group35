@@ -1,4 +1,5 @@
 import '../theme/assas_colors.dart';
+import 'device.dart';
 
 /// Threat Alert = Suricata (Sprint 2). Anomaly Alert = Isolation Forest (Sprint 3).
 enum AlertKind { threat, anomaly }
@@ -63,6 +64,10 @@ class SecurityAlert {
   });
 
   bool get isUnresolved => state != AlertState.resolved;
+
+  /// Device name for display: opaque machine identifiers collapse to
+  /// 'Unknown device' (the raw name stays in [deviceName] / the API).
+  String get displayDeviceName => sanitizeDeviceName(deviceName);
 
   String get kindLabel => kind == AlertKind.threat ? 'Threat Alert' : 'Anomaly Alert';
 

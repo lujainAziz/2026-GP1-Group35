@@ -147,14 +147,51 @@ class ApiRepository implements AssasRepository {
 
   // ---------- Alerts ----------
 
+  // Page size + a safety cap so a huge backlog can't fetch unbounded pages.
+  static const _alertPageSize = 200;
+  static const _alertFetchCap = 2000;
+
+  /// Page through [path] (adding limit/offset) and return every alert. Returns
+  /// null only when the first request 404s (endpoint not built) and
+  /// [nullIf404] is set; a later-page 404 just stops.
+  Future<List<SecurityAlert>?> _pageAlerts(String path, {bool nullIf404 = false}) async {
+    final out = <SecurityAlert>[];
+    var offset = 0;
+    while (offset < _alertFetchCap) {
+      final sep = path.contains('?') ? '&' : '?';
+      final r = await _api.get('$path${sep}limit=$_alertPageSize&offset=$offset');
+      if (r.statusCode == 404) return offset == 0 && nullIf404 ? null : out;
+      ApiClient.ensureOk(r, path);
+      final page = ApiClient.decodeList(r).map(SecurityAlert.fromApi).toList();
+      out.addAll(page);
+      if (page.length < _alertPageSize) break; // last page
+      offset += _alertPageSize;
+    }
+    out.sort((a, b) => b.time.compareTo(a.time)); // newest first (PBI-19)
+    return out;
+  }
+
   @override
-  Future<List<SecurityAlert>?> getAlerts() async {
-    final r = await _api.get('/alerts');
+  Future<List<SecurityAlert>?> getAlerts() => _pageAlerts('/alerts', nullIf404: true);
+
+  @override
+  Future<List<SecurityAlert>?> getDeviceAlerts(String mac) =>
+      _pageAlerts('/devices/${Uri.encodeComponent(mac)}/alerts');
+
+  @override
+  Future<SecurityAlert?> getAlertById(String id) async {
+    final r = await _api.get('/alerts/${Uri.encodeComponent(id)}');
+    if (r.statusCode == 404) return null;
+    ApiClient.ensureOk(r, 'alert $id');
+    return SecurityAlert.fromApi(ApiClient.decodeObject(r));
+  }
+
+  @override
+  Future<int?> getOpenAlertCount() async {
+    final r = await _api.get('/alerts/open_count');
     if (r.statusCode == 404) return null; // not built yet
-    ApiClient.ensureOk(r, '/alerts');
-    final list = ApiClient.decodeList(r).map(SecurityAlert.fromApi).toList()
-      ..sort((a, b) => b.time.compareTo(a.time)); // newest first (PBI-19)
-    return list;
+    ApiClient.ensureOk(r, '/alerts/open_count');
+    return (ApiClient.decodeObject(r)['open'] as num?)?.toInt();
   }
 
   @override

@@ -8,10 +8,13 @@ abstract final class FeatureRelease {
   static bool get alerts => true;
   static bool get risk => false; // Sprint 4
   static bool get baseline => false; // Sprint 3
-  static bool get alertManagement => false; // Sprint 5
+  // PBI-22 (alert state management) moved into Sprint 2: New/Reviewed/Resolved
+  // transitions, the Open/Resolved tabs, and the Review/Resolve actions. This
+  // flag is independent of the deferred Home surfaces below.
+  static bool get alertManagement => true;
 
-  // Later-sprint surfaces kept hidden even though `alerts` is live, so Sprint 2
-  // stays limited to its three approved mobile screens:
+  // Later-sprint surfaces kept hidden even though `alerts` + `alertManagement`
+  // are live (PBI-24 and friends are NOT part of the PBI-22 move):
   //  - Home (dashboard) open-alerts count + recent-alerts summary,
   //  - device-list per-row alert-severity badges / alert-based sorting,
   //  - the 7-inch display's alert count.

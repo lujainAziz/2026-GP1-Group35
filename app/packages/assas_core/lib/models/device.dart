@@ -185,6 +185,16 @@ String? _clean(String? v) {
 /// human-friendly name): a UUID, a long hex string, or a long separator-free,
 /// essentially vowel-less token. Conservative so real names (with vowels,
 /// hyphens/dots, or under 24 chars) are kept as-is.
+/// Friendly display name for a raw, server-provided device name (e.g. the name
+/// carried on an alert). Mirrors [Device.detectedName]'s rule: an opaque machine
+/// identifier (UUID / long hex / long vowel-less token) becomes 'Unknown
+/// device'; real and user-chosen names pass through unchanged.
+String sanitizeDeviceName(String? name) {
+  final n = name?.trim();
+  if (n == null || n.isEmpty) return 'Unknown device';
+  return _looksLikeMachineId(n) ? 'Unknown device' : n;
+}
+
 bool _looksLikeMachineId(String s) {
   if (s.contains(' ')) return false;
   final uuid = RegExp(

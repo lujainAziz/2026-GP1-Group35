@@ -13,7 +13,7 @@ void main() {
       Device(mac: 'aa', hostname: 'Known', presence: Presence.online, trusted: true),
       Device(mac: 'bb', hostname: 'New', presence: Presence.online, trusted: false),
     ];
-    final request = ValueNotifier<DeviceFilter?>(DeviceFilter.unrecognized);
+    final request = ValueNotifier<Set<FilterPole>?>({FilterPole.untrusted});
     addTearDown(state.dispose);
     addTearDown(request.dispose);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body:

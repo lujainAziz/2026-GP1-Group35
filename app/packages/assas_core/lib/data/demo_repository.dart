@@ -174,6 +174,29 @@ class DemoRepository implements AssasRepository {
     ];
   }
 
+  @override
+  Future<int?> getOpenAlertCount() async {
+    await _delay();
+    return _alerts.where((a) => a.isUnresolved).length; // New + Reviewed
+  }
+
+  @override
+  Future<List<SecurityAlert>?> getDeviceAlerts(String mac) async {
+    await _delay();
+    final list = _alerts.where((a) => a.deviceMac == mac).toList()
+      ..sort((a, b) => b.time.compareTo(a.time));
+    return list;
+  }
+
+  @override
+  Future<SecurityAlert?> getAlertById(String id) async {
+    await _delay();
+    for (final a in _alerts) {
+      if (a.id == id) return a;
+    }
+    return null;
+  }
+
   /// Demo: any 6-character code (letters/numbers) is accepted.
   @override
   Future<String> pair(String code, {String? deviceName}) async {

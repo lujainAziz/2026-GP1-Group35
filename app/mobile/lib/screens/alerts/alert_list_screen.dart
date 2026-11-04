@@ -102,19 +102,51 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   Widget _hero() {
+    // Original design: a big OPEN count on the left, "open alerts" on the right.
+    // The count is the DB aggregate of New+Reviewed (openAlertCount), not the
+    // length of the loaded page.
+    final count = state.openAlertCount;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const KickerRow('NEEDS ATTENTION'),
         Padding(
-          padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 10, UiSpace.pageText, 0),
-          child: Text(
-            // Screen title (not a count). The open-alerts summary is a later
-            // sprint; the list below is the Sprint-2 deliverable.
-            Released.alerts ? 'Threat Alerts' : 'Soon',
-            style: UiText.pairTitle.copyWith(color: Released.alerts ? Ui.ink : Ui.mute),
+          padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 6, UiSpace.pageText, 0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              // Shrinks instead of overflowing when a big count meets the
+              // largest font at the narrowest width.
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    Released.alerts ? (count?.toString() ?? '—') : '—',
+                    style: UiText.alertsHero.copyWith(color: Released.alerts ? Ui.ink : Ui.mute),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text('open alerts', style: UiText.heroSuffix.copyWith(color: Ui.mute)),
+                ),
+              ),
+            ],
           ),
         ),
+        if (Released.alerts && state.alertsError)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 8, UiSpace.pageText, 0),
+            child: Text(
+              '⚠ SHOWING LAST KNOWN ALERTS — COULDN’T REFRESH',
+              style: UiText.mono(10, 600, em: .08, color: Ui.med),
+            ),
+          ),
         const SizedBox(height: 14),
       ],
     );
@@ -129,13 +161,18 @@ class _AlertListScreenState extends State<AlertListScreen> {
           padding: const EdgeInsets.fromLTRB(22, 6, 22, 0),
           child: DecoratedBox(
             decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
-            child: Row(
-              children: [
-                for (final tab in _AlertTab.values) ...[
-                  if (tab != _AlertTab.all) const SizedBox(width: 26),
-                  _tabItem(tab, list.where(tab.matches).length),
+            // Scrolls horizontally instead of overflowing when the labels + counts
+            // grow at the largest font on a narrow screen.
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final tab in _AlertTab.values) ...[
+                    if (tab != _AlertTab.all) const SizedBox(width: 26),
+                    _tabItem(tab, list.where(tab.matches).length),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

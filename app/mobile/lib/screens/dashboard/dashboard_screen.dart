@@ -397,10 +397,12 @@ class DashboardScreen extends StatelessWidget {
 
   Widget _recent(BuildContext context) {
     if (!Released.alertsHome) {
+      // Alerts are live in the Alerts tab; only the Home summary here is still
+      // deferred (PBI-24), so no "arrives in Sprint 2" / SOON · SPRINT 2 badge.
       return const EmptyDashed(
-        title: 'Coming soon',
-        hint: 'Threat alerts arrive in Sprint 2 and anomaly alerts in Sprint 3.',
-        action: SoonTag(2),
+        title: 'See the Alerts tab',
+        hint: 'A summary of recent alerts on the home screen is coming later. '
+            'Open the Alerts tab for the full list.',
       );
     }
     final alerts = state.alerts;

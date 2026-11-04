@@ -93,7 +93,7 @@ void main() {
     expect(find.text('SOON · SPRINT 4'), findsOneWidget);
     expect(find.text('SOON · SPRINT 2'), findsOneWidget);
     expect(find.text('High'), findsNothing);
-    expect(find.text('CONNECTED'), findsOneWidget);
+    expect(find.text('ONLINE'), findsWidgets);
     expect(find.textContaining('New phone paired:'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.runAsync(() async {

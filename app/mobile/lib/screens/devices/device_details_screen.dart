@@ -30,10 +30,16 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
   bool _saving = false;
   bool _detailError = false;
 
+  // This device's alerts, fetched independently (GET /devices/{mac}/alerts,
+  // paginated) so older alerts are never hidden behind the global page limit.
+  List<SecurityAlert>? _deviceAlertList;
+  bool _alertsLoaded = false;
+
   @override
   void initState() {
     super.initState();
     _loadDetail();
+    _loadAlerts();
   }
 
   Future<void> _loadDetail() async {
@@ -47,6 +53,18 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
       widget.state.handleFailure(e);
       setState(() => _detailError = true);
       // Keep the latest list data, but expose a retry for a failed detail read.
+    }
+  }
+
+  Future<void> _loadAlerts() async {
+    if (!Released.alerts) return;
+    try {
+      final list = await widget.state.repo.getDeviceAlerts(widget.mac);
+      if (mounted) setState(() { _deviceAlertList = list; _alertsLoaded = true; });
+    } catch (e) {
+      if (!mounted) return;
+      widget.state.handleFailure(e);
+      setState(() => _alertsLoaded = true); // keep last; _deviceAlertList may be null
     }
   }
 
@@ -315,11 +333,13 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
       return const EmptyDashed(
         padding: EdgeInsets.all(26),
         title: 'Coming soon',
-        hint: 'Alerts for this device arrive in Sprint 2.',
-        action: SoonTag(2),
+        hint: 'Alerts for this device will appear here.',
       );
     }
-    final alerts = widget.state.alertsForDevice(d.mac);
+    if (!_alertsLoaded) {
+      return const Padding(padding: EdgeInsets.all(26), child: Center(child: UiSpinner(size: 20)));
+    }
+    final alerts = _deviceAlertList;
     if (alerts == null || alerts.isEmpty) {
       return EmptyDashed(
         padding: const EdgeInsets.all(26),
@@ -336,11 +356,15 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
             compact: true,
             dotSize: 11,
             railWidth: 22,
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => AlertDetailsScreen(state: widget.state, alertId: alerts[i].id),
-              ),
-            ),
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AlertDetailsScreen(state: widget.state, alertId: alerts[i].id),
+                ),
+              );
+              // State may have changed on the details screen; refresh this list.
+              await _loadAlerts();
+            },
           ),
         ],
       ],

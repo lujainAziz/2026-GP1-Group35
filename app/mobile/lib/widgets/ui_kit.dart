@@ -846,7 +846,7 @@ class TimelineAlertCard extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            alert.deviceName,
+                            alert.displayDeviceName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: UiText.secondary.copyWith(color: Ui.mute),
