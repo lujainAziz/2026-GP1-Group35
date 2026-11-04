@@ -11,9 +11,9 @@ Status legend: ☐ Planned · ◐ In progress · ☑ Done & tested. Every "Done"
 Repo: `github.com/lujainAziz/Assas`, branch `sprint-2` (branched from tag `sprint-1` = `4786e3c`).
 Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
 
-**Branch sync with `main` (correction).** `sprint-2` was cut at PR #14 (`4786e3c`). `main` then
-advanced to PR #18 (`c8e42e5`) with UI/design updates **not** initially in `sprint-2` — contrary to
-an earlier assertion that all `main`/design changes were already present. On 2026-11-03 `origin/main`
+**Branch sync with `main`.** `sprint-2` was cut at PR #14 (`4786e3c`). `main` then advanced to
+PR #18 (`c8e42e5`) with UI/design updates not initially present in `sprint-2`; an earlier status
+report stating otherwise was incorrect and is corrected here. On 2026-11-03 `origin/main`
 (through `c8e42e5`) was merged into `sprint-2` (conflict-free) to include: #15 "Computer" device
 label, #16 OUI registry docs, **#17 live signal line → "Soon · Sprint 5"**, **#18 "Now watching"
 protocol tags → "Soon · Sprint 5"**. #17/#18 restore the approved design's gating of live-activity UI
@@ -228,15 +228,14 @@ own flags.
 `alertSeverityBadges`, `alertDisplay`, `alertExplanations` all **false**; `alertManagement`, `risk`
 stay false.
 
-> **Scope update (final):** the earlier move of PBI-22 (alert state management)
-> into Sprint 2 was **reversed — PBI-22 is deferred again**. `alertManagement`
-> is OFF: Review/Resolve, the New/Reviewed/Resolved badges, the All/Open/Resolved
-> tabs and the live open-alerts counter are hidden (the hero keeps its count
-> design, muted). The backend endpoints and stored states remain untouched —
-> nothing deleted, nothing reset to New. PBI-14 stays live (list, details with
-> Last seen, device alerts + linking) and PBI-09/10 stays live (Attention,
-> priority, severity colours). Occurrences / first seen / rule id / ports stay
-> hidden in the UI but kept in the DB and API.
+**Scope (per `DECISIONS.md` D4–D8).** PBI-14 is live: the alerts list, alert
+details (including Last seen), and device alerts with device linking. PBI-09/10
+is live: unresolved linked alerts feed the device signals (Attention, Home
+priority, severity colours). PBI-22 (alert state management) is deferred:
+`alertManagement` is off, hiding Review/Resolve, the state badges, the
+All/Open/Resolved tabs and the live open-alerts counter, while the backend
+endpoints and stored states are retained unchanged. Occurrences, first seen,
+rule id and ports are hidden in the UI and retained in the database and API.
 
 | Surface | Sprint 2 | How |
 |---|---|---|

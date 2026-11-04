@@ -1,12 +1,13 @@
 # Proposal — Suricata rule-scope tuning
 
-> **Decision (2026-11-05): Group A (the 12 SIDs) APPROVED for application — and
-> only it.** `appliance/suricata/disable.conf` is the committed source of truth.
-> Group C (STREAM/decoder) stays untouched until the capture/mirror check
-> completes; the IPv6-linking plan stays deferred. No old alerts deleted, no
-> severity changes. Application uses `suricata-update --offline` so ONLY the 12
-> exceptions change (no new ruleset download beyond the approved scope).
-> Deployment results are appended at the bottom when the sudo batch runs.
+**Decision (2026-11-05, D9):** Group A (the 12 SIDs listed below) is approved
+and applied; no other group is affected. `appliance/suricata/disable.conf` is
+the committed source of truth for the exceptions and their rationale. Group C
+(STREAM/decoder) remains unchanged pending the capture/mirror check; the
+IPv6-linking plan remains pending approval. The severity mapping is unchanged
+and no stored alerts were altered by this tuning. Application used
+`suricata-update --offline`, limiting the change to the approved exceptions.
+Deployment results are recorded at the end of this document.
 
 Goal: alerts should flag **suspicious activity**, not normal usage (opening
 Discord, OS connectivity checks). This tunes **which rules are enabled** — it
@@ -25,16 +26,16 @@ Existing alert rows are kept untouched.
 | SID | Rule | Volume (rows/occ) | Reason |
 |---|---|---|---|
 | 2035465 | ET INFO Observed Discord Domain in DNS Lookup (discord.com) | 149/2308 | Normal app usage (DNS lookup of discord.com) |
-| 2035466 | ET INFO … (discordapp.com) | 49/180 | Same |
-| 2060502 | ET INFO Discord Chat Service Domain in DNS Lookup (gateway.discord.gg) | 34/113 | Same |
-| 2060503 | ET INFO Discord Chat Service Domain in DNS Lookup (discord.com) | 1/5 | Same |
-| 2060504 | ET INFO Observed Discord Service Domain (gateway.discord.gg) in TLS SNI | 34/34 | Same |
-| 2060505 | ET INFO Observed Discord Service Domain (discord.com) in TLS SNI | 1/1 | Same |
-| 2035463 | ET INFO Observed Discord Domain (discord.com in TLS SNI) | 9/11 | Same |
+| 2035466 | ET INFO Observed Discord Domain in DNS Lookup (discordapp.com) | 49/180 | As above |
+| 2060502 | ET INFO Discord Chat Service Domain in DNS Lookup (gateway.discord.gg) | 34/113 | As above |
+| 2060503 | ET INFO Discord Chat Service Domain in DNS Lookup (discord.com) | 1/5 | As above |
+| 2060504 | ET INFO Observed Discord Service Domain (gateway.discord.gg) in TLS SNI | 34/34 | As above (TLS SNI observation of the same usage) |
+| 2060505 | ET INFO Observed Discord Service Domain (discord.com) in TLS SNI | 1/1 | As above |
+| 2035463 | ET INFO Observed Discord Domain (discord.com in TLS SNI) | 9/11 | As above |
 | 2036220 | ET INFO Android Device Connectivity Check | 9/67 | Normal Android captive-portal/connectivity probe |
 | 2031071 | ET INFO Microsoft Connection Test | 2/4 | Normal Windows connectivity probe |
 | 2016149 | ET INFO STUN Binding Request | 2/29 | Normal WebRTC/VoIP NAT traversal (e.g. Discord calls) |
-| 2016150 | ET INFO STUN Binding Response | 2/29 | Same |
+| 2016150 | ET INFO STUN Binding Response | 2/29 | As above (response side of 2016149) |
 | 2052580 | ET INFO DNS Query to Alibaba Cloud CDN (aliyuncs.com) | 1/6 | CDN lookup = normal usage (common for consumer IoT) — flagged for the team since it can also profile gray-market devices |
 
 These 12 SIDs account for **~2,790 of 5,460 occurrences (~51%)** — pure
@@ -84,8 +85,8 @@ revisit disabling 2200013 only after the `ethtool`/mirror check.
 
 ## APPLIED — actual results (2026-11-04T21:29:33Z / 00:29 local +03)
 
-Run on the appliance with a fail-stop + auto-rollback batch (operator-improved);
-raw artifacts preserved in `evidence/rule-tuning/`.
+Executed on the appliance with a fail-stop batch including automatic rollback
+on error; raw artifacts are preserved in `evidence/rule-tuning/`.
 
 - **Backups taken first:** `suricata.rules.bak-20261104T212854Z` + the previous
   `disable.conf` (both restorable; rollback trap tested in the batch design).

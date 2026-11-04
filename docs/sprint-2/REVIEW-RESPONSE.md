@@ -1,30 +1,31 @@
-# Sprint 2 — Code-review response, PBI-22 move & UI pass
+# Sprint 2 — Code-Review Response and UI Revision
 
-> **Scope reversal (final):** after everything below was delivered and live-verified,
-> the team **deferred PBI-22 again**. `alertManagement` is now OFF: Review/Resolve,
-> state badges, All/Open/Resolved tabs and the live open-count are hidden (the hero
-> keeps its count design, muted). The PATCH/open_count endpoints, their tests, and
-> all stored states remain in place untouched (nothing deleted, nothing reset to
-> New) — the feature re-enables by flipping the flag. PBI-14 (list, details with
-> Last seen, device alerts + linking) and PBI-09/10 (Attention/priority/severity
-> colours) remain live.
+**Status note.** PBI-22 (alert state management) was temporarily enabled during
+this work and subsequently deferred by decision D8 (`DECISIONS.md`):
+`alertManagement` is off, so the Review/Resolve actions, state badges,
+All/Open/Resolved tabs and the live open-count described below are currently
+hidden. The backend endpoints, their tests and all stored states remain in
+place unchanged. PBI-14 (alert list, details including Last seen, device
+alerts and linking) and PBI-09/10 (Attention, priority, severity colours)
+remain live. References to the PBI-22 UI below document the implementation as
+delivered and verified; its visibility is governed by the flag.
 
-Covers: the external code review of `959d2af`, the approved move of **PBI-22
-(alert state management) into Sprint 2**, and the whole-app UI changes. Work is
-on branch `sprint-2` only — **not merged to `main`, nothing deployed to the
-Raspberry Pi, no datasets downloaded.** "Code pushed" ≠ "deployed on the Pi";
-"generated screenshots" ≠ "live visual review" (both remain pending the owner).
+Scope of this document: the external code review of `959d2af` and the
+whole-application UI revision. All work is on branch `sprint-2`; nothing is
+merged to `main` and no datasets were downloaded. A pushed commit does not
+imply deployment to the appliance, and generated screenshots do not substitute
+for the owner's live visual review.
 
-## How tests were run
-- **Appliance (Python):** the project venv has pytest — `.venv/bin/pytest`
-  (pytest is **not** installed system-wide). Full suite: **516 passed, 108
-  subtests** after the changes. These are *executed*, not just added.
-- **Mobile (Flutter):** `flutter test` → **72 passed, 7 skipped** (the skipped
-  are the golden/screenshot generators). `flutter analyze` clean (mobile +
-  display). Display: one pre-existing test writes a preview PNG outside the repo
-  and fails on a sandbox permission error (unrelated to these changes).
-- A standalone ingester harness (`scratchpad/verify_alerts.py`) was used while
-  iterating, but the committed evidence is the pytest suite above.
+## Test execution
+- **Appliance (Python):** full suite executed with the project venv
+  (`.venv/bin/pytest`): **516 passed, 108 subtests** after the changes.
+- **Mobile (Flutter):** `flutter test`: **72 passed, 7 skipped** (the skipped
+  tests are the golden/screenshot generators). `flutter analyze` reports no
+  issues (mobile and display). One pre-existing display test writes a preview
+  PNG outside the repository and fails on a sandbox permission error,
+  unrelated to these changes.
+- A standalone ingester harness was used during development; the committed
+  evidence is the pytest suite above.
 
 ## Code-review findings
 
@@ -51,7 +52,7 @@ display-name source via `sanitizeDeviceName` applied to alert surfaces.
 - **Live re-verification on the Pi** and the **dataset detection evaluation**
   remain pending (no deployment / no datasets, per instruction).
 
-## PBI-22 (moved fully into Sprint 2)
+## PBI-22 implementation (delivered; currently gated off — decision D8)
 
 - `PATCH /alerts/{id}` (authenticated): New→Reviewed, New→Resolved,
   Reviewed→Resolved; Resolved terminal (409 on illegal, 422 unknown, 404 absent).
@@ -59,9 +60,9 @@ display-name source via `sanitizeDeviceName` applied to alert surfaces.
   revert it). Persisted in SQLite → survives app + backend restart.
 - `GET /alerts/open_count`: DB aggregate of New+Reviewed (declared before
   `/alerts/{id}` so `open_count` isn't parsed as an id).
-- App: `FeatureRelease.alertManagement = true` (independent of the Home flags);
-  Open/Resolved tabs, Review/Resolve actions and the state badge go live; hero
-  shows the open count + "open alerts".
+- App: the Open/Resolved tabs, Review/Resolve actions, state badge and the
+  open-count hero are implemented behind `FeatureRelease.alertManagement`
+  (independent of the Home flags); the flag is currently `false` per D8.
 - Tests: `test_alert_state_transitions_persist_and_enforce_rules`,
   `test_new_to_resolved_is_allowed`, `test_alert_state_change_requires_auth`.
 
@@ -84,10 +85,11 @@ display-name source via `sanitizeDeviceName` applied to alert surfaces.
 - **PBI-14 — Threat Alerts (Sprint 2):** detection → ingestion → read API →
   mobile list/details/device alerts. The **open-alerts counter** on the Alerts
   screen is part of this (New+Reviewed, DB aggregate).
-- **PBI-22 — Alert state management (moved to Sprint 2):** New/Reviewed/Resolved
-  with the transitions above, authenticated `PATCH`, persistence, and the
-  Review/Resolve UI + Open/Resolved tabs. The `alertManagement` flag gates this
-  and is **independent** of the deferred Home surfaces.
+- **PBI-22 — Alert state management (deferred; implementation retained):**
+  New/Reviewed/Resolved with the transitions above, authenticated `PATCH`,
+  persistence, and the Review/Resolve UI with Open/Resolved tabs — all gated by
+  `alertManagement` (independent of the deferred Home surfaces) and currently
+  hidden per decision D8.
 - **PBI-24 (and Home summary / notifications / risk / anomaly): still deferred.**
   The Home open-alerts count and recent-alerts summary are **not** part of the
   PBI-22 move and remain hidden.

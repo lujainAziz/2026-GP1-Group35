@@ -1,7 +1,10 @@
-# Proposal — reliable IPv6→device attribution (plan only, not implemented)
+# Proposal — Reliable IPv6→Device Attribution
 
-Approved direction: link alerts to devices by **observed MAC evidence**, never by
-network-prefix membership. Once linked, the existing dedup (same rule + same
+**Status: pending approval; not implemented.**
+
+Objective (team-approved direction; the plan itself awaits final approval):
+link alerts to devices by **observed MAC evidence**, never by network-prefix
+membership. Once linked, the existing dedup (same rule + same
 device within the 5-minute window) collapses today's per-CDN fan-out (e.g. the
 22:15 rule-2210016 group: 20+ rows → ~1 row per burst). This does **not** merge
 time-separated alerts (> window) and does **not** address protocol-rule noise —
@@ -30,8 +33,7 @@ CREATE TABLE IF NOT EXISTS device_ipv6 (
 );
 CREATE INDEX IF NOT EXISTS idx_device_ipv6_addr ON device_ipv6(addr);
 ```
-Writers — **ownership must be proven, not assumed from the frame** (amended per
-review):
+Writers — ownership must be proven, never assumed from the frame:
 
 > **The frame-MAC pitfall:** on the SPAN, traffic arriving *from the internet*
 > carries the **router's** MAC as `Ether.src` with an **external** IPv6 source.
@@ -60,9 +62,9 @@ Retention: rows are never ownership-proof by mere existence (see linking rule);
 no deletes this sprint (table is tiny).
 
 ## Change 2 — alerts.py consults the set (same rules as today)
-In `link_device.resolve(ip)`, for IPv6 also query `device_ipv6`, **linking by the
-event time against the evidence window — not by the mere existence of a record**
-(amended per review; a flat "seen in the last 14 days" was unjustified):
+In `link_device.resolve(ip)`, for IPv6 also query `device_ipv6`. Linking is
+decided by the event time against the ownership-evidence window, not by the
+mere existence of a record:
 ```sql
 SELECT DISTINCT mac FROM device_ipv6
 WHERE addr = ?
@@ -100,11 +102,10 @@ rules **unchanged**:
 2. Two MACs claim one addr → NULL (ambiguity kept).
 3. **Prefix-only is never enough:** addr shares the /64 of an inventoried device
    but is absent from `device_ipv6` → NULL.
-4. **Router-MAC exclusion (review point 1):** a stream of SPAN frames carrying
+4. **Router-MAC exclusion:** a stream of SPAN frames carrying
    the gateway MAC with *external* IPv6 sources must create **no** `device_ipv6`
    rows — and those alerts stay NULL (never attributed to the router).
-5. **Evidence-window linking (review point 2) — boundaries tested on both
-   sides:** with evidence `[first, last]`:
+5. **Evidence-window linking — boundaries tested on both sides:** with evidence `[first, last]`:
    `first − 1h59m` → **link** (inside the pre-slack, by design);
    `first − 2h01m` → NULL (replayed old capture);
    `last + 23h59m` → **link**; `last + 24h01m` → NULL.

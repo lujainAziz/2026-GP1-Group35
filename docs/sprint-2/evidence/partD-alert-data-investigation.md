@@ -74,8 +74,8 @@ matching is not added because it is not a reliable host match.
 
 ## Follow-up: the 22:15 "CLOSEWAIT FIN out of window" group (rule 2210016)
 
-Requested spot-check of the cluster visible in the app at ~10:15 PM on 2026-11-04
-(read-only; nothing deleted, no rule disabled, no dedup change).
+Focused read-only analysis of the rule-2210016 cluster observed 22:15–22:25 on
+2026-11-04 (nothing deleted, no rule disabled, no dedup change).
 
 **Facts (matched 1:1 against eve.json):** 26 rows, SUM(occurrence)=**32**, and
 eve.json holds exactly **32** matching events in the window — two synchronized
