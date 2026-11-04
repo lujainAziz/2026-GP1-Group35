@@ -240,6 +240,73 @@ class AlertContractTests(unittest.TestCase):
         self.assertEqual(len(dev.json()), 1)
         self.assertEqual(self.phone.get('/alerts/99999').status_code, 404)
 
+    def _insert_alert(self, state='New', mac='aa:bb:cc:dd:ee:ff', sid=3000, when='2026-11-02T09:00:00'):
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute(
+                "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+                "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
+                "VALUES (?, 'Threat', 'ET X', ?, ?, '10.0.0.5', '8.8.8.8', 'High', ?, 1, ?)",
+                (mac, sid, when, state, when))
+
+    def test_open_count_is_db_aggregate_of_new_and_reviewed(self):
+        # setUp already has one New alert; add reviewed + resolved + new.
+        self._insert_alert(state='Reviewed', sid=3001)
+        self._insert_alert(state='Resolved', sid=3002)
+        self._insert_alert(state='New', sid=3003)
+        self.assertEqual(self.phone.get('/alerts/open_count').status_code, 401)
+        self.pair()
+        r = self.phone.get('/alerts/open_count')
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json(), {'open': 3})  # 2 New + 1 Reviewed, Resolved excluded
+        # the literal path is matched here, not parsed as an int id
+        self.assertEqual(r.json()['open'], 3)
+
+    def test_open_count_not_capped_by_page_limit(self):
+        for i in range(250):
+            self._insert_alert(state='New', sid=4000 + i, when='2026-11-02T08:00:00')
+        self.pair()
+        # default page returns at most 200, but the count is the true total
+        self.assertEqual(len(self.phone.get('/alerts').json()), 200)
+        self.assertEqual(self.phone.get('/alerts/open_count').json()['open'], 251)  # 250 + setUp's 1
+
+    def test_alerts_pagination_offset_is_stable(self):
+        for i in range(250):
+            self._insert_alert(state='New', sid=5000 + i, when='2026-11-02T08:00:00')
+        self.pair()
+        page1 = self.phone.get('/alerts?limit=100&offset=0').json()
+        page2 = self.phone.get('/alerts?limit=100&offset=100').json()
+        page3 = self.phone.get('/alerts?limit=100&offset=200').json()
+        self.assertEqual([len(page1), len(page2), len(page3)], [100, 100, 51])
+        ids = {a['id'] for a in page1 + page2 + page3}
+        self.assertEqual(len(ids), 251)  # no overlap/gap across pages
+
+    def test_alert_state_transitions_persist_and_enforce_rules(self):
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        # New -> Reviewed
+        r = self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()['state'], 'reviewed')
+        # persisted across a fresh read
+        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'reviewed')
+        # Reviewed -> Resolved
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
+        # Resolved is terminal: no going back
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'}).status_code, 409)
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'new'}).status_code, 409)
+        # unknown state / missing alert
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'bogus'}).status_code, 422)
+        self.assertEqual(self.phone.patch('/alerts/99999', json={'state': 'reviewed'}).status_code, 404)
+
+    def test_alert_state_change_requires_auth(self):
+        aid = self.phone.get('/alerts')  # unauthenticated
+        self.assertEqual(self.phone.patch('/alerts/1', json={'state': 'reviewed'}).status_code, 401)
+
+    def test_new_to_resolved_is_allowed(self):
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -15,7 +15,7 @@ import uuid
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -470,6 +470,15 @@ class AlertOut(BaseModel):
     threshold: Optional[float] = None
 
 
+class OpenAlertCount(BaseModel):
+    """DB aggregate for the Alerts screen hero (not the loaded-page length)."""
+    open: int
+
+
+class AlertStateUpdate(BaseModel):
+    state: str
+
+
 class StatusCount(BaseModel):
     status: Optional[str]
     count: int
@@ -877,6 +886,19 @@ def _state_api(value) -> str:
     return v if v in _STATES else "new"
 
 
+# Canonical stored casing (the ingester writes 'New'); the API always emits
+# lowercase via _state_api.
+_STATE_DB = {"new": "New", "reviewed": "Reviewed", "resolved": "Resolved"}
+
+# PBI-22 allowed forward transitions (a user action; never auto-reverted and
+# never walked backwards). Resolved is terminal.
+_ALLOWED_TRANSITIONS = {
+    "new": {"reviewed", "resolved"},
+    "reviewed": {"resolved"},
+    "resolved": set(),
+}
+
+
 def row_to_alert(row) -> AlertOut:
     return AlertOut(
         id=str(row["alert_id"]),
@@ -898,13 +920,15 @@ def row_to_alert(row) -> AlertOut:
     )
 
 
-def _query_alerts(conn, where: str, args: tuple, limit: int):
+def _query_alerts(conn, where: str, args: tuple, limit: int, offset: int = 0):
+    # Stable order (last_event_time, then the monotonic alert_id) so paging with
+    # LIMIT/OFFSET is deterministic even when timestamps tie.
     sql = (
         _ALERT_SELECT + "WHERE a.alert_type = 'Threat' AND " + where
-        + " ORDER BY a.last_event_time DESC, a.alert_id DESC LIMIT ?"
+        + " ORDER BY a.last_event_time DESC, a.alert_id DESC LIMIT ? OFFSET ?"
     )
     try:
-        return conn.execute(sql, (*args, limit)).fetchall()
+        return conn.execute(sql, (*args, limit, offset)).fetchall()
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc).lower():
             return []
@@ -914,10 +938,31 @@ def _query_alerts(conn, where: str, args: tuple, limit: int):
 @app.get("/alerts", response_model=list[AlertOut])
 def list_alerts(
     conn: sqlite3.Connection = Depends(get_connection),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    """All Threat Alerts, newest first by last event time."""
-    return [row_to_alert(r) for r in _query_alerts(conn, "1=1", (), limit)]
+    """Threat Alerts, newest first by last event time; LIMIT/OFFSET paginated."""
+    return [row_to_alert(r) for r in _query_alerts(conn, "1=1", (), limit, offset)]
+
+
+@app.get("/alerts/open_count", response_model=OpenAlertCount)
+def open_alert_count(conn: sqlite3.Connection = Depends(get_connection)):
+    """Count of OPEN Threat Alerts (state New or Reviewed) across the whole DB.
+
+    This is the Alerts-screen hero figure: it must be the true total, not the
+    length of a paginated page. Declared BEFORE /alerts/{alert_id} so the literal
+    path 'open_count' is matched here and never parsed as an int id.
+    """
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM alerts "
+            "WHERE alert_type='Threat' AND LOWER(state) IN ('new','reviewed')"
+        ).fetchone()
+        return OpenAlertCount(open=row[0])
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return OpenAlertCount(open=0)
+        raise
 
 
 @app.get("/alerts/{alert_id}", response_model=AlertOut)
@@ -928,15 +973,63 @@ def get_alert(alert_id: int, conn: sqlite3.Connection = Depends(get_connection))
     return row_to_alert(rows[0])
 
 
+@app.patch("/alerts/{alert_id}", response_model=AlertOut)
+def set_alert_state(alert_id: int, body: AlertStateUpdate):
+    """Change one alert's state (PBI-22). Authenticated (global require_auth).
+
+    A deliberate user action — it never implies ASSAS auto-handled the threat,
+    and only the `state` column of one existing alert is written. Allowed moves:
+    New->Reviewed, New->Resolved, Reviewed->Resolved (Resolved is terminal).
+    The ingester's dedup never touches `state`, so occurrence updates do not
+    revert a reviewed/resolved alert to New.
+    """
+    target = (body.state or "").strip().lower()
+    if target not in _STATES:
+        raise HTTPException(status_code=422, detail=f"Unknown alert state {body.state!r}")
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(status_code=503, detail=f"Device database is not available yet: {exc}")
+    conn.row_factory = sqlite3.Row  # row_to_alert / row["state"] need key access
+    try:
+        try:
+            row = conn.execute(
+                "SELECT state FROM alerts WHERE alert_id=? AND alert_type='Threat'",
+                (alert_id,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
+            raise
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
+        current = _state_api(row["state"])
+        if target != current:
+            if target not in _ALLOWED_TRANSITIONS.get(current, set()):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot change alert state from {current} to {target}",
+                )
+            conn.execute(
+                "UPDATE alerts SET state=? WHERE alert_id=?", (_STATE_DB[target], alert_id)
+            )
+            conn.commit()
+        rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1)
+    finally:
+        conn.close()
+    return row_to_alert(rows[0])
+
+
 @app.get("/devices/{mac}/alerts", response_model=list[AlertOut])
 def list_device_alerts(
     mac: str,
     conn: sqlite3.Connection = Depends(get_connection),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    """Alerts linked to one device, newest first by last event time."""
+    """Alerts linked to one device, newest first; LIMIT/OFFSET paginated."""
     mac = normalize_mac(mac)
-    return [row_to_alert(r) for r in _query_alerts(conn, "a.device_mac = ?", (mac,), limit)]
+    return [row_to_alert(r) for r in _query_alerts(conn, "a.device_mac = ?", (mac,), limit, offset)]
 
 
 @app.get("/summary", response_model=SummaryStats)
