@@ -35,11 +35,23 @@ session unpaired (cleaned up)
 Note: id=652 is a **real** production alert; it was deliberately moved New→Reviewed
 as the test (a legitimate user action). Chosen as the oldest New alert, not "latest".
 
-## Still pending (needs the sudo restart batch below)
-- **State persists across `assas-api` + `assas-alerts` restarts.**
-- **No revert to New on a dedup merge** — requires an actual `occurrence_count`
-  increase for id=652; if it does not rise during the window, this stays
-  **not live-tested** (unit-proven: dedup writes only occurrence_count/last_event_time).
+## State persistence across restarts — PASS (actual, 2026-11-04)
+Batch run on the appliance (localhost reads; sudo only for the two restarts):
+```
+BEFORE: state=reviewed occurrences=218
+PASS: Reviewed persisted across API restart        (assas-api.service → active)
+PASS: Reviewed persisted across ingester restart   (assas-alerts.service → active)
+PENDING: no new occurrence; merge-state preservation not live-tested
+```
+- Alert id=652 stayed **Reviewed** after restarting both `assas-api` and
+  `assas-alerts` → state is persisted in SQLite and survives both the API and the
+  ingester restarting.
+- **No revert to New on a dedup merge: still PENDING (not failed).**
+  `occurrence_count` stayed **218** (the rule did not fire again during the
+  window), so there was no live merge to observe. Re-check when this rule fires
+  again. Unit-proven meanwhile: the dedup path updates only
+  `occurrence_count`/`last_event_time`, never `state`
+  (`test_alerts.py` dedup tests).
 
 ### Restart / persistence batch (the only sudo needed)
 ```bash
