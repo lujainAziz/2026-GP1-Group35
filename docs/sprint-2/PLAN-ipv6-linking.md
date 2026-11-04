@@ -30,26 +30,53 @@ CREATE TABLE IF NOT EXISTS device_ipv6 (
 );
 CREATE INDEX IF NOT EXISTS idx_device_ipv6_addr ON device_ipv6(addr);
 ```
-Writers (both are MAC-grounded evidence, no inference):
-1. **Observed traffic (primary):** inside `update_device()` where the IPv6
-   family column is already written, also upsert `(mac, addr)` bumping
-   `last_seen` (`source='span'`). Wrapped in try/except so it can never break
-   sniffing (house rule in that file). The existing write-cache throttle keeps
-   the overhead at one upsert per MAC/address change.
-2. **NDP (secondary):** on the existing periodic cadence, parse
-   `ip -6 neigh show` (REACHABLE/STALE → `addr lladdr mac`) via a **pure,
-   unit-testable** `parse_ndp_neighbors(output)` and upsert (`source='ndp'`).
-   Read-only command; covers hosts the Pi itself exchanges NDP with.
-Retention: rows age out only via the linking recency guard (below); no deletes
-this sprint (table is tiny).
+Writers — **ownership must be proven, not assumed from the frame** (amended per
+review):
+
+> **The frame-MAC pitfall:** on the SPAN, traffic arriving *from the internet*
+> carries the **router's** MAC as `Ether.src` with an **external** IPv6 source.
+> Recording raw `(Ether.src, src IPv6)` pairs would therefore register external
+> server addresses under the router's MAC. Every writer below must prove the
+> address belongs to a **local device** first.
+
+1. **NDP (authoritative):** sniffed ICMPv6 Neighbor Solicitation/Advertisement
+   options (SLLA/TLLA) and DAD assert on-link `addr↔MAC` ownership — these are
+   the primary evidence (`source='ndp'`). Also parse the kernel cache
+   (`ip -6 neigh show`) via a pure, unit-testable `parse_ndp_neighbors(output)`;
+   **entries in `INCOMPLETE`/`FAILED`/`NONE` states are discarded** — an
+   unanswered solicitation proves nothing about ownership.
+2. **Observed traffic (guarded, secondary):** inside `update_device()`, upsert
+   `(mac, addr)` (`source='span'`) **only when all guards pass**:
+   - the IPv6 source is **on-link local** (within a monitored network from
+     `load_ipv6_context()`, or ULA/link-local) — never an off-link address;
+   - the frame MAC is **not the gateway/router MAC** (the inventory's gateway
+     record; routers front every external address);
+   - **fan-out cap:** once a single MAC accumulates more than N distinct global
+     addresses (default 16, router-like behaviour), new pairs for that MAC are
+     rejected and logged instead of trusted.
+   Wrapped in try/except so it can never break sniffing; the existing
+   write-cache throttle bounds the overhead.
+Retention: rows are never ownership-proof by mere existence (see linking rule);
+no deletes this sprint (table is tiny).
 
 ## Change 2 — alerts.py consults the set (same rules as today)
-In `link_device.resolve(ip)`, for IPv6 also query:
+In `link_device.resolve(ip)`, for IPv6 also query `device_ipv6`, **linking by the
+event time against the evidence window — not by the mere existence of a record**
+(amended per review; a flat "seen in the last 14 days" was unjustified):
 ```sql
 SELECT DISTINCT mac FROM device_ipv6
-WHERE addr = ? AND last_seen >= <now - ASSAS_IPV6_LINK_MAX_AGE (default 14d)>
+WHERE addr = ?
+  AND datetime(first_seen, '-2 hours')      <= <event_time>   -- clock skew / first-sighting lag
+  AND datetime(last_seen,  '+24 hours')     >= <event_time>   -- deprecated-address grace
 ```
-unioned with the existing column match. Decision rules **unchanged**:
+Rationale for the bounds: a privacy (RFC 4941) address keeps *receiving* traffic
+after it stops being preferred, until its valid-lifetime expires (commonly ≤ 1–7
+days; we take a conservative 24 h grace past the last ownership evidence,
+configurable `ASSAS_IPV6_LINK_GRACE`). An event **older than the first evidence**
+(e.g. a replayed capture) is *not* attributed to the address's current owner.
+The ingester normally processes events near-real-time, so live events fall
+inside the window naturally. Unioned with the existing column match. Decision
+rules **unchanged**:
 - exactly one distinct MAC → link;
 - more than one → NULL + log (ambiguity never guessed);
 - zero → NULL. **No prefix matching** — an address merely inside the home /64
@@ -65,11 +92,21 @@ unioned with the existing column match. Decision rules **unchanged**:
 2. Two MACs claim one addr → NULL (ambiguity kept).
 3. **Prefix-only is never enough:** addr shares the /64 of an inventoried device
    but is absent from `device_ipv6` → NULL.
-4. Mapping older than the recency guard → NULL.
-5. **End-to-end collapse:** one device with a mapped privacy addr; 5 eve events,
-   same rule, 5 different CDN sources, within 2 min → **one** row, occ=5,
-   linked (the 22:15-cluster fix, asserted).
-6. No `device_ipv6` table → identical to current behavior.
+4. **Router-MAC exclusion (review point 1):** a stream of SPAN frames carrying
+   the gateway MAC with *external* IPv6 sources must create **no** `device_ipv6`
+   rows — and those alerts stay NULL (never attributed to the router).
+5. **Evidence-window linking (review point 2):** evidence `[first, last]`;
+   event at `last + 25h` → NULL; event inside the window → link; event *before*
+   `first − 2h` (replayed old capture) → NULL. `INCOMPLETE`/`FAILED` neighbor
+   entries are ignored by the parser (unit test).
+6. **Fan-out cap:** after N distinct global addresses on one MAC, further pairs
+   are rejected + logged.
+7. **End-to-end collapse:** one device with a *proven* (NDP-sourced) privacy
+   addr mapping whose window covers the events; 5 eve events, same rule, 5
+   different CDN sources, within 2 min → **one** row, occ=5, linked (the
+   22:15-cluster fix — valid only because ownership of the destination address
+   is actually established first).
+8. No `device_ipv6` table → identical to current behavior.
 `test_discovery.py`: `parse_ndp_neighbors` parsing + `device_ipv6` upsert
 (first_seen kept, last_seen bumped, PK dedupe).
 
