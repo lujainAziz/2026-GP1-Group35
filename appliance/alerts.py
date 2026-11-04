@@ -222,15 +222,14 @@ def link_device(conn, src_ip, dst_ip, event_time=None):
     def resolve(ip):
         if not ip:
             return None
+        # The evidence table is AUTHORITATIVE for any address it knows: when
+        # the address has evidence rows, only the time-windowed evidence may
+        # link it — the legacy last_* columns must not bypass an expired or
+        # conflicting ownership window (a rotated-out address can linger in
+        # last_ipv6_global). Columns are a fallback only for addresses with no
+        # evidence at all (older discovery / pre-evidence data).
         macs = set()
-        for form in _addr_forms(ip):
-            macs.update(
-                r[0] for r in conn.execute(
-                    "SELECT DISTINCT mac FROM devices "
-                    "WHERE ? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip)",
-                    (form,),
-                ).fetchall()
-            )
+        evidence_covers_addr = False
         try:
             # device_addresses stores IPv4 dotted / IPv6 exploded lowercase.
             try:
@@ -239,25 +238,39 @@ def link_device(conn, src_ip, dst_ip, event_time=None):
             except ValueError:
                 norm = None
             if norm:
-                if event_time:
-                    # datetime() on BOTH sides: it renders a space separator,
-                    # while event times use 'T' — mixing the two breaks the
-                    # textual comparison.
-                    rows = conn.execute(
-                        "SELECT DISTINCT mac FROM device_addresses WHERE addr=? "
-                        f"AND datetime(first_seen, '-{ADDR_PRE_SLACK_HOURS} hours') <= datetime(?) "
-                        f"AND datetime(last_seen, '+{ADDR_GRACE_HOURS} hours') >= datetime(?)",
-                        (norm, event_time, event_time),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        "SELECT DISTINCT mac FROM device_addresses WHERE addr=?",
-                        (norm,),
-                    ).fetchall()
-                macs.update(r[0] for r in rows)
+                evidence_covers_addr = conn.execute(
+                    "SELECT 1 FROM device_addresses WHERE addr=? LIMIT 1", (norm,)
+                ).fetchone() is not None
+                if evidence_covers_addr:
+                    if event_time:
+                        # datetime() on BOTH sides: it renders a space
+                        # separator, while event times use 'T' — mixing the two
+                        # breaks the textual comparison.
+                        rows = conn.execute(
+                            "SELECT DISTINCT mac FROM device_addresses WHERE addr=? "
+                            f"AND datetime(first_seen, '-{ADDR_PRE_SLACK_HOURS} hours') <= datetime(?) "
+                            f"AND datetime(last_seen, '+{ADDR_GRACE_HOURS} hours') >= datetime(?)",
+                            (norm, event_time, event_time),
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            "SELECT DISTINCT mac FROM device_addresses WHERE addr=?",
+                            (norm,),
+                        ).fetchall()
+                    macs.update(r[0] for r in rows)
         except sqlite3.OperationalError as exc:
             if "no such table" not in str(exc).lower():
                 raise
+            evidence_covers_addr = False
+        if not evidence_covers_addr:
+            for form in _addr_forms(ip):
+                macs.update(
+                    r[0] for r in conn.execute(
+                        "SELECT DISTINCT mac FROM devices "
+                        "WHERE ? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip)",
+                        (form,),
+                    ).fetchall()
+                )
         if len(macs) == 1:
             return macs.pop()
         if len(macs) > 1:

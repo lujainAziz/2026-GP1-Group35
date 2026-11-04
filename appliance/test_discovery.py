@@ -2435,7 +2435,8 @@ class DeviceAddressEvidenceTests(unittest.TestCase):
 
     def test_local_addresses_recorded_with_window_and_source_upgrade(self):
         conn = self._conn()
-        nets = [discovery.ipaddress.ip_network("2001:16a2:dea6:2200::/64")]
+        nets = [discovery.ipaddress.ip_network("2001:16a2:dea6:2200::/64"),
+                discovery.ipaddress.ip_network("192.168.100.0/24")]
         cur = conn.cursor()
         # traffic-derived first; stored exploded lowercase; first/last equal
         self.assertTrue(discovery.record_device_address(
@@ -2489,3 +2490,141 @@ class DeviceAddressEvidenceTests(unittest.TestCase):
         self.assertEqual(discovery.normalize_address("192.168.100.5"), ("192.168.100.5", "ipv4"))
         self.assertEqual(discovery.normalize_address("fe80::1%eth0")[1], "ipv6-ll")
         self.assertEqual(discovery.normalize_address("not-an-ip"), (None, None))
+
+
+class AddressEvidenceHardeningTests(unittest.TestCase):
+    """Review hardening: strict locality, windowed fan-out cap, validated NDP,
+    Proxy-NDP gateway exclusion, RA prefix learning."""
+
+    def _conn(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE device_addresses (mac TEXT NOT NULL, addr TEXT NOT NULL, "
+            "family TEXT NOT NULL, source TEXT NOT NULL, first_seen TEXT NOT NULL, "
+            "last_seen TEXT NOT NULL, PRIMARY KEY (mac, addr))")
+        return conn
+
+    def test_private_or_ula_alone_is_not_local(self):
+        nets = [discovery.ipaddress.ip_network("192.168.100.0/24"),
+                discovery.ipaddress.ip_network("2001:16a2:dea6:2200::/64")]
+        # RFC1918 outside the monitored subnet: NOT evidence-grade local.
+        self.assertFalse(discovery.address_is_local("10.9.9.9", nets))
+        # ULA outside the monitored context: NOT local.
+        self.assertFalse(discovery.address_is_local("fd00::1234", nets))
+        # ULA inside a monitored ULA prefix: local.
+        ula_nets = nets + [discovery.ipaddress.ip_network("fd12:3456::/32")]
+        self.assertTrue(discovery.address_is_local("fd12:3456::9", ula_nets))
+        # Link-local is on-link by definition.
+        self.assertTrue(discovery.address_is_local("fe80::1", nets))
+        # Monitored-subnet members stay local.
+        self.assertTrue(discovery.address_is_local("192.168.100.7", nets))
+
+    def test_fanout_cap_counts_recent_addresses_only(self):
+        conn = self._conn()
+        nets = [discovery.ipaddress.ip_network("2001:16a2:dea6:2200::/64")]
+        cur = conn.cursor()
+        old_cap = discovery.DEVICE_ADDR_GLOBAL_CAP
+        discovery.DEVICE_ADDR_GLOBAL_CAP = 3
+        try:
+            # Three HISTORICAL addresses (rotated out weeks ago) at the cap.
+            for i in range(3):
+                cur.execute(
+                    "INSERT INTO device_addresses VALUES (?,?,?,?,?,?)",
+                    ("cc:cc", f"2001:16a2:dea6:2200::{i+1:x}", "ipv6", "ndp",
+                     "2026-10-01T00:00:00", "2026-10-02T00:00:00"))
+            # A NEW address today must still be recorded (history kept, not counted).
+            self.assertTrue(discovery.record_device_address(
+                cur, "cc:cc", "2001:16a2:dea6:2200::aaaa", "ndp",
+                "2026-11-05T02:00:00", networks=nets))
+            # History is preserved alongside the new address.
+            n = conn.execute(
+                "SELECT COUNT(*) FROM device_addresses WHERE mac='cc:cc'").fetchone()[0]
+            self.assertEqual(n, 4)
+        finally:
+            discovery.DEVICE_ADDR_GLOBAL_CAP = old_cap
+
+    def _na(self, ether_src, tgt, lladdr=None, with_opt=True):
+        from scapy.layers.inet6 import ICMPv6ND_NA, ICMPv6NDOptDstLLAddr
+        p = (Ether(src=ether_src, dst="33:33:00:00:00:01")
+             / discovery.IPv6(src="fe80::1", dst="ff02::1")
+             / ICMPv6ND_NA(tgt=tgt))
+        if with_opt:
+            p = p / ICMPv6NDOptDstLLAddr(lladdr=lladdr or ether_src)
+        return p
+
+    def test_ndp_evidence_pairs_validation(self):
+        from scapy.layers.inet6 import ICMPv6ND_NS, ICMPv6NDOptSrcLLAddr
+        mac = "aa:bb:cc:dd:ee:10"
+        addr = "2001:16a2:dea6:2200::77"
+        # Consistent NA (TLLA == Ether src) -> one pair.
+        self.assertEqual(discovery.ndp_evidence_pairs(self._na(mac, addr)), [(mac, addr)])
+        # NA without the target link-layer option -> rejected.
+        self.assertEqual(discovery.ndp_evidence_pairs(self._na(mac, addr, with_opt=False)), [])
+        # NA whose option MAC mismatches the frame source (spoof/relay) -> rejected.
+        self.assertEqual(
+            discovery.ndp_evidence_pairs(self._na(mac, addr, lladdr="aa:bb:cc:dd:ee:99")), [])
+        # NA for a multicast target -> rejected.
+        self.assertEqual(discovery.ndp_evidence_pairs(self._na(mac, "ff02::1")), [])
+        # Consistent NS asserts its own source.
+        ns_ok = (Ether(src=mac, dst="33:33:00:00:00:01")
+                 / discovery.IPv6(src=addr, dst="ff02::1:ff00:77")
+                 / ICMPv6ND_NS(tgt="2001:16a2:dea6:2200::1")
+                 / ICMPv6NDOptSrcLLAddr(lladdr=mac))
+        self.assertEqual(discovery.ndp_evidence_pairs(ns_ok), [(mac, addr)])
+        # NS with mismatching SLLA -> rejected.
+        ns_bad = (Ether(src=mac, dst="33:33:00:00:00:01")
+                  / discovery.IPv6(src=addr, dst="ff02::1:ff00:77")
+                  / ICMPv6ND_NS(tgt="2001:16a2:dea6:2200::1")
+                  / ICMPv6NDOptSrcLLAddr(lladdr="aa:bb:cc:dd:ee:99"))
+        self.assertEqual(discovery.ndp_evidence_pairs(ns_bad), [])
+        # DAD probe (source ::) carries no proof.
+        dad = (Ether(src=mac, dst="33:33:00:00:00:01")
+               / discovery.IPv6(src="::", dst="ff02::1:ff00:77")
+               / ICMPv6ND_NS(tgt=addr))
+        self.assertEqual(discovery.ndp_evidence_pairs(dad), [])
+
+    def test_handle_ndp_records_via_real_handler_and_skips_gateway(self):
+        mac = "aa:bb:cc:dd:ee:20"
+        gw = "fc:1b:d1:30:cb:6c"
+        addr = "2001:16a2:dea6:2200::88"
+        recorded = []
+        original = discovery.update_device
+        discovery.update_device = lambda m, **kw: recorded.append((m, kw.get("ip"), kw.get("addr_source")))
+        discovery.gateway_macs.add(gw)
+        try:
+            # Real packet through the real handler -> recorded with source 'ndp'.
+            discovery.handle_ndp(self._na(mac, addr))
+            self.assertEqual(recorded, [(mac, addr, "ndp")])
+            # Same assertion from the gateway MAC (Proxy NDP) -> NOT recorded.
+            recorded.clear()
+            discovery.handle_ndp(self._na(gw, addr))
+            self.assertEqual(recorded, [])
+        finally:
+            discovery.update_device = original
+            discovery.gateway_macs.discard(gw)
+
+    def test_learn_ra_prefixes_requires_link_local_source(self):
+        from scapy.layers.inet6 import ICMPv6ND_RA, ICMPv6NDOptPrefixInfo
+        saved = list(discovery.ra_networks)
+        discovery.ra_networks.clear()
+        try:
+            ra_ok = (Ether(src="fc:1b:d1:30:cb:6c", dst="33:33:00:00:00:01")
+                     / discovery.IPv6(src="fe80::1", dst="ff02::1")
+                     / ICMPv6ND_RA()
+                     / ICMPv6NDOptPrefixInfo(prefix="2001:16a2:c83e:5700::",
+                                             prefixlen=64, L=1))
+            discovery.learn_ra_prefixes(ra_ok)
+            self.assertEqual(
+                discovery.ra_networks,
+                [discovery.ipaddress.ip_network("2001:16a2:c83e:5700::/64")])
+            # RA from a non-link-local source violates RFC 4861 -> ignored.
+            discovery.ra_networks.clear()
+            ra_bad = (Ether(src="fc:1b:d1:30:cb:6c", dst="33:33:00:00:00:01")
+                      / discovery.IPv6(src="2001:16a2::1", dst="ff02::1")
+                      / ICMPv6ND_RA()
+                      / ICMPv6NDOptPrefixInfo(prefix="2001:db8:bad::", prefixlen=64, L=1))
+            discovery.learn_ra_prefixes(ra_bad)
+            self.assertEqual(discovery.ra_networks, [])
+        finally:
+            discovery.ra_networks.clear()
+            discovery.ra_networks.extend(saved)

@@ -61,9 +61,11 @@ from service_fingerprints import parse_nmap_identity
 from scapy.all import sniff, Ether, IP, IPv6, ARP, UDP, TCP, DHCP, DNS, DNSQR
 try:  # IPv6 Neighbor Discovery layers (ownership evidence for device_addresses)
     from scapy.layers.inet6 import (
-        ICMPv6ND_NA, ICMPv6ND_NS, ICMPv6NDOptDstLLAddr, ICMPv6NDOptSrcLLAddr)
+        ICMPv6ND_NA, ICMPv6ND_NS, ICMPv6ND_RA,
+        ICMPv6NDOptDstLLAddr, ICMPv6NDOptSrcLLAddr, ICMPv6NDOptPrefixInfo)
 except ImportError:  # scapy built without inet6: passive NDP evidence disabled
-    ICMPv6ND_NA = ICMPv6ND_NS = ICMPv6NDOptDstLLAddr = ICMPv6NDOptSrcLLAddr = None
+    ICMPv6ND_NA = ICMPv6ND_NS = ICMPv6ND_RA = None
+    ICMPv6NDOptDstLLAddr = ICMPv6NDOptSrcLLAddr = ICMPv6NDOptPrefixInfo = None
 from scapy.layers.netbios import (
     NBNSHeader, NBNSQueryResponse, NBNSRegistrationRequest,
     NBNSNodeStatusRequest, NBNSNodeStatusResponse,
@@ -1022,6 +1024,7 @@ def load_gateway():
             if "via" in parts:
                 gw = parts[parts.index("via") + 1]
                 infra_hints[gw] = "Router"
+                gateway_ips.add(gw)
                 print(f"[*] Gateway detected: {gw}")
 
             if DISCOVERY_INTERFACE is None and "dev" in parts:
@@ -2080,11 +2083,31 @@ def _ip_family_column(ip):
 # carries the router's MAC, so an off-link address is never recorded under any
 # MAC, and a single MAC may not accumulate unlimited global IPv6 addresses.
 # --------------------------------------------------------------------------- #
-# Cap of distinct global-IPv6 addresses recorded per MAC (router-like fan-out
-# guard; privacy-address rotation stays far below this).
+# Cap of distinct RECENT global-IPv6 addresses recorded per MAC (router-like
+# fan-out guard). Counted over a sliding window so historical rotated-out
+# addresses are kept but never block a device's new addresses permanently.
 DEVICE_ADDR_GLOBAL_CAP = int(os.getenv("ASSAS_ADDR_FANOUT_CAP", "16"))
+DEVICE_ADDR_FANOUT_WINDOW_HOURS = int(os.getenv("ASSAS_ADDR_FANOUT_WINDOW_HOURS", "48"))
 _ULA_NET = ipaddress.ip_network("fc00::/7")
 _fanout_warned = set()
+
+# On-link IPv6 prefixes learned from Router Advertisements seen on the SPAN
+# (prefix-information options with the on-link flag, sent from a link-local
+# source as RFC 4861 requires). This is how the monitored LAN's global prefix
+# is known on the address-less SPAN interface, in addition to the discovery
+# interface's own prefixes (load_ipv6_context). Used ONLY to classify an
+# address as on-link for evidence recording — never as ownership proof.
+RA_PREFIX_CAP = 8
+ra_networks = []
+
+# Gateway context: IPs from the default route (load_gateway) and the MACs that
+# currently hold them (refreshed with the NDP poll). NDP assertions are not
+# accepted for the gateway's MAC: with Proxy NDP a router legitimately answers
+# neighbor solicitations for other hosts' addresses, so an NA from the router
+# must not attribute those addresses to it. The router's own addresses still
+# enter via ARP and guarded observed traffic.
+gateway_ips = set()
+gateway_macs = set()
 
 
 def normalize_address(ip):
@@ -2104,14 +2127,18 @@ def normalize_address(ip):
 
 
 def address_is_local(ip, networks=None):
-    """True only for an on-link/local address that can be ownership evidence.
+    """True only for an address on the MONITORED link — usable as evidence.
 
-    Local = private IPv4 or IPv4 inside a monitored network; IPv6 link-local,
-    ULA, or global IPv6 inside a monitored network. External/off-link addresses
-    return False — this is what prevents internet server addresses (which
-    arrive under the router's MAC) from ever being recorded as device evidence.
+    Merely being private (RFC 1918) or ULA does not prove the address is on
+    the monitored segment, so those ranges are NOT accepted blanket-wise:
+    IPv4, global IPv6 and ULA must fall inside the monitored networks (the
+    discovery interface's own subnets/prefixes plus on-link prefixes learned
+    from Router Advertisements on the SPAN). Only IPv6 link-local is on-link by
+    definition. Off-link/external addresses return False — this prevents
+    internet server addresses (which arrive under the router's MAC) from ever
+    being recorded as device evidence.
     """
-    nets = monitored_networks if networks is None else networks
+    nets = list(monitored_networks) + list(ra_networks) if networks is None else networks
     try:
         addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
     except ValueError:
@@ -2119,11 +2146,9 @@ def address_is_local(ip, networks=None):
     if addr.is_loopback or addr.is_multicast or addr.is_unspecified:
         return False
     if addr.version == 6:
-        if addr.is_link_local or addr in _ULA_NET:
+        if addr.is_link_local:
             return True
         return any(n.version == 6 and addr in n for n in nets)
-    if addr.is_private:
-        return True
     return any(n.version == 4 and addr in n for n in nets)
 
 
@@ -2144,9 +2169,13 @@ def record_device_address(cur, mac, ip, source, now_iso, networks=None):
             "SELECT 1 FROM device_addresses WHERE mac=? AND addr=?", (mac, norm)
         ).fetchone()
         if not known:
+            # Cap counts RECENT addresses only: history is kept, but a device
+            # whose privacy addresses rotated out must not be blocked forever.
             count = cur.execute(
-                "SELECT COUNT(*) FROM device_addresses WHERE mac=? AND family='ipv6'",
-                (mac,),
+                "SELECT COUNT(*) FROM device_addresses "
+                "WHERE mac=? AND family='ipv6' "
+                f"AND datetime(last_seen) >= datetime(?, '-{DEVICE_ADDR_FANOUT_WINDOW_HOURS} hours')",
+                (mac, now_iso),
             ).fetchone()[0]
             if count >= DEVICE_ADDR_GLOBAL_CAP:
                 if mac not in _fanout_warned:
@@ -2190,8 +2219,30 @@ def parse_ndp_neighbors(output):
     return pairs
 
 
+def refresh_gateway_macs(conn):
+    """Resolve the current MAC(s) holding the default-gateway IP(s)."""
+    if not gateway_ips:
+        return
+    try:
+        placeholders = ",".join("?" for _ in gateway_ips)
+        rows = conn.execute(
+            f"SELECT DISTINCT mac FROM devices WHERE last_ipv4 IN ({placeholders}) "
+            f"OR ip IN ({placeholders})",
+            (*gateway_ips, *gateway_ips),
+        ).fetchall()
+        gateway_macs.clear()
+        gateway_macs.update(r[0].lower() for r in rows if r[0])
+    except sqlite3.Error:
+        pass  # keep the previous set
+
+
 def poll_ndp_neighbors():
-    """Record the kernel NDP cache as ownership evidence (source='ndp')."""
+    """Record the kernel NDP cache as ownership evidence (source='ndp').
+
+    The gateway's MAC is excluded (Proxy NDP: a router may answer for other
+    hosts' addresses); unproven INCOMPLETE/FAILED entries are dropped by the
+    parser.
+    """
     try:
         out = subprocess.check_output(["ip", "-6", "neigh", "show"],
                                       text=True, timeout=5)
@@ -2202,8 +2253,11 @@ def poll_ndp_neighbors():
     try:
         with db_lock:
             conn = connect_db()
+            refresh_gateway_macs(conn)
             cur = conn.cursor()
             for mac, addr in parse_ndp_neighbors(out):
+                if mac in gateway_macs:
+                    continue
                 if not is_valid_host_mac(mac) or is_self_device(mac=mac, ip=addr):
                     continue
                 record_device_address(cur, mac, addr, "ndp", now_iso)
@@ -3318,28 +3372,83 @@ def handle_dhcp(packet):
     return hostname, dhcp_sig, vendor_class, candidate
 
 
-def handle_ndp(packet):
-    """Passive IPv6 Neighbor Discovery (RFC 4861) as ownership evidence.
+def ndp_evidence_pairs(packet):
+    """Validated (mac, addr) ownership assertions from one NS/NA packet.
 
-    A Neighbor Advertisement asserts the sender owns the target address; a
-    Neighbor Solicitation with a source link-layer option asserts the sender
-    owns its source address. Both give an authoritative addr↔MAC pair
-    (source 'ndp') — unlike routed data traffic, ND is link-local and the MAC
-    is the owner's. DAD probes (source ::) carry no proof and are ignored.
+    NDP is strong — not absolute — evidence, so a pair is returned only when
+    the message is internally consistent:
+      - Neighbor Advertisement: the target must be a usable unicast address and
+        the target link-layer option must be PRESENT and EQUAL to the Ethernet
+        source; a missing or mismatching option (possible spoof/relay) yields
+        nothing.
+      - Neighbor Solicitation: the sender asserts its OWN source address; the
+        source link-layer option must be present and equal to the Ethernet
+        source. DAD probes (source ::) carry no proof and are ignored.
+    Gateway-MAC filtering (Proxy NDP) is applied by the callers.
     """
-    if ICMPv6ND_NA is None or IPv6 not in packet:
-        return
-    pairs = []
+    if ICMPv6ND_NA is None or IPv6 not in packet or Ether not in packet:
+        return []
+    ether_src = packet[Ether].src.lower()
     if ICMPv6ND_NA in packet:
-        mac = (packet[ICMPv6NDOptDstLLAddr].lladdr
-               if ICMPv6NDOptDstLLAddr in packet else packet[Ether].src)
-        pairs.append((mac, packet[ICMPv6ND_NA].tgt))
-    elif ICMPv6ND_NS in packet:
+        tgt = packet[ICMPv6ND_NA].tgt
+        try:
+            tgt_addr = ipaddress.ip_address(tgt)
+        except ValueError:
+            return []
+        if tgt_addr.is_multicast or tgt_addr.is_unspecified:
+            return []
+        if ICMPv6NDOptDstLLAddr not in packet:
+            return []
+        if packet[ICMPv6NDOptDstLLAddr].lladdr.lower() != ether_src:
+            return []
+        return [(ether_src, tgt)]
+    if ICMPv6ND_NS in packet:
         src = packet[IPv6].src
-        if src != "::" and ICMPv6NDOptSrcLLAddr in packet:
-            pairs.append((packet[ICMPv6NDOptSrcLLAddr].lladdr, src))
-    for mac, addr in pairs:
-        mac = (mac or "").lower()
+        if src == "::" or ICMPv6NDOptSrcLLAddr not in packet:
+            return []
+        if packet[ICMPv6NDOptSrcLLAddr].lladdr.lower() != ether_src:
+            return []
+        return [(ether_src, src)]
+    return []
+
+
+def learn_ra_prefixes(packet):
+    """Learn on-link IPv6 prefixes from Router Advertisements on the SPAN.
+
+    This is where the monitored LAN's global prefix becomes known on the
+    address-less capture interface. Accepted only when the RA comes from a
+    link-local source (RFC 4861 requirement) and the prefix-information option
+    carries the on-link flag; bounded by RA_PREFIX_CAP. Classification context
+    only — never ownership evidence.
+    """
+    if ICMPv6ND_RA is None or ICMPv6ND_RA not in packet or IPv6 not in packet:
+        return
+    try:
+        src = ipaddress.ip_address(packet[IPv6].src)
+    except ValueError:
+        return
+    if not src.is_link_local:
+        return
+    opt = packet.getlayer(ICMPv6NDOptPrefixInfo)
+    while opt is not None:
+        if getattr(opt, "L", 0):
+            try:
+                net = ipaddress.ip_network(f"{opt.prefix}/{opt.prefixlen}", strict=False)
+            except ValueError:
+                net = None
+            if (net and net.version == 6 and not net.is_link_local
+                    and net not in ra_networks and len(ra_networks) < RA_PREFIX_CAP):
+                ra_networks.append(net)
+                print(f"[*] On-link IPv6 prefix learned from RA: {net}")
+        opt = opt.payload.getlayer(ICMPv6NDOptPrefixInfo)
+
+
+def handle_ndp(packet):
+    """Record validated NDP assertions, excluding the gateway MAC (Proxy NDP)."""
+    learn_ra_prefixes(packet)
+    for mac, addr in ndp_evidence_pairs(packet):
+        if mac in gateway_macs:
+            continue  # a router may answer for other hosts; never attribute to it
         if not is_valid_host_mac(mac) or is_self_device(mac=mac, ip=addr):
             continue
         update_device(mac, ip=addr, seen_on_span=False, seen_in_discovery=False,

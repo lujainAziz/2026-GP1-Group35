@@ -311,17 +311,26 @@ configuration were untouched. Evidence: `evidence/alert-log-reset.md`.
 - **IPv6/IPv4 attribution (implemented 2026-11-05):** discovery records every
   device's full local address set in the additive `device_addresses` table
   (MAC, address, family, evidence source, first/last sighting) from ARP, DHCP,
-  passive NDP, the kernel NDP cache (unproven INCOMPLETE/FAILED entries
-  discarded) and locality-guarded observed traffic. External/off-link
-  addresses are never recorded (so internet servers are never attributed to
-  the router's MAC), a fan-out cap bounds router-like behaviour, and network-
-  prefix membership alone never links. The alert reader matches each address
-  against this set with the alert's event time inside
-  [first_seen − 2 h, last_seen + 24 h]; exactly one owning device links the
-  alert, a conflict or missing evidence leaves `device_mac = NULL`, and a
-  bounded relink pass (default 24 h) repairs recent unlinked alerts when
-  evidence arrives late — without touching occurrence counts, states or older
-  rows. Residual limits: linking is evidence-coverage dependent (an address
+  validated passive NDP (an NS/NA pair is accepted only when its link-layer
+  option is present and equals the frame's source MAC; DAD probes carry no
+  proof; the gateway's MAC is excluded entirely since Proxy NDP lets a router
+  answer for other hosts), the kernel NDP cache (INCOMPLETE/FAILED entries
+  discarded; gateway MAC excluded) and locality-guarded observed traffic.
+  "Local" is strict: an address must fall inside the monitored networks — the
+  discovery interface's own subnets/prefixes plus on-link prefixes learned
+  from Router Advertisements on the SPAN (link-local source, on-link flag,
+  bounded count) — merely being RFC 1918 or ULA is not accepted, so internet
+  servers are never attributed to the router's MAC. A fan-out cap bounds
+  router-like behaviour counted over a recent window (history is kept; a
+  device's new addresses are never permanently blocked). The alert reader
+  treats the evidence set as authoritative for any address it knows: linking
+  requires the alert's event time inside [first_seen − 2 h, last_seen + 24 h],
+  and a stale entry still present in the single-value inventory columns cannot
+  bypass an expired window (columns remain a fallback only for addresses with
+  no evidence at all). Exactly one owning device links the alert; a conflict
+  or missing evidence leaves `device_mac = NULL`; a bounded relink pass
+  (default 24 h) repairs recent unlinked alerts when evidence arrives late —
+  without touching occurrence counts, states or older rows. Residual limits: linking is evidence-coverage dependent (an address
   never observed by any evidence source stays unlinked), decoder events
   without addresses cannot link, and historical alerts outside the relink
   window are not rewritten (`evidence/partD-alert-data-investigation.md`

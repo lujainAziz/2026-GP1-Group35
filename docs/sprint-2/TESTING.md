@@ -182,6 +182,18 @@ outside its bounded window, and is idempotent; a database without the
 precedence (user name → human hostname with opaque machine identifiers
 skipped → model → "Unknown device"), from inventory data only.
 
-Suites after the change: appliance **531 passed** (108 subtests), mobile
+Review hardening (same date): the evidence table is authoritative — a stale
+address still present in the single-value columns cannot link an event outside
+its ownership window (tested with the expired address kept in
+`last_ipv6_global`); the fan-out cap counts recent addresses only (historical
+rotated-out addresses are kept and never block a device's new addresses);
+NS/NA messages are validated (link-layer option present and equal to the frame
+source; DAD, multicast targets and mismatching options rejected — tested
+through the real packet handler with crafted scapy packets, including the
+gateway-MAC Proxy-NDP exclusion); locality is strict (RFC 1918/ULA alone are
+not accepted; monitored subnets plus RA-learned on-link prefixes from a
+link-local source define the context).
+
+Suites after the change: appliance **538 passed** (108 subtests), mobile
 **76 passed**, `flutter analyze` clean. Live verification of the attribution
 is recorded separately once performed on the appliance.

@@ -169,6 +169,38 @@ def test_link_device_evidence_window_boundaries(tmp_path):
     assert link("2026-11-05T12:01:00") is None      # last + 24h01m: expired
 
 
+def test_columns_cannot_bypass_an_expired_evidence_window(tmp_path):
+    # A rotated-out address can linger in devices.last_ipv6_global. When the
+    # evidence table KNOWS the address but its ownership window has expired for
+    # the event time, the stale column entry must not link the alert anyway.
+    conn = make_conn(tmp_path)
+    stale = "2001:16a2:0000:0000:0000:0000:0000:0f0f"
+    conn.execute(
+        "INSERT INTO devices(mac,last_ipv6_global) VALUES('dd:dd', ?)", (stale,))
+    conn.commit()
+    add_addr_table(conn, [
+        ("dd:dd", stale, "ipv6", "ndp", "2026-11-01T00:00:00", "2026-11-02T00:00:00"),
+    ])
+    # inside the evidence window: links
+    assert alerts.link_device(conn, "2606:4700::1", stale, "2026-11-01T12:00:00") == "dd:dd"
+    # days after last evidence: the column alone must NOT bypass the window
+    assert alerts.link_device(conn, "2606:4700::1", stale, "2026-11-05T12:00:00") is None
+
+
+def test_columns_still_link_addresses_without_any_evidence(tmp_path):
+    # The evidence table exists but has no rows for this address (pre-evidence
+    # data): the legacy column match remains the fallback.
+    conn = make_conn(tmp_path)
+    conn.execute(
+        "INSERT INTO devices(mac,last_ipv4) VALUES('ee:ff','192.168.100.80')")
+    conn.commit()
+    add_addr_table(conn, [
+        ("other", "2001:16a2:0000:0000:0000:0000:0000:1111", "ipv6", "ndp",
+         "2026-11-01T00:00:00", "2026-11-05T00:00:00"),
+    ])
+    assert alerts.link_device(conn, "192.168.100.80", "8.8.8.8", "2026-11-05T10:00:00") == "ee:ff"
+
+
 def test_link_device_ownership_conflict_stays_unlinked(tmp_path):
     # Two MACs with overlapping evidence for one address -> never guess.
     conn = make_conn(tmp_path)
