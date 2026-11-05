@@ -5,6 +5,7 @@
 import 'package:assas_core/assas_core.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/alerts/alert_list_screen.dart';
+import 'package:assas_mobile/screens/dashboard/dashboard_screen.dart';
 import 'package:assas_mobile/screens/devices/device_details_screen.dart';
 import 'package:assas_mobile/screens/devices/device_list_screen.dart';
 import 'package:assas_mobile/screens/pairing/pairing_screen.dart';
@@ -166,6 +167,50 @@ void main() {
       (s) => DeviceListScreen(state: s)), skip: !gen);
   testWidgets('scale-settings', (t) => scalePair(t, 'scale-settings',
       (s) => SettingsScreen(state: s)), skip: !gen);
+
+  // Home stat card: the Unrecognized label next to a 3-digit count.
+  Future<void> homePair(WidgetTester tester) async {
+    for (final (tag, zoom, scale) in [('small', 1.0, 0.85), ('large', 1.2, 1.3)]) {
+      SharedPreferences.setMockInitialValues({});
+      for (final f in ['BricolageGrotesque', 'JetBrainsMono']) {
+        final l = FontLoader(f == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
+        l.addFont(rootBundle.load('assets/fonts/$f.ttf'));
+        await l.load();
+      }
+      final s = AppState(_HomeScaleRepo());
+      addTearDown(s.dispose);
+      await tester.runAsync(s.refresh);
+      addTearDown(tester.view.reset);
+      tester.view.devicePixelRatio = 2;
+      tester.view.physicalSize = const Size(390 * 2, 1000 * 2);
+      await tester.pumpWidget(MaterialApp(
+        theme: MobileTheme.light,
+        home: Builder(builder: (c) => MediaQuery(
+          data: MediaQuery.of(c).copyWith(textScaler: TextScaler.linear(scale)),
+          child: DesignScale(zoom: zoom, child: Material(color: Ui.bg, child: DashboardScreen(
+            state: s, onOpenDevices: () {}, onOpenAlerts: () {}, onOpenUnrecognized: () {},
+          ))),
+        )),
+      ));
+      await tester.pump(const Duration(milliseconds: 400));
+      await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/scale-home-$tag.png'));
+      await tester.pumpWidget(const SizedBox());
+    }
+  }
+
+  testWidgets('scale-home', homePair, skip: !gen);
+}
+
+class _HomeScaleRepo extends DemoRepository {
+  @override
+  Future<List<Device>> getDevices() async => [
+        for (var i = 0; i < 153; i++)
+          Device(
+            mac: 'aa:aa:aa:aa:${(i ~/ 100) % 10}${(i ~/ 10) % 10}:${i % 10}0',
+            presence: Presence.online,
+            trusted: false,
+          ),
+      ];
 }
 
 class _ScaleRepo extends DemoRepository {

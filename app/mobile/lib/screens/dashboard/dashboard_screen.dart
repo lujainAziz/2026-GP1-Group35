@@ -351,7 +351,9 @@ class DashboardScreen extends StatelessWidget {
                     child: _CardX(
                       radius: UiRadius.card,
                       stripes: Ui.mix(Ui.med, .14, Ui.surf),
-                      child: _statInner('Unrecognized', '${state.unrecognizedCount}', Ui.med),
+                      // Soft hyphen (U+00AD): invisible normally; if the word must break at
+                      // the largest size it hyphenates cleanly instead of a raw mid-word cut.
+                      child: _statInner('Unrecog\u00adnized', '${state.unrecognizedCount}', Ui.med),
                     ),
                   ),
                 ],
@@ -379,16 +381,16 @@ class DashboardScreen extends StatelessWidget {
   Widget _statInner(String label, String value, Color color) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
+      // The label keeps its designed size (no shrink-to-fit): at normal sizes
+      // label and number sit side by side exactly as before; when they no
+      // longer fit together at large text sizes, the number flows onto the
+      // next line and the card grows.
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 2,
         children: [
-          // Shrinks instead of breaking a word ("Unrecognized") across lines.
-          Expanded(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(label, style: UiText.sans(13, 600, height: 1.2)),
-            ),
-          ),
+          Text(label, style: UiText.sans(13, 600, height: 1.2)),
           Text(value, style: UiText.statNumber.copyWith(color: color)),
         ],
       ),

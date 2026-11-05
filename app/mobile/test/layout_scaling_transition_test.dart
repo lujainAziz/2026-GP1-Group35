@@ -5,6 +5,7 @@
 // during and after each animation. Fixtures include the real problem cases: a
 // machine-style long device name and address-like values.
 import 'package:assas_core/assas_core.dart';
+import 'package:assas_mobile/screens/dashboard/dashboard_screen.dart';
 import 'package:assas_mobile/screens/devices/device_details_screen.dart';
 import 'package:assas_mobile/screens/devices/device_list_screen.dart';
 import 'package:assas_mobile/screens/settings/settings_screen.dart';
@@ -30,7 +31,17 @@ class _Repo extends DemoRepository {
     presence: Presence.online, trusted: false, monitored: false,
   );
   @override
-  Future<List<Device>> getDevices() async => [_dev];
+  Future<List<Device>> getDevices() async => [
+        _dev,
+        // +152 untrusted devices (with _dev = 153 total): the Home "Unrecognized" stat shows a wide
+        // 3-digit number next to its label.
+        for (var i = 0; i < 152; i++)
+          Device(
+            mac: 'aa:aa:aa:aa:${(i ~/ 100) % 10}${(i ~/ 10) % 10}:${i % 10}0',
+            presence: Presence.online,
+            trusted: false,
+          ),
+      ];
   @override
   Future<Device> getDevice(String mac) async => _dev;
 }
@@ -112,6 +123,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     expect(find.text('UNRECOGNIZED'), findsWidgets);
     expect(find.text('NOT MONITORED'), findsWidgets);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Home: Unrecognized stat label keeps its size next to a 3-digit count',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await _loadFonts();
+    final s = AppState(_Repo());
+    addTearDown(s.dispose);
+    await tester.runAsync(s.refresh);
+    await _transition(tester, () => DashboardScreen(
+          state: s, onOpenDevices: () {}, onOpenAlerts: () {}, onOpenUnrecognized: () {},
+        ));
+    // At the largest size the full label is still rendered as designed text
+    // (no FittedBox shrink); the number may flow to the next line instead.
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 1200);
+    await tester.pumpWidget(MaterialApp(
+      theme: MobileTheme.light,
+      home: Builder(builder: (c) => MediaQuery(
+        data: MediaQuery.of(c).copyWith(textScaler: const TextScaler.linear(1.3)),
+        child: DesignScale(zoom: 1.2, child: Material(color: Ui.bg, child: DashboardScreen(
+          state: s, onOpenDevices: () {}, onOpenAlerts: () {}, onOpenUnrecognized: () {},
+        ))),
+      )),
+    ));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('Unrecog'), findsWidgets); // label may carry a soft hyphen
+    expect(find.text('153'), findsWidgets);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
