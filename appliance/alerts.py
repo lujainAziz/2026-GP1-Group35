@@ -301,7 +301,12 @@ def link_device(conn, src_ip, dst_ip, event_time=None):
 
 
 _LOCAL_MACS = None
-_GATEWAY_IPS = None
+# Gateway-MAC cache: refreshed periodically; an empty (failed) resolution is
+# retried on a short interval and NEVER stored as permanent truth.
+GATEWAY_REFRESH_SECONDS = int(os.getenv("ASSAS_GATEWAY_REFRESH", "300"))
+GATEWAY_RETRY_SECONDS = int(os.getenv("ASSAS_GATEWAY_RETRY", "60"))
+_gateway_cache = {"macs": set(), "known": False, "ts": 0.0}
+_gateway_warned = {"on": False}
 
 
 def local_appliance_macs():
@@ -324,22 +329,91 @@ def local_appliance_macs():
     return _LOCAL_MACS
 
 
-def _detect_gateway_ips():
-    """Default-gateway IP(s) from the routing table (cached)."""
-    global _GATEWAY_IPS
-    if _GATEWAY_IPS is None:
-        ips = set()
+def parse_default_routes(out):
+    """[(next_hop_ip, dev)] from `ip [-6] route show default` output."""
+    routes = []
+    for line in out.splitlines():
+        parts = line.split()
+        if not line.startswith("default") or "via" not in parts:
+            continue
+        ip_ = parts[parts.index("via") + 1]
+        dev = parts[parts.index("dev") + 1] if "dev" in parts else None
+        routes.append((ip_, dev))
+    return routes
+
+
+def parse_neighbor_mac(out, ip_, dev=None):
+    """MAC of `ip_` from `ip [-6] neigh show` output, on `dev` when given.
+
+    INCOMPLETE/FAILED/NONE entries prove nothing and are skipped.
+    """
+    for line in out.splitlines():
+        parts = line.split()
+        if not parts or parts[0] != ip_ or "lladdr" not in parts:
+            continue
+        if dev and "dev" in parts and parts[parts.index("dev") + 1] != dev:
+            continue
+        if parts[-1].upper() in ("INCOMPLETE", "FAILED", "NONE"):
+            continue
+        return parts[parts.index("lladdr") + 1].lower()
+    return None
+
+
+def _resolve_gateway_macs(conn):
+    """Gateway MAC(s) from BOTH default routes (IPv4 + IPv6) via the kernel
+    neighbor tables on the route's interface; the inventory is only a
+    supplementary source, never the sole one (its gateway row may be absent,
+    and the IPv6 next-hop — typically link-local — is not an inventory key)."""
+    macs = set()
+    v4_ips = []
+    for args in (["ip", "route", "show", "default"],
+                 ["ip", "-6", "route", "show", "default"]):
         try:
-            out = subprocess.check_output(["ip", "route", "show", "default"],
-                                          text=True, timeout=5)
-            for line in out.splitlines():
-                parts = line.split()
-                if line.startswith("default") and "via" in parts:
-                    ips.add(parts[parts.index("via") + 1])
+            out = subprocess.check_output(args, text=True, timeout=5)
         except (OSError, subprocess.SubprocessError):
+            continue
+        for ip_, dev in parse_default_routes(out):
+            if ":" not in ip_:
+                v4_ips.append(ip_)
+            neigh_cmd = (["ip", "-6", "neigh", "show"] if ":" in ip_
+                         else ["ip", "neigh", "show"])
+            try:
+                nout = subprocess.check_output(neigh_cmd, text=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            m = parse_neighbor_mac(nout, ip_, dev)
+            if m:
+                macs.add(m)
+    if v4_ips:
+        ph = ",".join("?" for _ in v4_ips)
+        try:
+            macs.update(
+                r[0].lower() for r in conn.execute(
+                    f"SELECT DISTINCT mac FROM devices "
+                    f"WHERE last_ipv4 IN ({ph}) OR ip IN ({ph})",
+                    (*v4_ips, *v4_ips),
+                ).fetchall() if r[0]
+            )
+        except sqlite3.OperationalError:
             pass
-        _GATEWAY_IPS = ips
-    return _GATEWAY_IPS
+    return macs
+
+
+def gateway_macs_now(conn, now=None):
+    """(gateway_macs, known) with a TTL cache.
+
+    A successful resolution is reused for GATEWAY_REFRESH_SECONDS; a failed
+    (empty) one only for GATEWAY_RETRY_SECONDS — gateway information is
+    refreshed periodically and a failure is never cached forever.
+    """
+    now = time.time() if now is None else now
+    ttl = GATEWAY_REFRESH_SECONDS if _gateway_cache["known"] else GATEWAY_RETRY_SECONDS
+    if now - _gateway_cache["ts"] >= ttl:
+        macs = _resolve_gateway_macs(conn)
+        _gateway_cache["macs"] = macs
+        _gateway_cache["known"] = bool(macs)
+        _gateway_cache["ts"] = now
+    return _gateway_cache["macs"], _gateway_cache["known"]
 
 
 def _is_multicast_mac(mac):
@@ -350,7 +424,7 @@ def _is_multicast_mac(mac):
         return True
 
 
-def link_device_by_mac(conn, ether_src, ether_dst, gateway_ips=None):
+def link_device_by_mac(conn, ether_src, ether_dst, gateway_macs=None):
     """Attribute an ADDRESS-LESS event by its frame MACs.
 
     Used ONLY when the event carries no IP addresses at all — never to override
@@ -361,16 +435,19 @@ def link_device_by_mac(conn, ether_src, ether_dst, gateway_ips=None):
     Identifying the MAC does not assert the device CRAFTED the malformed frame
     — only which known device the frame involves.
     """
-    gw_ips = _detect_gateway_ips() if gateway_ips is None else set(gateway_ips)
-    gw_macs = set()
-    if gw_ips:
-        ph = ",".join("?" for _ in gw_ips)
-        gw_macs = {
-            r[0].lower() for r in conn.execute(
-                f"SELECT DISTINCT mac FROM devices WHERE last_ipv4 IN ({ph}) OR ip IN ({ph})",
-                (*gw_ips, *gw_ips),
-            ).fetchall() if r[0]
-        }
+    if gateway_macs is None:
+        gw_macs, known = gateway_macs_now(conn)
+        if not known:
+            # Without gateway knowledge a lone candidate could BE the router:
+            # the device choice is ambiguous, so stay unlinked (fail-safe).
+            if not _gateway_warned["on"]:
+                _gateway_warned["on"] = True
+                log.warning("gateway MAC(s) undetermined; MAC attribution "
+                            "suspended until resolution succeeds")
+            return None
+        _gateway_warned["on"] = False
+    else:
+        gw_macs = set(gateway_macs)
     local = local_appliance_macs()
 
     def candidate(mac):

@@ -210,5 +210,19 @@ the appliance's own interfaces are never candidates; an unknown MAC stays
 NULL; two inventory devices on one frame is ambiguous → NULL; the MAC never
 bypasses IP-based linking (an IP-ownership conflict stays NULL even when the
 frame MAC names a device); end-to-end ingest creates a NEW device-keyed row
-while the historical NULL-keyed row of the same rule is left untouched
-(occurrence counts unchanged). Suites: appliance **546 passed**.
+while the historical NULL-keyed row of the same rule is never modified by
+MAC-linked events (its counts unchanged by this feature — note it can still
+grow if future events arrive without a usable MAC, e.g. an excluded or unknown
+frame source; its stopping is NOT guaranteed).
+
+Gateway-MAC hardening: gateway identification reads BOTH default routes (IPv4
+and IPv6) and resolves each next-hop's MAC from the kernel neighbor table on
+the route's interface (INCOMPLETE/FAILED entries rejected); the inventory is
+only a supplementary source. The result is cached with a refresh TTL and a
+failed resolution is retried on a short interval, never stored as permanent.
+If the gateway cannot be determined at all, MAC attribution is suspended
+(fail-safe: a lone candidate could be the unknown router). Tests: route/neigh
+parsers, gateway resolved with no inventory row, a distinct IPv6-gateway MAC
+excluded even when present as an inventory device, undetermined-gateway
+suspension, and cache retry/refresh semantics. Suites: appliance **551
+passed**.
