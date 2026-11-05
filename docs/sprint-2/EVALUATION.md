@@ -87,6 +87,39 @@ This setup is fixed before datasets are downloaded.
   each attack by **time window + addresses**; an alert merely appearing during replay does **not**
   count.
 
+### Ready-to-run commands — HELD until approval (nothing downloaded)
+All on the **replay host** (never the Pi). `BASE` = the IndividualScenarios URL above.
+
+```bash
+# (a) download the four approved captures + record size and SHA-256
+mkdir -p ~/iot23 && cd ~/iot23
+for u in \
+  "CTU-IoT-Malware-Capture-34-1/2018-12-21-15-50-14-192.168.1.195.pcap" \
+  "CTU-IoT-Malware-Capture-8-1/2018-07-31-15-15-09-192.168.100.113.pcap" \
+  "CTU-IoT-Malware-Capture-20-1/2018-10-02-13-12-30-192.168.100.103.pcap" \
+  "CTU-Honeypot-Capture-7-1/Somfy-01/2019-07-03-15-15-47-first_start_somfy_gateway.pcap"; do
+  curl -fLO "$BASE/$u"
+done
+ls -l *.pcap && sha256sum *.pcap | tee SHA256SUMS   # recorded into this file on download
+
+# (b) replay one capture onto the mirrored segment (per run: record the exact
+#     command, timestamps, and the rules version)
+date -u +%FT%TZ   # start marker
+sudo tcpreplay --intf1=<replay-NIC> --mbps=10 <capture>.pcap
+date -u +%FT%TZ   # stop marker
+```
+
+On the **Pi** (read-only measurement, per attack window):
+```bash
+python3 - <<'MEASURE'
+# count raw pre-dedup eve alerts inside [start, stop] matching the capture's
+# addresses; output = sid list + counts (feeds the section-3 table)
+MEASURE
+```
+The measurement script matches by time window + the dataset's own lab
+addresses, not by mere co-occurrence; benign-capture alerts are recorded as
+false positives. Nothing here runs until the download approval.
+
 ## 3. Detection results — ☐ Planned
 Per-attack table (one row per labelled attack class), filled from raw eve evidence:
 
