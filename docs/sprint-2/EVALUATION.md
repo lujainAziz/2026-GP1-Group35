@@ -119,17 +119,22 @@ python3 appliance/tools/measure_detection.py \
 ```
 It counts RAW pre-dedup alert events from eve.json (live + rotated), matched by
 the time window AND the capture's own lab addresses — co-occurrence alone never
-counts (`appliance/test_measure_detection.py`). Output: per-sid counts feeding
-the §3 table, plus a saved raw-evidence slice. Benign-capture alerts are
-recorded separately as false positives. Nothing here runs until the download
+counts (`appliance/test_measure_detection.py`). **Scope of this output: it
+establishes that an alert RELATES to the replayed test traffic — it does NOT by
+itself establish that the labelled attack was correctly detected.** The
+detection judgement in §3 additionally requires mapping each fired signature's
+semantics (rule message/classtype) to the capture's labelled attack class;
+signatures unrelated to the label are recorded but do not count as detection.
+Undetected attacks are recorded as such, and alerts raised on the benign
+capture are recorded as false positives. Nothing here runs until the download
 approval.
 
 ## 3. Detection results — ☐ Planned
 Per-attack table (one row per labelled attack class), filled from raw eve evidence:
 
-| Dataset | Attack class | Time window | Matched signature(s) (sid) | Detected? | Raw evidence |
+| Dataset | Attack class | Time window | Related signature(s) (sid) | Rule↔label match? | Detected? | Raw evidence |
 |---|---|---|---|---|---|
-| *(pending)* | | | | | |
+| *(pending)* | | | | | | |
 
 - Benign-traffic alerts (false positives) recorded separately with sid + count + evidence path.
 - ET Open has partial coverage by design: undetected attacks are recorded as-is, no full-coverage
@@ -137,6 +142,13 @@ Per-attack table (one row per labelled attack class), filled from raw eve eviden
 - Raw eve slices and the matching script/output saved under `evidence/detection/`.
 
 ## 4. Resources — ☑ 2-hour live-traffic baseline complete (2026-11-02 13:37–15:37 UTC)
+
+**Standing verdict:** the baseline run's result is RETAINED as-is — CPU and
+drop-rate targets PASS, **the memory target was NOT met** under its stated
+conditions (the development agent co-resident and not excluded, as required).
+The agent-free clean run below is an **additional, independent measurement**;
+whatever it shows, it does not cancel or replace the baseline verdict — both
+results are reported side by side.
 All existing services + `assas-suricata` + `assas-alerts` running. **Scope:** baseline under *live
 house traffic*, not proof of performance under attack or heavy load; the attack-replay run (§2–3) is
 measured separately once datasets are approved.

@@ -49,8 +49,9 @@ address-less event, both gateways excluded. Evidence: `evidence/*.md`/`.txt`.
   (automated widget tests exist; they are not on-device verification).
 - **Truncated-frame sample capture** → actual truncation cause → the
   STREAM/decoder rule-group decision (rule and rate unchanged until then).
-- **Clean 2-hour resource run** without the co-resident dev agent (memory
-  target judgement).
+- **Clean 2-hour resource run** without the co-resident dev agent — an
+  additional independent measurement; the baseline's standing verdict (memory
+  target NOT met under its conditions) is retained either way.
 - **Dataset detection evaluation** — plan ready in `EVALUATION.md`; downloads
   held for approval.
 - **Merge `sprint-2` → main** at sprint close (owner).
