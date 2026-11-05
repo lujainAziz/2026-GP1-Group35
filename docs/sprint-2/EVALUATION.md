@@ -258,33 +258,52 @@ units explicitly (`mem_units` in the summary; CSV header `mem_used_mib`).
 kernel memory (reclaimable page cache excluded). At inspection:
 AnonPages ≈ 2163 MiB (process heaps — Suricata ≈ 1205 MiB dominant; the
 inspection-time figure also includes the dev agent ≈ 447 MiB which was ABSENT
-during the clean run), **Shmem ≈ 1779 MiB**, kernel unreclaimable ≈ 160 MiB,
-plus the MemAvailable heuristic margin. Crucially, tmpfs files account for only
-≈ 340 MiB of Shmem (`df -t tmpfs`): the bulk of Shmem is **shared-memory
-graphics buffers** (Wayland/GEM surfaces of the always-on display pipeline —
-compositor, the 7-inch app [PSS ≈ 188 MiB of it is process-side], VNC) — not
-"desktop process RSS", which is comparatively small (labwc ≈ 47, panel ≈ 30,
-wayvnc ≈ 22 MiB PSS).
+during the clean run), **Shmem ≈ 1740 MiB**, kernel unreclaimable ≈ 160 MiB,
+plus the MemAvailable heuristic margin.
 
-**Candidate improvements (NOT applied — each needs a team decision; criterion,
-display and services unchanged):**
-1. Suricata detect-engine profile (`detect.profile: low` / mpm context tuning):
-   expected several-hundred-MiB reduction of the ≈ 1.2 GiB engine, at some CPU
-   cost — measure before/after if approved.
-2. Display-pipeline buffer footprint (resolution/buffer count of the 7-inch
-   surface, VNC only-on-demand): targets the ≈ 1.4 GiB non-tmpfs Shmem;
-   expected hundreds of MiB; requires product approval since it touches the
-   screen pipeline (not disabling it).
+**Shmem distribution — what is PROVEN vs not (unprivileged vantage):**
+- `ShmemHugePages` and `ShmemPmdMapped` are both **0** — no huge-page shmem.
+- SysV shared memory (`ipcs -m`) totals **0 MiB**.
+- tmpfs files (`df -t tmpfs`, all mounts) total **≈ 342 MiB** (mostly `/tmp`,
+  `/run`).
+- That leaves **≈ 1400 MiB of Shmem UNATTRIBUTED from an unprivileged vantage.**
+  Readable per-process shared mappings sum to only ≈ 439 MiB *and that
+  double-counts* pages shared between processes, so it does not close the gap.
+  Suricata's `smaps_rollup` is root-only here, and GEM/dma-buf graphics
+  allocations are not enumerable without privilege. **Therefore the earlier
+  claim that the Shmem bulk is graphics buffers is NOT established** — it is a
+  plausible candidate (anonymous shared memory on a Wayland system commonly
+  holds compositor/client surface buffers) but unproven. Settling it needs
+  privileged accounting, e.g. `sudo cat /proc/<suricata-pid>/smaps_rollup`,
+  `sudo grep -r . /sys/kernel/debug/dri/*/clients` or a GEM/dma-buf breakdown,
+  and `sudo smem -t` for a PSS table across all processes.
+
+**Candidate improvements — HYPOTHESES only, none applied, none quantified until
+the breakdown above exists (criterion, display and services unchanged):**
+1. Suricata detect-engine profile: the deployed config uses
+   **`detect.profile: medium`** (confirmed in `appliance/suricata/assas.yaml`,
+   not `low`), `sgh-mpm-context: auto`, `toclient/toserver-groups 3/25`. A `low`
+   profile *may* reduce the ≈ 1.2 GiB engine footprint at some CPU/detection
+   cost — **expected impact UNKNOWN; must be measured before/after** if the team
+   approves a trial. No number is claimed here.
+2. Display-pipeline footprint (resolution/buffer count, VNC-on-demand): only
+   worth pursuing **if** the privileged breakdown confirms graphics buffers hold
+   the unattributed ≈ 1.4 GiB; expected saving cannot be stated until then, and
+   it touches the screen pipeline so it needs product approval regardless.
 3. Report an appliance-scoped figure (sum of the five services) alongside the
-   total-device figure so the target can be judged on what the product
-   actually controls (reporting change only).
+   total-device figure so the target can be judged on what the product actually
+   controls (reporting change only — safe, no runtime effect).
 
-### Drop-measurement re-test (prepared; execution on request)
+### Drop-measurement re-test — PENDING (not run; tool fixed and ready)
 The sampler defect (PID detector missing `Suricata-Main`) is fixed and the tool
 now samples the Suricata PID **every interval** (`suri_pid` CSV column;
 `suricata_pid_changes`/`pids_observed`/`pid_missing` in the summary) — a mid-run
-restart invalidates the measurement even if counters look clean. Re-test
-command (new output dir; previous results retained as-is):
+restart invalidates the measurement even if counters look clean. **The re-run to
+obtain a validated drop figure has NOT been performed** (it requires a fresh
+agent-free 2-hour window the team cannot allocate right now); it stays pending.
+The previous clean-run results are retained unchanged; the drop measurement
+there remains recorded-but-NOT-validated. When a window is available, run (new
+output dir, so nothing earlier is overwritten):
 ```bash
 ASSAS_RES_OUTDIR=/home/assas/assas/docs/sprint-2/evidence/resources/clean2 \
   /home/assas/assas/appliance/tools/clean_resource_run.sh

@@ -148,14 +148,20 @@ Per frame (full snaplen; nothing cut by tcpdump):
 - IPv6 header **payload-length field = 8192 (0x2000)** → claimed frame 8246 B
   vs 86 B actually on the wire → Suricata's `ipv6.trunc_pkt`.
 
-**Calibrated interpretation.** The mirror-truncation hypothesis is now
-**strongly disfavored**: a switch truncating an 8 KB jumbo frame would cut near
-its egress MTU (~1514 B), not at a consistent 86 B ending exactly at the ICMPv6
-boundary; the engine has also never seen any frame above 1514 B
-(`max_pkt_size`). The evidence is consistent with the access point emitting
-periodic malformed MLD-like multicasts whose length field is bogus (0x2000),
-i.e. a firmware defect at the source. **Definitive attribution still requires a
-pre-mirror capture or switch-config evidence** — not performed; the conclusion
-above is marked strong-but-not-absolute. The rule and its rate remain
-unchanged; any decision on sid 2200013 (threshold/disable as a known-noise
-source) is the team's, now with this characterisation in hand.
+**Calibrated interpretation.** What the sample ESTABLISHES: three byte-identical
+86-byte frames reached eth1, each carrying an IPv6 payload-length field (8192)
+far larger than the bytes present, and each matches a sid-2200013 event to the
+second — the alert fires on a genuinely length-inconsistent frame, not a
+Suricata artefact. What it does NOT establish: **where** the inconsistency
+originates. The mirror-truncation explanation looks **less likely** (a switch
+truncating a jumbo frame would cut near its ~1514 B egress MTU, not at a
+consistent 86 B ending exactly on the ICMPv6 boundary, and the engine has never
+recorded any frame above 1514 B), and a source emitting malformed MLD-like
+multicasts is one consistent explanation — **but neither is proven; "AP firmware
+defect" is a hypothesis, not a confirmed cause.** Deciding the origin requires a
+capture taken BEFORE the mirror (on the AP's own segment) or switch
+mirror-configuration evidence, neither performed. The rule and its rate remain
+**unchanged**; sid 2200013 is NOT reclassified as known-cause noise. Any
+threshold/disable decision stays with the team and should wait for pre-mirror
+evidence — this analysis only characterises the frames and narrows the
+hypotheses.

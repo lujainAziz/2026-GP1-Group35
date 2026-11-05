@@ -1,9 +1,10 @@
 # Sprint 2 — Final Verification
 
-**Sprint status: implementation, automated tests and the resource runs are
-complete (memory target not met — see #8/R); the detection evaluation, the
-drop-measurement re-run decision and the owner's visual sign-off are pending —
-Sprint 2 is NOT closed until those conclude.**
+**Sprint status: implementation and automated tests are complete; the clean
+resource run is done (CPU pass; memory target NOT met — see #8/R); the
+drop-measurement re-run (corrected tool, pending an agent-free window), the
+detection evaluation and the owner's visual sign-off are all still pending —
+Sprint 2 is NOT fully closed.**
 
 Practical verification of each acceptance requirement. **Automated** = test suite; **Live** =
 observed on the running appliance. Synthetic/unit tests are **not** a substitute for the dataset
@@ -50,10 +51,16 @@ address-less event, both gateways excluded. Evidence: `evidence/*.md`/`.txt`.
   (automated widget tests exist; they are not on-device verification).
 - **Truncated-frame sample capture** → actual truncation cause → the
   STREAM/decoder rule-group decision (rule and rate unchanged until then).
-- **Drop-measurement re-run decision** — the clean run completed (CPU pass;
-  memory NOT met; drops recorded but not validated due to the now-fixed PID
-  detector defect); whether to re-run for a validated drop figure is the
-  team's call.
+- **Drop-measurement re-run** — PENDING, not run. The clean run completed (CPU
+  pass; memory NOT met; drops recorded but NOT validated — the PID detector
+  missed `Suricata-Main`). The tool is fixed and now samples the PID every
+  interval, but a validated drop figure needs a fresh agent-free 2-hour window
+  that is not available yet.
+- **Memory Shmem breakdown** — the ≈1.4 GiB of non-tmpfs Shmem is unattributed
+  from an unprivileged vantage (SysV shm 0, tmpfs ≈342 MiB, Suricata smaps and
+  GEM/dma-buf root-only); any memory-reduction proposal is blocked on a
+  privileged breakdown first (`EVALUATION.md` memory section). No reduction
+  claimed or applied.
 - **Dataset detection evaluation** — plan ready in `EVALUATION.md`; downloads
   held for approval.
 - **Merge `sprint-2` → main** at sprint close (owner).
