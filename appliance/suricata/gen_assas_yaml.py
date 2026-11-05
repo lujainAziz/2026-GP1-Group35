@@ -7,6 +7,9 @@ Surgical, assertion-guarded edits only (fails fast if the stock layout shifts):
   3. outputs.fast enabled yes -> no
   4. global stats interval 8 -> 30
   5. HOME_NET: add local IPv6 ranges (fc00::/7 ULA, fe80::/10 link-local)
+  6. eve-log ethernet: yes — log the Ethernet header (src/dest MAC) in events,
+     so address-less decoder events (e.g. IPv6 truncated packet) can be
+     attributed to a known device by MAC.
 Everything else is left exactly as Debian ships it.
 """
 import sys
@@ -27,6 +30,7 @@ def expect(n, text):
 
 # --- anchor checks ---------------------------------------------------------
 expect(18, '    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"')
+expect(104, "      #ethernet: no  # log ethernet header in events when available")
 expect(64, "stats:")
 expect(68, "  interval: 8")
 expect(84, "  - fast:")
@@ -42,6 +46,8 @@ expect(622, "  - interface: eth0")
 # --- edits (apply high line numbers first so earlier indices stay valid) ---
 # 4. global stats interval 8 -> 30
 lines[68 - 1] = "  interval: 30"
+# 6. eve-log ethernet header logging on (MAC attribution for address-less events)
+lines[104 - 1] = "      ethernet: yes  # ASSAS: log src/dest MAC in events (device attribution)"
 # 3. fast enabled yes -> no
 lines[85 - 1] = "      enabled: no"
 

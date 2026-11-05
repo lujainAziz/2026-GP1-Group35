@@ -332,7 +332,10 @@ configuration were untouched. Evidence: `evidence/alert-log-reset.md`.
   (default 24 h) repairs recent unlinked alerts when evidence arrives late —
   without touching occurrence counts, states or older rows. Residual limits: linking is evidence-coverage dependent (an address
   never observed by any evidence source stays unlinked), decoder events
-  without addresses cannot link, and historical alerts outside the relink
+  without addresses link by the frame MAC instead (eve `ethernet: yes`): only
+  to a known inventory device, with gateway/multicast/appliance MACs excluded
+  and ambiguity left unlinked — identifying the MAC does not assert the device
+  crafted a malformed frame, and historical alerts outside the relink
   window are not rewritten (`evidence/partD-alert-data-investigation.md`
   documents the pre-implementation data).
 - **Protocol/engine events:** SURICATA STREAM and decoder signatures (TCP

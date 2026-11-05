@@ -197,3 +197,18 @@ link-local source define the context).
 Suites after the change: appliance **538 passed** (108 subtests), mobile
 **76 passed**, `flutter analyze` clean. Live verification of the attribution
 is recorded separately once performed on the appliance.
+
+## MAC attribution for address-less events (2026-11-05)
+
+eve-log `ethernet: yes` (generator edit 6) adds the frame's src/dest MAC to
+events; offline `suricata -r` on crafted truncated-IPv6 frames confirmed the
+exact production event carries them (`evidence/capture-path-check.md`).
+`appliance/test_alerts.py`: the ingester links an event **only when it carries
+no IP addresses at all** by its frame MACs — both directions (device→gateway
+and gateway→device link the device); gateway MAC(s), multicast/broadcast and
+the appliance's own interfaces are never candidates; an unknown MAC stays
+NULL; two inventory devices on one frame is ambiguous → NULL; the MAC never
+bypasses IP-based linking (an IP-ownership conflict stays NULL even when the
+frame MAC names a device); end-to-end ingest creates a NEW device-keyed row
+while the historical NULL-keyed row of the same rule is left untouched
+(occurrence counts unchanged). Suites: appliance **546 passed**.

@@ -30,6 +30,7 @@ import logging
 import os
 import signal
 import sqlite3
+import subprocess
 import time
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -171,6 +172,16 @@ def parse_alert_event(obj):
         # blank alert.
         return None
     sig = a.get("signature")
+    # Ethernet header (eve-log `ethernet: yes`): used ONLY to attribute events
+    # that carry no IP addresses (e.g. truncated-packet decoder events). Not
+    # stored in the alerts table.
+    eth = obj.get("ether")
+    ether_src = ether_dst = None
+    if isinstance(eth, dict):
+        if isinstance(eth.get("src_mac"), str):
+            ether_src = eth["src_mac"].lower()
+        if isinstance(eth.get("dest_mac"), str):
+            ether_dst = eth["dest_mac"].lower()
     return {
         "title": sig if isinstance(sig, str) and sig.strip() else "Suricata alert",
         "rule_id": _as_int(a.get("signature_id")),
@@ -180,6 +191,8 @@ def parse_alert_event(obj):
         "dst_ip": obj.get("dest_ip") if isinstance(obj.get("dest_ip"), str) else None,
         "src_port": _as_int(obj.get("src_port")),
         "dst_port": _as_int(obj.get("dest_port")),
+        "ether_src": ether_src,
+        "ether_dst": ether_dst,
     }
 
 
@@ -285,6 +298,97 @@ def link_device(conn, src_ip, dst_ip, event_time=None):
     if src_mac and dst_mac:
         return src_mac  # both match -> link to the source device
     return src_mac or dst_mac
+
+
+_LOCAL_MACS = None
+_GATEWAY_IPS = None
+
+
+def local_appliance_macs():
+    """MACs of the appliance's own interfaces — never link candidates."""
+    global _LOCAL_MACS
+    if _LOCAL_MACS is None:
+        macs = set()
+        try:
+            for name in os.listdir("/sys/class/net"):
+                try:
+                    with open(f"/sys/class/net/{name}/address") as f:
+                        m = f.read().strip().lower()
+                    if m and m != "00:00:00:00:00:00":
+                        macs.add(m)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        _LOCAL_MACS = macs
+    return _LOCAL_MACS
+
+
+def _detect_gateway_ips():
+    """Default-gateway IP(s) from the routing table (cached)."""
+    global _GATEWAY_IPS
+    if _GATEWAY_IPS is None:
+        ips = set()
+        try:
+            out = subprocess.check_output(["ip", "route", "show", "default"],
+                                          text=True, timeout=5)
+            for line in out.splitlines():
+                parts = line.split()
+                if line.startswith("default") and "via" in parts:
+                    ips.add(parts[parts.index("via") + 1])
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _GATEWAY_IPS = ips
+    return _GATEWAY_IPS
+
+
+def _is_multicast_mac(mac):
+    """Multicast/broadcast (group bit set) — or malformed — MACs are not candidates."""
+    try:
+        return bool(int(mac.split(":", 1)[0], 16) & 1)
+    except (ValueError, AttributeError):
+        return True
+
+
+def link_device_by_mac(conn, ether_src, ether_dst, gateway_ips=None):
+    """Attribute an ADDRESS-LESS event by its frame MACs.
+
+    Used ONLY when the event carries no IP addresses at all — never to override
+    or second-guess IP-based linking (including an IP-ownership conflict).
+    A side is a candidate only if it is a known inventory device; gateway
+    MAC(s), multicast/broadcast frames and the appliance's own interfaces are
+    excluded. Two distinct candidate devices on one frame is ambiguous → NULL.
+    Identifying the MAC does not assert the device CRAFTED the malformed frame
+    — only which known device the frame involves.
+    """
+    gw_ips = _detect_gateway_ips() if gateway_ips is None else set(gateway_ips)
+    gw_macs = set()
+    if gw_ips:
+        ph = ",".join("?" for _ in gw_ips)
+        gw_macs = {
+            r[0].lower() for r in conn.execute(
+                f"SELECT DISTINCT mac FROM devices WHERE last_ipv4 IN ({ph}) OR ip IN ({ph})",
+                (*gw_ips, *gw_ips),
+            ).fetchall() if r[0]
+        }
+    local = local_appliance_macs()
+
+    def candidate(mac):
+        if not mac or _is_multicast_mac(mac):
+            return None
+        mac = mac.lower()
+        if mac in gw_macs or mac in local:
+            return None
+        row = conn.execute("SELECT 1 FROM devices WHERE mac=?", (mac,)).fetchone()
+        return mac if row else None
+
+    src = candidate(ether_src)
+    dst = candidate(ether_dst)
+    if src and dst and src != dst:
+        log.warning("MAC attribution ambiguous (two inventory devices on one "
+                    "frame); leaving alert unlinked")
+        return None
+    return src or dst
 
 
 def relink_recent(conn, window_hours=None, now_iso=None):
@@ -455,7 +559,11 @@ def process_file(conn, path, window_seconds):
                 continue
             if a is None:
                 continue
-            device_mac = link_device(conn, a["src_ip"], a["dst_ip"], a["event_time"])
+            if a["src_ip"] is None and a["dst_ip"] is None:
+                # Address-less event (e.g. truncated packet): MAC attribution.
+                device_mac = link_device_by_mac(conn, a["ether_src"], a["ether_dst"])
+            else:
+                device_mac = link_device(conn, a["src_ip"], a["dst_ip"], a["event_time"])
             upsert_alert(conn, a, device_mac, window_seconds)
         conn.execute(
             "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "

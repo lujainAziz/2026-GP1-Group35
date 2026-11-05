@@ -109,7 +109,7 @@ outputs:
       #facility: local5
       #level: Info ## possible levels: Emergency, Alert, Critical,
                    ## Error, Warning, Notice, Info, Debug
-      #ethernet: no  # log ethernet header in events when available
+      ethernet: yes  # ASSAS: log src/dest MAC in events (device attribution)
       #redis:
       #  server: 127.0.0.1
       #  port: 6379

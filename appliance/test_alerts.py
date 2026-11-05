@@ -75,6 +75,7 @@ def test_parse_alert_event_with_and_without_addresses():
         "title": "ET SCAN", "rule_id": 42, "severity": "Critical",
         "event_time": "2026-11-02T10:00:00",
         "src_ip": "10.0.0.5", "dst_ip": "8.8.8.8", "src_port": 1234, "dst_port": 53,
+        "ether_src": None, "ether_dst": None,
     }
     # decoder-event alert: no addresses/ports
     decoder = alerts.parse_alert_event(json.loads(eve_alert(sig="SURICATA IPv6", sid=2200013, sev=3)))
@@ -551,3 +552,117 @@ def test_merge_keeps_chronological_first_last_out_of_order(tmp_path):
         alerts.upsert_alert(conn, older, "dev1", 300)
     row = conn.execute("SELECT occurrence_count, event_time, last_event_time FROM alerts").fetchone()
     assert row == (2, "2026-11-02T10:00:00", "2026-11-02T10:02:00")
+
+
+# --------------------------------------------------------------------------- #
+# MAC attribution for ADDRESS-LESS events (eve-log ethernet: yes)
+# --------------------------------------------------------------------------- #
+GW_IP = "192.168.100.1"
+
+
+def _mac_conn(tmp_path):
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('e6:42:65:03:0d:8f','192.168.100.238')")
+    conn.execute(f"INSERT INTO devices(mac,last_ipv4) VALUES('fc:1b:d1:30:cb:6c','{GW_IP}')")  # gateway
+    conn.commit()
+    return conn
+
+
+def test_parse_alert_event_extracts_ether():
+    o = json.loads(eve_alert(sig="SURICATA IPv6 truncated packet", sid=2200013, sev=3))
+    o.pop("src_ip", None); o.pop("dest_ip", None)
+    o["ether"] = {"src_mac": "E6:42:65:03:0D:8F", "dest_mac": "FC:1B:D1:30:CB:6C"}
+    a = alerts.parse_alert_event(o)
+    assert a["ether_src"] == "e6:42:65:03:0d:8f"   # lowercased
+    assert a["ether_dst"] == "fc:1b:d1:30:cb:6c"
+    assert a["src_ip"] is None and a["dst_ip"] is None
+
+
+def test_mac_link_both_directions(tmp_path):
+    conn = _mac_conn(tmp_path)
+    # outbound: device -> gateway
+    assert alerts.link_device_by_mac(
+        conn, "e6:42:65:03:0d:8f", "fc:1b:d1:30:cb:6c", gateway_ips={GW_IP}) == "e6:42:65:03:0d:8f"
+    # inbound: gateway -> device
+    assert alerts.link_device_by_mac(
+        conn, "fc:1b:d1:30:cb:6c", "e6:42:65:03:0d:8f", gateway_ips={GW_IP}) == "e6:42:65:03:0d:8f"
+
+
+def test_mac_link_gateway_and_multicast_excluded(tmp_path):
+    conn = _mac_conn(tmp_path)
+    # gateway -> multicast: no candidate at all
+    assert alerts.link_device_by_mac(
+        conn, "fc:1b:d1:30:cb:6c", "33:33:00:00:00:01", gateway_ips={GW_IP}) is None
+    # broadcast source is never a candidate
+    assert alerts.link_device_by_mac(
+        conn, "ff:ff:ff:ff:ff:ff", "e6:42:65:03:0d:8f", gateway_ips={GW_IP}) == "e6:42:65:03:0d:8f"
+
+
+def test_mac_link_unknown_device_stays_null(tmp_path):
+    conn = _mac_conn(tmp_path)
+    assert alerts.link_device_by_mac(
+        conn, "aa:aa:aa:aa:aa:01", "fc:1b:d1:30:cb:6c", gateway_ips={GW_IP}) is None
+
+
+def test_mac_link_two_devices_is_ambiguous(tmp_path):
+    conn = _mac_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('8a:64:ec:43:21:f3','192.168.100.239')")
+    conn.commit()
+    assert alerts.link_device_by_mac(
+        conn, "e6:42:65:03:0d:8f", "8a:64:ec:43:21:f3", gateway_ips={GW_IP}) is None
+
+
+def test_mac_link_appliance_interfaces_excluded(tmp_path, monkeypatch):
+    conn = _mac_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('9c:69:d3:4b:c7:f7','192.168.100.236')")
+    conn.commit()
+    monkeypatch.setattr(alerts, "_LOCAL_MACS", {"9c:69:d3:4b:c7:f7"})
+    assert alerts.link_device_by_mac(
+        conn, "9c:69:d3:4b:c7:f7", "e6:42:65:03:0d:8f", gateway_ips={GW_IP}) == "e6:42:65:03:0d:8f"
+    assert alerts.link_device_by_mac(
+        conn, "9c:69:d3:4b:c7:f7", "fc:1b:d1:30:cb:6c", gateway_ips={GW_IP}) is None
+
+
+def test_mac_never_overrides_ip_linking(tmp_path, monkeypatch):
+    # An event WITH IP addresses whose IP ownership is conflicted must stay
+    # NULL even when the frame MAC names a known device.
+    conn = _mac_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('old:dev','10.0.0.9')")
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('new:dev','10.0.0.9')")
+    conn.commit()
+    monkeypatch.setattr(alerts, "_GATEWAY_IPS", {GW_IP})
+    eve = tmp_path / "eve.json"
+    o = json.loads(eve_alert(sid=7777, src="10.0.0.9", dst="8.8.8.8"))
+    o["ether"] = {"src_mac": "e6:42:65:03:0d:8f", "dest_mac": "fc:1b:d1:30:cb:6c"}
+    write(eve, json.dumps(o) + "\n")
+    alerts.process_file(conn, str(eve), 300)
+    row = conn.execute("SELECT device_mac FROM alerts WHERE rule_id=7777").fetchone()
+    assert row == (None,)  # IP conflict not bypassed by the MAC
+
+
+def test_mac_linked_ingest_creates_new_row_and_preserves_old_null_row(tmp_path, monkeypatch):
+    # End-to-end: an address-less event with ether links to the device at
+    # insert time, merges with its own kind, and never touches the historical
+    # NULL-keyed row of the same rule.
+    conn = _mac_conn(tmp_path)
+    monkeypatch.setattr(alerts, "_GATEWAY_IPS", {GW_IP})
+    with conn:
+        conn.execute(
+            "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+            "severity, state, occurrence_count, last_event_time) "
+            "VALUES (NULL,'Threat','SURICATA IPv6 truncated packet',2200013,"
+            "'2026-11-05T00:56:28','Medium','New',64,'2026-11-05T03:08:11')")
+    eve = tmp_path / "eve.json"
+    def no_addr_event(ts):
+        o = json.loads(eve_alert(sig="SURICATA IPv6 truncated packet", sid=2200013, sev=3, ts=ts))
+        o.pop("src_ip", None); o.pop("dest_ip", None)
+        o["ether"] = {"src_mac": "e6:42:65:03:0d:8f", "dest_mac": "fc:1b:d1:30:cb:6c"}
+        return json.dumps(o) + "\n"
+    write(eve, no_addr_event("2026-11-05T04:00:00+0300"),
+               no_addr_event("2026-11-05T04:01:00+0300"))
+    alerts.process_file(conn, str(eve), 300)
+    rows = conn.execute(
+        "SELECT device_mac, occurrence_count FROM alerts WHERE rule_id=2200013 "
+        "ORDER BY alert_id").fetchall()
+    assert rows[0] == (None, 64)                       # old NULL row untouched
+    assert rows[1] == ("e6:42:65:03:0d:8f", 2)         # new linked row, merged
