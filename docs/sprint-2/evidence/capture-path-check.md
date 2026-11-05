@@ -59,3 +59,33 @@ causes remain, indistinguishable without the sender's identity:
    only), with tests mirroring the offline pcap cases.
 3. Re-examine: the sender MAC of the truncated frames determines the cause and
    whether a rule decision (threshold/disable) is justified — not before.
+
+## 4. Live result after deployment (2026-11-05 00:40:14Z, read-only checks)
+
+First production sid-2200013 event after the restart (03:41:38 +03):
+```
+ether = {"src_mac": "b8:fb:b3:cb:b3:56", "dest_mac": "33:33:00:00:00:00"}   (no IP fields)
+```
+- **Exclusions applied:** the destination (IPv6 multicast `33:33:…`) was not a
+  candidate; the live resolver excludes the gateway MACs
+  `fc:1b:d1:30:cb:6c` (IPv4 default route) **and `c0:e0:18:ec:5d:69` — the
+  IPv6 default route's next-hop (`fe80::1`), a different MAC that the previous
+  inventory-IPv4-only logic would have missed** — plus the appliance's three
+  interface MACs.
+- **Selection:** the source MAC is a known inventory device →
+  `b8:fb:b3:cb:b3:56` (TP-Link TL-WR802N 4.0).
+- **SQLite / counters:** new device-keyed row `id=1322, occurrence_count=1`
+  (exactly one event since the restart — no inflation); the historical
+  NULL-keyed row `id=1297` is untouched (`occ=79`, last event 03:39:32, before
+  the deployment).
+- **API:** `device_mac=b8:fb:b3:cb:b3:56`,
+  `device_name="TP-Link TL-WR802N 4.0"`, `state=new`.
+- **Pending:** the owner's in-app navigation test from this alert to the
+  device's details.
+
+**Calibrated interpretation:** the frames' sender is the TP-Link access point —
+a concrete lead for the truncation cause (periodic IPv6 multicast emissions
+from the AP), **not** proof that the AP crafts malformed packets: the frame
+could be truncated anywhere on the mirror path. Determining the actual cause
+still requires examining a captured sample and the mirror configuration. The
+rule and its rate remain unchanged.
