@@ -1,7 +1,8 @@
 # Sprint 2 — Final Verification
 
-**Sprint status: implementation and automated tests are complete; the detection
-evaluation, the clean resource run and the owner's visual sign-off are pending —
+**Sprint status: implementation, automated tests and the resource runs are
+complete (memory target not met — see #8/R); the detection evaluation, the
+drop-measurement re-run decision and the owner's visual sign-off are pending —
 Sprint 2 is NOT closed until those conclude.**
 
 Practical verification of each acceptance requirement. **Automated** = test suite; **Live** =
