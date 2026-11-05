@@ -249,13 +249,16 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
           child: IntrinsicHeight(
             child: Row(
               children: [
-                _overviewCell(115, '${state.totalCount}', 'TOTAL', Ui.ink),
+                // Widths follow the longest single word of each label so
+                // "UNRECOGNIZED" fits unbroken at the largest text size;
+                // two-word labels wrap at their space.
+                _overviewCell(92, '${state.totalCount}', 'TOTAL', Ui.ink),
                 _divider(),
-                _overviewCell(100, '${state.onlineCount}', 'ONLINE', Ui.low),
+                _overviewCell(96, '${state.onlineCount}', 'ONLINE', Ui.low),
                 _divider(),
-                _overviewCell(100, '${state.unrecognizedCount}', 'UNRECOGNIZED', Ui.med),
+                _overviewCell(136, '${state.unrecognizedCount}', 'UNRECOGNIZED', Ui.med),
                 _divider(),
-                _overviewCell(115, '$notMonitored', 'NOT MONITORED', Ui.high),
+                _overviewCell(106, '$notMonitored', 'NOT MONITORED', Ui.high),
               ],
             ),
           ),
@@ -270,9 +273,14 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
           children: [
             Text(value, style: UiText.overviewNumber.copyWith(color: color)),
             const SizedBox(height: 5),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(label, style: UiText.overviewLabel.copyWith(color: Ui.mute)),
+            // The label wraps to a second line at large text sizes instead of
+            // being scaled down to an unreadable size; the card (IntrinsicHeight
+            // row) grows with it.
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              softWrap: true,
+              style: UiText.overviewLabel.copyWith(color: Ui.mute),
             ),
           ],
         ),

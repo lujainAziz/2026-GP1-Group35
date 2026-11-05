@@ -152,7 +152,10 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: UiSpace.pageText),
                     child: Column(
                       children: [
-                        Text(d.displayName, textAlign: TextAlign.center, style: UiText.deviceName),
+                        // breakName: wrap long machine-style tokens at their
+                        // separators instead of mid-word; the column grows.
+                        Text(breakName(d.displayName),
+                            textAlign: TextAlign.center, style: UiText.deviceName),
                         const SizedBox(height: 8),
                         Pressable(
                           onTap: _saving ? null : () => _rename(d),

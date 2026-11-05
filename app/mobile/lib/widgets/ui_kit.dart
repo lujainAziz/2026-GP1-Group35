@@ -648,7 +648,13 @@ class PillButton extends StatelessWidget {
 /// Insert zero-width spaces after `:`/`.` so long addresses (esp. IPv6) wrap at
 /// group boundaries instead of being clipped or broken mid-group. Display only;
 /// copy uses the raw value.
-String breakAddress(String v) => v.replaceAllMapped(RegExp(r'[:.]'), (m) => '${m[0]}​');
+String breakAddress(String v) => v.replaceAllMapped(RegExp(r'[:./]'), (m) => '${m[0]}​');
+
+/// Inserts invisible break opportunities (ZWSP) after a name's natural
+/// separators so a long single token ("emulator (sdk_gphone64_x86_64)") wraps
+/// at `_`/`-`/`(`/`.` instead of breaking mid-word. The visible text is
+/// unchanged.
+String breakName(String v) => v.replaceAllMapped(RegExp(r'[_\-(.]'), (m) => '${m[0]}​');
 
 class SpecList extends StatelessWidget {
   const SpecList({

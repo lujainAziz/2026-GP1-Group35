@@ -398,10 +398,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Text(k, style: UiText.mono(8.5, 500, color: Ui.mute)),
             const SizedBox(height: 3),
+            // Wraps (at address separators) instead of clipping: the row grows
+            // with the text size; no ellipsis, no font shrinking.
             Text(
-              v,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              breakAddress(v),
+              softWrap: true,
               style: UiText.mono(10.5, 600, color: color ?? Ui.ink),
             ),
           ],

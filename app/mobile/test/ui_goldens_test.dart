@@ -128,4 +128,56 @@ void main() {
 
   testWidgets('pairing-narrow-maxzoom', (t) => narrow(t, 'pairing-narrow', const PairingScreen()), skip: !gen);
   testWidgets('splash-narrow-maxzoom', (t) => narrow(t, 'splash-narrow', const SplashGate(child: SizedBox())), skip: !gen);
+
+  // Scaling comparison pairs (smallest vs largest supported text) with the
+  // layout-adaptation problem cases: a machine-style long device name, an
+  // address value in the settings hardware card, and the stat labels.
+  Future<void> scalePair(WidgetTester tester, String name,
+      Widget Function(AppState) build) async {
+    for (final (tag, zoom, scale) in [('small', 1.0, 0.85), ('large', 1.2, 1.3)]) {
+      SharedPreferences.setMockInitialValues({});
+      for (final f in ['BricolageGrotesque', 'JetBrainsMono']) {
+        final l = FontLoader(f == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
+        l.addFont(rootBundle.load('assets/fonts/$f.ttf'));
+        await l.load();
+      }
+      final s = AppState(_ScaleRepo());
+      addTearDown(s.dispose);
+      await tester.runAsync(s.refresh);
+      addTearDown(tester.view.reset);
+      tester.view.devicePixelRatio = 2;
+      tester.view.physicalSize = const Size(390 * 2, 1000 * 2);
+      await tester.pumpWidget(MaterialApp(
+        theme: MobileTheme.light,
+        home: Builder(builder: (c) => MediaQuery(
+          data: MediaQuery.of(c).copyWith(textScaler: TextScaler.linear(scale)),
+          child: DesignScale(zoom: zoom, child: Material(color: Ui.bg, child: build(s))),
+        )),
+      ));
+      await tester.pump(const Duration(milliseconds: 400));
+      await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/$name-$tag.png'));
+      await tester.pumpWidget(const SizedBox());
+    }
+  }
+
+  testWidgets('scale-device-details', (t) => scalePair(t, 'scale-device-details',
+      (s) => DeviceDetailsScreen(state: s, mac: _mac)), skip: !gen);
+  testWidgets('scale-device-list', (t) => scalePair(t, 'scale-device-list',
+      (s) => DeviceListScreen(state: s)), skip: !gen);
+  testWidgets('scale-settings', (t) => scalePair(t, 'scale-settings',
+      (s) => SettingsScreen(state: s)), skip: !gen);
+}
+
+class _ScaleRepo extends DemoRepository {
+  final Device _dev = const Device(
+    mac: _mac,
+    ip: '192.168.100.238',
+    ipv6: ['2001:16a2:c83e:5700:78f5:8a3d:cbf4:b5fe'],
+    hostname: '0badc396-c1f4-40db-ba83-c0702b11ae58', // opaque -> model shown
+    model: 'emulator (sdk_gphone64_x86_64)',
+    vendor: 'Google', deviceType: 'Computer',
+    presence: Presence.online, trusted: false, monitored: false,
+  );
+  @override Future<List<Device>> getDevices() async => [_dev];
+  @override Future<Device> getDevice(String mac) async => _dev;
 }
