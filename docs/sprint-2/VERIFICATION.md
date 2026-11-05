@@ -1,5 +1,9 @@
 # Sprint 2 — Final Verification
 
+**Sprint status: implementation and automated tests are complete; the detection
+evaluation, the clean resource run and the owner's visual sign-off are pending —
+Sprint 2 is NOT closed until those conclude.**
+
 Practical verification of each acceptance requirement. **Automated** = test suite; **Live** =
 observed on the running appliance. Synthetic/unit tests are **not** a substitute for the dataset
 detection evaluation (that item is explicitly ☐ not-tested). No test data was written into

@@ -91,27 +91,45 @@ still requires examining a captured sample and the mirror configuration. The
 rule and its rate remain unchanged.
 
 
-## 5. Sample-capture plan for the truncation cause (approved tooling: tcpdump; HELD until run)
+## 5. Sample-capture plan for the truncation cause (HELD until run)
 
-Limited, bounded capture of the suspect frames on the mirror interface — at most
-20 frames or 5 minutes, full snaplen, filtered to IPv6 frames from the AP's MAC.
-The pcap is stored OUTSIDE the repository (`/home/assas/sprint2-backups/`,
-consistent with the no-network-data-in-git policy); only derived facts are
-documented. The rule and its rate stay unchanged until the cause is known.
+Bounded capture on the mirror interface: at most 20 frames or 5 minutes, full
+snaplen, filtered to IPv6 frames from the AP's MAC toward the multicast
+destination observed in the attributed event. The pcap stays OUTSIDE the
+repository (`/home/assas/sprint2-backups/`) with restricted permissions (0600)
+— it may carry private network data. The rule and its rate stay unchanged until
+the cause is decided.
 
 ```bash
 set -euo pipefail
 OUT="/home/assas/sprint2-backups/trunc-sample-$(date -u +%Y%m%dT%H%M%SZ).pcap"
+rc=0
 sudo timeout 300 tcpdump -i eth1 -s 0 -c 20 -w "$OUT" \
-  'ether proto 0x86dd and ether src b8:fb:b3:cb:b3:56'
-sudo chmod 644 "$OUT"
-echo "SAMPLE_CAPTURED $OUT"
+  'ether proto 0x86dd and ether src b8:fb:b3:cb:b3:56' || rc=$?
+if [ "$rc" -eq 124 ]; then
+  echo "WINDOW_ELAPSED: 5-minute cap reached; captured whatever arrived"
+elif [ "$rc" -ne 0 ]; then
+  echo "TCPDUMP_FAILED rc=$rc"; exit "$rc"
+fi
+sudo chown assas:assas "$OUT" && sudo chmod 600 "$OUT"
+echo "SAMPLE_FILE $OUT ($(stat -c%s "$OUT") bytes)"
 ```
+(The expected 5-minute timeout — exit 124 — is handled explicitly and is not a
+tcpdump failure; without this, `set -e` would abort before reporting the file.)
 
-Analysis (read-only, after capture): for each frame — captured length vs the
-IPv6 header's payload-length field, destination, ethertype and a safe header
-hexdump. If payload-length consistently exceeds the on-wire frame length, the
-frames arrive malformed/truncated before the mirror egress limit is reached;
-matching lengths with intact payloads would instead point at the capture path.
-Only after that evidence: the STREAM/decoder rule-group proposal
-(threshold/disable with stated detection impact) is re-presented for decision.
+Analysis (read-only, after capture):
+- For each frame: on-wire captured length vs the IPv6 header's payload-length
+  field, destination, and a safe header hexdump.
+- **Correlation requirement:** the sample is matched against concurrent
+  sid-2200013 eve events by timestamp. The first 20 IPv6 frames may all be
+  healthy; if no captured frame corresponds to a truncation event, the sample is
+  recorded as **inconclusive** (longer window / refined filter proposed), not as
+  evidence of absence.
+- **Scope of what this sample can prove:** an eth1 capture shows only what
+  reaches the Pi. A short-on-wire frame here does NOT establish that the source
+  emitted it short — it may have been truncated anywhere on the mirror path.
+  Settling the origin requires a comparison capture taken BEFORE the mirror
+  (e.g. on the AP's own segment) or switch mirror-configuration evidence; this
+  sample narrows the hypotheses and characterises the frames, no more.
+Only after that evidence is the STREAM/decoder rule-group proposal
+(threshold/disable with stated detection impact) re-presented for decision.
