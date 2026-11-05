@@ -20,8 +20,8 @@ import sys
 import time
 from datetime import datetime, timezone
 
-DURATION = int(sys.argv[1]) if len(sys.argv) > 1 else 7200       # 2 hours
-INTERVAL = float(sys.argv[2]) if len(sys.argv) > 2 else 10.0
+DURATION = 7200       # 2 hours (overridden by argv in main())
+INTERVAL = 10.0
 IFACE = os.getenv("ASSAS_CAPTURE_IFACE", "eth1")
 EVE = os.getenv("ASSAS_EVE_PATH", "/var/log/suricata/eve.json")
 OUTDIR = os.getenv("ASSAS_RES_OUTDIR", "/home/assas/assas/docs/sprint-2/evidence/resources")
@@ -90,12 +90,22 @@ def read_suri_stats():
     return None
 
 
+def _is_suricata_comm(comm):
+    """True for Suricata's process name as the kernel reports it.
+
+    /proc/<pid>/comm for Suricata 7 is "Suricata-Main" (not "suricata") — the
+    clean 2h run's pid_start/pid_end were null for exactly this reason, which
+    alone invalidated an otherwise clean drop measurement.
+    """
+    return comm in ("suricata", "Suricata-Main")
+
+
 def read_suri_pid():
     """PID of the running suricata process (to detect a restart during the run)."""
     for p in glob.glob("/proc/[0-9]*/comm"):
         try:
             with open(p) as f:
-                if f.read().strip() == "suricata":
+                if _is_suricata_comm(f.read().strip()):
                     return int(p.rsplit("/", 2)[1])
         except OSError:
             continue
@@ -107,6 +117,12 @@ def now_iso():
 
 
 def main():
+    # argv parsed here (not at import) so the module stays import-safe for tests.
+    global DURATION, INTERVAL
+    if len(sys.argv) > 1:
+        DURATION = int(sys.argv[1])
+    if len(sys.argv) > 2:
+        INTERVAL = float(sys.argv[2])
     os.makedirs(OUTDIR, exist_ok=True)
     start = time.time()
     idle0, tot0 = read_cpu()

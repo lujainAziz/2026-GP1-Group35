@@ -43,3 +43,14 @@ def test_measure_counts_per_sid(tmp_path):
     assert counts == {2024001: 2, 2010935: 1}
     assert names[2024001] == "SIG 2024001"
     assert len(matched) == 3
+
+
+def test_suricata_comm_matcher():
+    """Regression for the clean-run pid=null: the kernel reports Suricata's
+    comm as 'Suricata-Main', which the old matcher ('suricata' only) missed."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+    import resource_sampler as rs
+    assert rs._is_suricata_comm("Suricata-Main")
+    assert rs._is_suricata_comm("suricata")
+    assert not rs._is_suricata_comm("suricata-update")
+    assert not rs._is_suricata_comm("python3")

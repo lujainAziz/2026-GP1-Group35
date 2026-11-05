@@ -195,6 +195,42 @@ samples only after that precheck passes, and records agent presence every 30 s t
 # After the Pi's Claude Code session has fully exited:
 /home/assas/assas/appliance/tools/clean_resource_run.sh
 # -> evidence/resources/clean/resource-2h-summary.json + clean/agent-guard.log
+
+### Clean (agent-free) 2-hour run — COMPLETED 2026-11-05 02:26–04:26 UTC
+
+Results recorded AS-IS (`evidence/resources/clean/`); the baseline verdict above
+stands unchanged; this is the independent additional measurement.
+
+| Metric | Result | Verdict |
+|---|---|---|
+| Validity guard | `agent-guard.log`: precheck passed, **0 PRESENT** entries over the full window | valid agent-free run |
+| Sampling integrity | 720 samples / 7200 s, 0 gaps > 15 s (worst interval 11.0 s), 0 blank Suricata-stat samples | continuous |
+| Service continuity | all five services active since before the window, `NRestarts=0` throughout | continuous |
+| CPU | avg **36.71 %**, max 53.4 % | **PASS** (≤ 75 %) |
+| Memory | avg **4045.9 MB**, max **4470 MB**, min 3605 MB (steady ≈4.0 GB, no runaway growth: first-10 avg 4012 → last-10 avg 4086) | **NOT met** (< 4096 MB) |
+| Suricata drops | 0 of 6,193,620 packets; 0 resets; 0 missing samples; 721 valid deltas | **NOT VALIDATED** — see below |
+
+**Why the drop measurement is not validated:** `suricata_drop_measurement_valid`
+is false solely because `suricata_pid_start/end` were null. Cause identified
+(read-only check): the kernel reports Suricata's process name as
+`Suricata-Main`, while the sampler's detector matched the literal `suricata`
+only — a defect in the measurement tool, not in the service. Every other
+validity input was clean. **The drop figure is therefore recorded but NOT
+claimed as a pass.** Required fix: accept the real process name — implemented in
+`resource_sampler._is_suricata_comm` with a regression test; a re-run to obtain
+a fully validated drop measurement awaits the team's decision.
+
+**Memory analysis (read-only, post-run):** usage was steady around 4.0 GB with
+no leak-shaped growth. Top consumers at inspection: Suricata **≈1205 MB** (the
+53k-rule ET Open set dominates), the 7-inch display app ≈231 MB, discovery
+≈165 MB, API ≈117 MB, alerts reader (small) — appliance processes total
+**≈1.7–1.8 GB**. The remainder (~2.2–2.5 GB) is the Pi's desktop stack and
+system services (window manager, panels, VNC, journald, portals, kernel/anon).
+Proposals for the team (NOT applied): run the appliance headless in deployment
+(the desktop/VNC stack is not part of the product's function), and/or re-state
+the memory target against appliance processes; Suricata's footprint could also
+be reduced by further rule scoping — each option changes scope and needs a
+decision first.
 ```
 Record the clean run's total-device memory here as the memory acceptance figure once it shows the
 agent absent throughout.
