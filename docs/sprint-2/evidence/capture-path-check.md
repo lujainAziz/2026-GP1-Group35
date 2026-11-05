@@ -133,3 +133,29 @@ Analysis (read-only, after capture):
   sample narrows the hypotheses and characterises the frames, no more.
 Only after that evidence is the STREAM/decoder rule-group proposal
 (threshold/disable with stated detection impact) re-presented for decision.
+
+
+## 6. Sample analysis — RESULTS (capture of 2026-11-05 05:17–05:22 +03)
+
+Three frames captured (file outside the repo, 0600). All three are byte-for-byte
+identical, ~125 s apart, and **each matches a sid-2200013 eve event to the
+second with the same source MAC** — the sample IS the alerting traffic, not
+bystander frames.
+
+Per frame (full snaplen; nothing cut by tcpdump):
+- On-wire length **86 bytes**, `src=::` (unspecified), `dst=ff02::1`
+  (all-nodes multicast), Hop-by-Hop + ICMPv6 structure (MLD-like),
+- IPv6 header **payload-length field = 8192 (0x2000)** → claimed frame 8246 B
+  vs 86 B actually on the wire → Suricata's `ipv6.trunc_pkt`.
+
+**Calibrated interpretation.** The mirror-truncation hypothesis is now
+**strongly disfavored**: a switch truncating an 8 KB jumbo frame would cut near
+its egress MTU (~1514 B), not at a consistent 86 B ending exactly at the ICMPv6
+boundary; the engine has also never seen any frame above 1514 B
+(`max_pkt_size`). The evidence is consistent with the access point emitting
+periodic malformed MLD-like multicasts whose length field is bogus (0x2000),
+i.e. a firmware defect at the source. **Definitive attribution still requires a
+pre-mirror capture or switch-config evidence** — not performed; the conclusion
+above is marked strong-but-not-absolute. The rule and its rate remain
+unchanged; any decision on sid 2200013 (threshold/disable as a known-noise
+source) is the team's, now with this characterisation in hand.

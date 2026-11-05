@@ -39,14 +39,22 @@ def read_cpu():
 
 
 def read_mem():
+    """Used/total memory in MiB (binary): /proc/meminfo's 'kB' are KiB.
+
+    'used' = MemTotal - MemAvailable (the kernel's estimate of allocatable
+    memory without swapping): anonymous pages + shmem (incl. graphics buffers)
+    + unreclaimable kernel memory; reclaimable page cache is NOT counted.
+    NOTE the acceptance threshold below (4096) is therefore 4 GiB = 4.295 GB
+    decimal; against 4 GB decimal the bound would be 3815 MiB.
+    """
     info = {}
     with open("/proc/meminfo") as f:
         for line in f:
             k, _, v = line.partition(":")
-            info[k] = int(v.strip().split()[0])  # kB
+            info[k] = int(v.strip().split()[0])  # KiB
     total = info["MemTotal"]
     avail = info.get("MemAvailable", info.get("MemFree", 0))
-    return (total - avail) // 1024, total // 1024  # MB used, MB total
+    return (total - avail) // 1024, total // 1024  # MiB used, MiB total
 
 
 def read_net(iface):
@@ -138,13 +146,19 @@ def main():
     suri_pkts_acc = suri_drops_acc = 0
     suri_prev = suri_first
     suri_resets = suri_missing = suri_valid_deltas = 0
+    suri_pids_seen = set()
+    suri_pid_prev = suri_pid_start
+    suri_pid_missing = 0
+    suri_pid_changes = 0
+    if suri_pid_start is not None:
+        suri_pids_seen.add(suri_pid_start)
 
     cpu_samples, mem_used_samples, rxbps_samples, txbps_samples = [], [], [], []
     new = not os.path.exists(CSV)
     with open(CSV, "a", buffering=1) as csv:
         if new:
-            csv.write("utc,cpu_pct,mem_used_mb,mem_total_mb,rx_bps,tx_bps,rx_pps,tx_pps,"
-                      "suri_kernel_packets,suri_kernel_drops\n")
+            csv.write("utc,cpu_pct,mem_used_mib,mem_total_mib,rx_bps,tx_bps,rx_pps,tx_pps,"
+                      "suri_kernel_packets,suri_kernel_drops,suri_pid\n")
         last_net = net0
         last_idle, last_tot = idle0, tot0
         last_t = start
@@ -185,8 +199,21 @@ def main():
                         suri_resets += 1  # counter went backwards -> suricata restarted
                 suri_prev = suri
 
+            # Suricata process identity sampled EVERY interval (not only at the
+            # start/end): a mid-run restart is visible even if a new process
+            # ends on the same counters.
+            pid_now = read_suri_pid()
+            if pid_now is None:
+                suri_pid_missing += 1
+            else:
+                suri_pids_seen.add(pid_now)
+                if suri_pid_prev is not None and pid_now != suri_pid_prev:
+                    suri_pid_changes += 1
+                suri_pid_prev = pid_now
+
             csv.write(f"{now_iso()},{cpu_pct},{mem_used},{mem_total},{rx_bps},{tx_bps},"
-                      f"{rx_pps},{tx_pps},{suri_pkts_str},{suri_drops_str}\n")
+                      f"{rx_pps},{tx_pps},{suri_pkts_str},{suri_drops_str},"
+                      f"{pid_now if pid_now is not None else ''}\n")
             cpu_samples.append(cpu_pct)
             mem_used_samples.append(mem_used)
             rxbps_samples.append(rx_bps)
@@ -237,11 +264,18 @@ def main():
         "suricata_pid_start": suri_pid_start,
         "suricata_pid_end": suri_pid_end,
         "suricata_pid_changed": (suri_pid_start != suri_pid_end),
+        # Per-interval process-identity sampling (not just start/end).
+        "suricata_pids_observed": sorted(suri_pids_seen),
+        "suricata_pid_changes": suri_pid_changes,
+        "suricata_pid_missing_samples": suri_pid_missing,
+        # Units are binary: mem values are MiB; the 4096 threshold = 4 GiB.
+        "mem_units": "MiB (threshold 4096 MiB = 4 GiB; 4 GB decimal = 3815 MiB)",
         # The drop rate is only an unqualified pass if suricata ran continuously
-        # and every interval had a stats sample.
+        # (same PID in every sample) and every interval had a stats sample.
         "suricata_drop_measurement_valid": (
             have_suri and suri_resets == 0 and suri_missing == 0
             and suri_pid_start is not None and suri_pid_start == suri_pid_end
+            and suri_pid_changes == 0 and suri_pid_missing == 0
         ),
     }
     with open(SUMMARY, "w") as f:

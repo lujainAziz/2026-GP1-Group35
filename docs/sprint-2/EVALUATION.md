@@ -234,3 +234,58 @@ decision first.
 ```
 Record the clean run's total-device memory here as the memory acceptance figure once it shows the
 agent absent throughout.
+
+
+### Memory accounting + units audit (read-only, 2026-11-05)
+
+**Units audit (tool definition vs acceptance criterion):** `/proc/meminfo`
+values are KiB, so the sampler's figures are **MiB** and its 4096 threshold is
+**4 GiB (= 4.295 GB decimal)**; against a literal **4 GB (decimal)** the bound
+would be 3815 MiB. Readings of the clean run under each interpretation:
+
+| Basis | avg 4046 MiB | max 4470 MiB |
+|---|---|---|
+| < 4 GiB (4096 MiB) | under | **over** |
+| < 4 GB decimal (3815 MiB) | **over** | **over** |
+
+The recorded verdict (max < 4 GiB → **NOT met**) **stands unchanged** under
+every interpretation of the maximum; the team should still pin the criterion
+(GB vs GiB, average vs maximum) for the report. The sampler now labels its
+units explicitly (`mem_units` in the summary; CSV header `mem_used_mib`).
+
+**What actually consumes the memory** (meminfo components, not an RSS guess):
+`used = MemTotal − MemAvailable` = anonymous pages + shmem + unreclaimable
+kernel memory (reclaimable page cache excluded). At inspection:
+AnonPages ≈ 2163 MiB (process heaps — Suricata ≈ 1205 MiB dominant; the
+inspection-time figure also includes the dev agent ≈ 447 MiB which was ABSENT
+during the clean run), **Shmem ≈ 1779 MiB**, kernel unreclaimable ≈ 160 MiB,
+plus the MemAvailable heuristic margin. Crucially, tmpfs files account for only
+≈ 340 MiB of Shmem (`df -t tmpfs`): the bulk of Shmem is **shared-memory
+graphics buffers** (Wayland/GEM surfaces of the always-on display pipeline —
+compositor, the 7-inch app [PSS ≈ 188 MiB of it is process-side], VNC) — not
+"desktop process RSS", which is comparatively small (labwc ≈ 47, panel ≈ 30,
+wayvnc ≈ 22 MiB PSS).
+
+**Candidate improvements (NOT applied — each needs a team decision; criterion,
+display and services unchanged):**
+1. Suricata detect-engine profile (`detect.profile: low` / mpm context tuning):
+   expected several-hundred-MiB reduction of the ≈ 1.2 GiB engine, at some CPU
+   cost — measure before/after if approved.
+2. Display-pipeline buffer footprint (resolution/buffer count of the 7-inch
+   surface, VNC only-on-demand): targets the ≈ 1.4 GiB non-tmpfs Shmem;
+   expected hundreds of MiB; requires product approval since it touches the
+   screen pipeline (not disabling it).
+3. Report an appliance-scoped figure (sum of the five services) alongside the
+   total-device figure so the target can be judged on what the product
+   actually controls (reporting change only).
+
+### Drop-measurement re-test (prepared; execution on request)
+The sampler defect (PID detector missing `Suricata-Main`) is fixed and the tool
+now samples the Suricata PID **every interval** (`suri_pid` CSV column;
+`suricata_pid_changes`/`pids_observed`/`pid_missing` in the summary) — a mid-run
+restart invalidates the measurement even if counters look clean. Re-test
+command (new output dir; previous results retained as-is):
+```bash
+ASSAS_RES_OUTDIR=/home/assas/assas/docs/sprint-2/evidence/resources/clean2 \
+  /home/assas/assas/appliance/tools/clean_resource_run.sh
+```
