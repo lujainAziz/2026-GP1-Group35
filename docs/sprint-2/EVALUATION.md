@@ -109,16 +109,20 @@ sudo tcpreplay --intf1=<replay-NIC> --mbps=10 <capture>.pcap
 date -u +%FT%TZ   # stop marker
 ```
 
-On the **Pi** (read-only measurement, per attack window):
+On the **Pi** (read-only measurement, per attack window) — the committed,
+unit-tested tool `appliance/tools/measure_detection.py`:
 ```bash
-python3 - <<'MEASURE'
-# count raw pre-dedup eve alerts inside [start, stop] matching the capture's
-# addresses; output = sid list + counts (feeds the section-3 table)
-MEASURE
+python3 appliance/tools/measure_detection.py \
+  --start 2026-11-06T12:00:00 --stop 2026-11-06T12:20:00 \
+  --addr 192.168.1.195 \
+  --save docs/sprint-2/evidence/detection/<capture>-slice.jsonl
 ```
-The measurement script matches by time window + the dataset's own lab
-addresses, not by mere co-occurrence; benign-capture alerts are recorded as
-false positives. Nothing here runs until the download approval.
+It counts RAW pre-dedup alert events from eve.json (live + rotated), matched by
+the time window AND the capture's own lab addresses — co-occurrence alone never
+counts (`appliance/test_measure_detection.py`). Output: per-sid counts feeding
+the §3 table, plus a saved raw-evidence slice. Benign-capture alerts are
+recorded separately as false positives. Nothing here runs until the download
+approval.
 
 ## 3. Detection results — ☐ Planned
 Per-attack table (one row per labelled attack class), filled from raw eve evidence:
