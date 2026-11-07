@@ -334,6 +334,9 @@ class DashboardScreen extends StatelessWidget {
             Expanded(
               flex: 100,
               child: Column(
+                // Stretch so both cards fill the column width with identical
+                // left/right edges (they share one fixed width).
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Pressable(
                     onTap: onOpenAlerts, // PBI-17
@@ -366,13 +369,11 @@ class DashboardScreen extends StatelessWidget {
   }
 
   /// Shared layout for the two stacked stat cards (Open alerts + Unrecognized):
-  /// identical padding and edge alignment, label on the left and value on the
-  /// right. Both cards sit in the same column, so they share their width; this
-  /// gives them the same internal padding and right-edge alignment too. Wrap
-  /// keeps the label at its designed size: at normal sizes label and value sit
-  /// side by side; when they no longer fit together at large text sizes the
-  /// value flows onto the next line and the card grows instead of clipping, so
-  /// both stay readable.
+  /// identical padding, label on the left and value on the right, across the
+  /// full card width. The card width is fixed (the column stretches both cards
+  /// to the same width); Wrap keeps the label and value on one line at normal
+  /// text sizes and, when the enlarged font no longer fits them together, flows
+  /// the value onto the next line so the card grows in HEIGHT (width unchanged).
   Widget _statCard(String label, Widget value) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -393,8 +394,11 @@ class DashboardScreen extends StatelessWidget {
   Widget _soonInner(String label, int sprint) =>
       _statCard(label, Text('SOON', style: UiText.mono(13, 700, em: .1, color: Ui.mute)));
 
+  /// A labelled count. The number is a normal (not oversized) weight so it sits
+  /// on the same line as the label at normal text sizes; it keeps its colour
+  /// (e.g. the amber used for Unrecognized).
   Widget _statInner(String label, String value, Color color) =>
-      _statCard(label, Text(value, style: UiText.statNumber.copyWith(color: color)));
+      _statCard(label, Text(value, style: UiText.sans(18, 800, em: -.02, color: color)));
 
   Widget _recent(BuildContext context) {
     if (!Released.alertsHome) {
