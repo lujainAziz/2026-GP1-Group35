@@ -304,6 +304,41 @@ def test_dedup_null_device_grouped_by_rule_and_ips(tmp_path):
     assert count(conn, "occurrence_count=2") == 1
 
 
+def test_resolved_alert_is_terminal_new_event_makes_independent_alert(tmp_path):
+    """PBI-22 criterion 7: a matching event AFTER an alert is Resolved must NOT
+    reopen or inflate it — it starts a fresh alert with a new id and state New."""
+    conn = make_conn(tmp_path)
+    a = alerts.parse_alert_event(json.loads(eve_alert(sid=7, ts="2026-11-02T10:00:00+0300")))
+    # a recurrence one minute later — well within the 300s dedup window
+    b = alerts.parse_alert_event(json.loads(eve_alert(sid=7, ts="2026-11-02T10:01:00+0300")))
+    with conn:
+        alerts.upsert_alert(conn, a, "dev1", 300)
+    first_id = conn.execute("SELECT alert_id FROM alerts").fetchone()[0]
+    # user resolves it (terminal)
+    with conn:
+        conn.execute("UPDATE alerts SET state='Resolved' WHERE alert_id=?", (first_id,))
+    with conn:
+        result = alerts.upsert_alert(conn, b, "dev1", 300)
+    assert result == "inserted"                       # NOT merged into the resolved one
+    assert count(conn) == 2
+    # the resolved alert is untouched: still Resolved, occurrence stays 1
+    old = conn.execute(
+        "SELECT state, occurrence_count FROM alerts WHERE alert_id=?", (first_id,)).fetchone()
+    assert old == ("Resolved", 1)
+    # the new alert is independent: new id, state New, occurrence 1
+    new = conn.execute(
+        "SELECT alert_id, state, occurrence_count FROM alerts WHERE alert_id != ?",
+        (first_id,)).fetchone()
+    assert new[0] != first_id and new[1] == "New" and new[2] == 1
+    # a further recurrence now merges into the NEW open alert (dedup still works)
+    c = alerts.parse_alert_event(json.loads(eve_alert(sid=7, ts="2026-11-02T10:02:00+0300")))
+    with conn:
+        assert alerts.upsert_alert(conn, c, "dev1", 300) == "merged"
+    assert count(conn) == 2
+    assert conn.execute(
+        "SELECT occurrence_count FROM alerts WHERE alert_id=?", (new[0],)).fetchone()[0] == 2
+
+
 # --------------------------------------------------------------------------- #
 # Resume safety
 # --------------------------------------------------------------------------- #

@@ -1,10 +1,11 @@
 # Alert State-Management Endpoints — Live Verification (2026-11-04)
 
-**Status.** Alert state management (PBI-22) is deferred; its user interface is
-currently hidden behind `alertManagement = false`. The endpoints verified below
-remain deployed in the API, and all stored alert states are retained. This
-document records the live test results as executed on 2026-11-04; it does not
-assert that the deferred UI is in scope for this sprint.
+**Status.** Alert state management (PBI-22) is **RELEASED in Sprint 2** (team
+decision, 2026-11-07): `alertManagement = true`, surfacing the All/Open/Resolved
+tabs, the New/Reviewed/Resolved badges, the Review/Resolve actions and the live
+unresolved (New+Reviewed) counter. The endpoint results below were executed on
+2026-11-04 and remain valid. The per-criterion acceptance verification for the
+seven PBI-22 criteria is in the section at the end of this document.
 
 **Test context.** Deployed `sprint-2 @ 16a4de2` (configuration backup
 `/etc/suricata/assas.yaml.bak-20261104T160917Z`; `suricata -T` passed with the
@@ -91,3 +92,23 @@ else
   echo "PENDING (not live-tested): occurrence_count unchanged ($OCC0→$OCC1)"
 fi
 ```
+
+## PBI-22 — per-criterion acceptance verification (2026-11-07)
+
+Verification method per criterion: **A** = automated test, **C** = code/SQL path.
+Suites green at verification: appliance **555 passed**, mobile **80 passed**,
+`flutter analyze` clean (mobile + design).
+
+| # | Criterion | Verdict | How verified |
+|---|---|---|---|
+| 1 | Single security-alert list, newest → oldest | ✅ | `GET /alerts` orders by `last_event_time DESC` (api.py); the app renders one list with All/Open/Resolved tabs filtering that same list (`alert_list_screen.dart`). A/C |
+| 2 | States New/Reviewed/Resolved; every new alert starts New | ✅ | Ingester `INSERT … state 'New'` hardcoded (alerts.py `upsert_alert`); `_STATE_DB` canonical casing; model `stateFromApi(null)→New`. A (`test_alerts.py`, `alerts_test.dart`) |
+| 3 | Allowed transitions New→Reviewed, New→Resolved, Reviewed→Resolved | ✅ | `_ALLOWED_SOURCES` = {reviewed:(new), resolved:(new,reviewed)} enforced as one atomic guarded `UPDATE … WHERE LOWER(state) IN (allowed)`; illegal moves → 409. Backward/skip moves rejected. A/C (api.py; `test_api`/`test_frontend_contract`) |
+| 4 | State persists across app or backend restart | ✅ | State stored in the SQLite `alerts.state` column (not in memory); the PATCH commits before returning; app reads it back via `GET /alerts`. Restart-safety cross-check in VERIFICATION #5 shows rows/states unchanged across restart. A/C |
+| 5 | Unresolved counter = New + Reviewed only | ✅ | `GET /alerts/open_count` = `WHERE LOWER(state) IN ('new','reviewed')`; app hero reads `openAlertCount`; `SecurityAlert.isUnresolved = state != resolved`; signals exclude resolved. A (`alerts_test.dart` worstByMac excludes resolved) |
+| 6 | Anomaly alerts use the same list and actions when anomaly detection is available | ✅ (structural) | The list/tabs/actions key on `alert_type` + `state`, not on a threat-only path; the same `SecurityAlert` model, endpoints and state machine serve any `alert_type`. Anomaly **detection** itself is a later sprint (`baseline=false`), so there are no anomaly rows to display yet — the pathway is ready, nothing special-cased to Threat. C |
+| 7 | Resolved is terminal; a matching event after close creates an independent alert (new id, state New) | ✅ | `upsert_alert` excludes `LOWER(state)='resolved'` from merge candidates, so a post-resolution event inserts a fresh row (new id, state New, occurrence 1) while the resolved alert is untouched; a later recurrence then merges into the NEW open alert. Dedicated test `test_resolved_alert_is_terminal_new_event_makes_independent_alert`. A (`test_alerts.py`) |
+
+**Still pending (not automatable here):** the owner's on-device visual sign-off
+of the released screens (tab switching, Review/Resolve round-trip, counter
+updates) — tracked in VERIFICATION #7.

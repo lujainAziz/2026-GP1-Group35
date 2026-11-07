@@ -231,16 +231,17 @@ stay false.
 **Current scope.** PBI-14 is live: the alerts list, alert
 details (including Last seen), and device alerts with device linking. PBI-09/10
 is live: unresolved linked alerts feed the device signals (Attention, Home
-priority, severity colours). PBI-22 (alert state management) is deferred:
-`alertManagement` is off, hiding Review/Resolve, the state badges, the
-All/Open/Resolved tabs and the live open-alerts counter, while the backend
-endpoints and stored states are retained unchanged. Occurrences, first seen,
-rule id and ports are hidden in the UI and retained in the database and API.
+priority, severity colours). **PBI-22 (alert state management) is RELEASED in
+Sprint 2**: `alertManagement` is on — the All/Open/Resolved tabs, the
+New/Reviewed/Resolved badges, the Review/Resolve actions and the live
+unresolved (New+Reviewed) counter are live, backed by `PATCH /alerts/{id}` and
+`GET /alerts/open_count`. State is persisted in SQLite; a matching event after
+an alert is Resolved starts a new independent alert (new id, state New).
 
 | Surface | Sprint 2 | How |
 |---|---|---|
-| Alerts tab (list) | ✓ shown | hero keeps the count design but shows a muted "—" (live count = PBI-22, deferred); title, severity, device, last event time; newest first. Tabs, state pills and occurrence `N×` **hidden** (`alertManagement` off). |
-| Alert details | ✓ shown | title, time, device (+nav), and Signal details: alert type, severity, **Last seen** (= last event time), source/destination IP. Review/Resolve + state badge **hidden** (PBI-22 deferred → SOON tag). Occurrences, first seen, rule ID and ports **hidden** (kept in DB + API); explanation block hidden. |
+| Alerts tab (list) | ✓ shown | hero shows the live unresolved count (DB aggregate of New+Reviewed); All/Open/Resolved tabs; rows: title, severity, device, last event time, state badge; newest first (`alertManagement` on). |
+| Alert details | ✓ shown | title, time, device (+nav), state badge, **Review/Resolve** actions (New→Reviewed, New→Resolved, Reviewed→Resolved; Resolved terminal), and Signal details: alert type, severity, **Last seen** (= last event time), source/destination IP. First seen, rule ID and ports hidden in UI (kept in DB + API); explanation block hidden (later sprint). |
 | Device details → alerts | ✓ shown | this device's alerts replace "Coming soon" |
 | Home open-alerts count + recent summary | ✗ hidden | gated on `alertsHome` → stays "SOON" |
 | Device-list severity badges / sort | ✗ hidden | gated on `alertSeverityBadges` |

@@ -86,10 +86,10 @@ void main() {
   group('Sprint-2 feature gating', () {
     test('alerts + state management are enabled; later-sprint surfaces hidden', () {
       expect(FeatureRelease.alerts, isTrue); // Alerts tab, details, device alerts
-      // PBI-22 deferred again (team reversal): Review/Resolve, state badges,
-      // All/Open/Resolved tabs and the live open-count stay hidden. Stored
-      // states and the backend endpoints are untouched.
-      expect(FeatureRelease.alertManagement, isFalse);
+      // PBI-22 RELEASED in Sprint 2 (team decision): Review/Resolve actions,
+      // New/Reviewed/Resolved badges, All/Open/Resolved tabs and the live
+      // unresolved (New+Reviewed) counter are all live.
+      expect(FeatureRelease.alertManagement, isTrue);
       expect(FeatureRelease.alertSeverityBadges, isTrue); // PBI-09/10: signals + priority
       // Everything else stays hidden until its own sprint:
       expect(FeatureRelease.alertsHome, isFalse); // Home count + recent summary (PBI-24)

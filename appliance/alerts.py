@@ -516,10 +516,16 @@ def upsert_alert(conn, a, device_mac, window_seconds):
     event_time = a["event_time"] or local_naive_iso(
         datetime.now().isoformat(timespec="seconds")
     )
+    # PBI-22 criterion 7: 'Resolved' is a terminal state. A matching event that
+    # arrives after an alert was resolved must NOT reopen or inflate it — it
+    # starts a fresh, independent alert (new id, state 'New'). So Resolved rows
+    # are excluded as merge candidates; only an open alert (New/Reviewed) can
+    # absorb a recurrence within the dedup window.
     if device_mac is not None:
         row = conn.execute(
             "SELECT alert_id, event_time, last_event_time FROM alerts "
             "WHERE alert_type='Threat' AND device_mac=? AND rule_id IS ? "
+            "AND LOWER(state) != 'resolved' "
             "ORDER BY last_event_time DESC LIMIT 1",
             (device_mac, a["rule_id"]),
         ).fetchone()
@@ -528,6 +534,7 @@ def upsert_alert(conn, a, device_mac, window_seconds):
             "SELECT alert_id, event_time, last_event_time FROM alerts "
             "WHERE alert_type='Threat' AND device_mac IS NULL AND rule_id IS ? "
             "AND src_ip IS ? AND dst_ip IS ? "
+            "AND LOWER(state) != 'resolved' "
             "ORDER BY last_event_time DESC LIMIT 1",
             (a["rule_id"], a["src_ip"], a["dst_ip"]),
         ).fetchone()
