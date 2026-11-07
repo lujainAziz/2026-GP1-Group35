@@ -339,6 +339,51 @@ def test_resolved_alert_is_terminal_new_event_makes_independent_alert(tmp_path):
         "SELECT occurrence_count FROM alerts WHERE alert_id=?", (new[0],)).fetchone()[0] == 2
 
 
+def test_resolved_newest_match_wins_over_older_open_in_window(tmp_path):
+    """PBI-22 criterion 7, edge case: when the MOST RECENT matching alert is
+    Resolved and an OLDER matching alert is still open AND inside the dedup
+    window, a new event must start a fresh independent alert (new id, state
+    New) — it must NOT re-attach to the older open one. The newest matching
+    alert's state decides; Resolved closes the stream."""
+    conn = make_conn(tmp_path)
+    older_open = alerts.parse_alert_event(
+        json.loads(eve_alert(sid=7, ts="2026-11-02T10:00:00+0300")))
+    with conn:
+        alerts.upsert_alert(conn, older_open, "dev1", 300)
+    older_id = conn.execute("SELECT alert_id FROM alerts").fetchone()[0]
+    rule_id = conn.execute("SELECT rule_id FROM alerts WHERE alert_id=?", (older_id,)).fetchone()[0]
+    # A NEWER, already-Resolved alert for the same rule+device (last event 10:02,
+    # after the older-open's 10:00). This is the state the live DB can hold.
+    with conn:
+        conn.execute(
+            "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+            "severity, state, occurrence_count, last_event_time) "
+            "VALUES ('dev1','Threat','t',?, '2026-11-02T10:02:00','Medium','Resolved',5,"
+            "'2026-11-02T10:02:00')",
+            (rule_id,))
+    resolved_id = conn.execute(
+        "SELECT alert_id FROM alerts WHERE state='Resolved'").fetchone()[0]
+
+    # New event at 10:03 — within 300s of the OLDER-OPEN alert (10:00), and later
+    # than the resolved one (10:02). Newest match is the Resolved alert.
+    new_evt = alerts.parse_alert_event(
+        json.loads(eve_alert(sid=7, ts="2026-11-02T10:03:00+0300")))
+    with conn:
+        result = alerts.upsert_alert(conn, new_evt, "dev1", 300)
+
+    assert result == "inserted"            # NOT merged into the older open alert
+    assert count(conn) == 3                # older-open, resolved, and the fresh one
+    # older-open is untouched (occurrence still 1, still New)
+    assert conn.execute(
+        "SELECT state, occurrence_count FROM alerts WHERE alert_id=?",
+        (older_id,)).fetchone() == ("New", 1)
+    # the fresh alert is independent and open
+    fresh = conn.execute(
+        "SELECT alert_id, state, occurrence_count FROM alerts "
+        "WHERE alert_id NOT IN (?,?)", (older_id, resolved_id)).fetchone()
+    assert fresh[0] not in (older_id, resolved_id) and fresh[1] == "New" and fresh[2] == 1
+
+
 # --------------------------------------------------------------------------- #
 # Resume safety
 # --------------------------------------------------------------------------- #

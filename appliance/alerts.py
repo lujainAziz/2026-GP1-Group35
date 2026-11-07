@@ -516,31 +516,31 @@ def upsert_alert(conn, a, device_mac, window_seconds):
     event_time = a["event_time"] or local_naive_iso(
         datetime.now().isoformat(timespec="seconds")
     )
-    # PBI-22 criterion 7: 'Resolved' is a terminal state. A matching event that
-    # arrives after an alert was resolved must NOT reopen or inflate it — it
-    # starts a fresh, independent alert (new id, state 'New'). So Resolved rows
-    # are excluded as merge candidates; only an open alert (New/Reviewed) can
-    # absorb a recurrence within the dedup window.
+    # PBI-22 criterion 7: 'Resolved' is a terminal state. The merge candidate is
+    # the SINGLE most-recent matching alert (by last_event_time), regardless of
+    # state; its state then decides. If that newest match is Resolved, the stream
+    # is closed and the event starts a fresh, independent alert (new id, state
+    # 'New') — even if an OLDER matching alert is still open and inside the
+    # window (we must not re-attach to it). Only a newest match that is open
+    # (New/Reviewed) and within the window absorbs the recurrence.
     if device_mac is not None:
         row = conn.execute(
-            "SELECT alert_id, event_time, last_event_time FROM alerts "
+            "SELECT alert_id, event_time, last_event_time, state FROM alerts "
             "WHERE alert_type='Threat' AND device_mac=? AND rule_id IS ? "
-            "AND LOWER(state) != 'resolved' "
             "ORDER BY last_event_time DESC LIMIT 1",
             (device_mac, a["rule_id"]),
         ).fetchone()
     else:
         row = conn.execute(
-            "SELECT alert_id, event_time, last_event_time FROM alerts "
+            "SELECT alert_id, event_time, last_event_time, state FROM alerts "
             "WHERE alert_type='Threat' AND device_mac IS NULL AND rule_id IS ? "
             "AND src_ip IS ? AND dst_ip IS ? "
-            "AND LOWER(state) != 'resolved' "
             "ORDER BY last_event_time DESC LIMIT 1",
             (a["rule_id"], a["src_ip"], a["dst_ip"]),
         ).fetchone()
 
-    if row is not None:
-        alert_id, first_et, last_et = row
+    if row is not None and str(row[3]).lower() != "resolved":
+        alert_id, first_et, last_et = row[0], row[1], row[2]
         et_dt, first_dt, last_dt = _parse_iso(event_time), _parse_iso(first_et), _parse_iso(last_et)
         if et_dt and last_dt and abs(et_dt - last_dt) <= timedelta(seconds=window_seconds):
             # Keep the chronological span even if events arrive out of order:
