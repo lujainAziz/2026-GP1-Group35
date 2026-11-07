@@ -88,7 +88,8 @@ void main() {
     expect(_cardOrder(tester), ['crit', 'high', 'low']);
   });
 
-  testWidgets('severity filter hides unselected severities', (tester) async {
+  testWidgets('severity filter (devices-style dropdown) shows only the selected severities',
+      (tester) async {
     await _pump(tester, [
       _mk('crit', Severity.critical, 0),
       _mk('med', Severity.medium, 30),
@@ -96,46 +97,28 @@ void main() {
     ]);
     expect(_cardOrder(tester).toSet(), {'crit', 'med', 'high'});
 
-    // Open the filter sheet and uncheck "Medium".
+    // Open the filter dropdown and restrict to Critical + High.
     await tester.tap(find.text('Filter'));
     await tester.pumpAndSettle();
-    await tester.tap(find.bySemanticsLabel('Medium alerts shown'));
+    await tester.tap(find.byKey(const ValueKey('sevchip_critical')));
     await tester.pumpAndSettle();
-    // Close the sheet (tap the modal barrier in the far corner).
-    await tester.tapAt(const Offset(8, 8));
+    await tester.tap(find.byKey(const ValueKey('sevchip_high')));
+    await tester.pumpAndSettle();
+    // Close the dropdown (tap the barrier away from the menu).
+    await tester.tapAt(const Offset(10, 1000));
     await tester.pumpAndSettle();
 
     final ids = _cardOrder(tester).toSet();
-    expect(ids.contains('med'), isFalse); // medium hidden
+    expect(ids.contains('med'), isFalse); // medium not selected -> hidden
     expect(ids.containsAll({'crit', 'high'}), isTrue);
-  });
-
-  testWidgets('hide-resolved removes resolved alerts from the All view but keeps them loaded',
-      (tester) async {
-    final state = await _pump(tester, [
-      _mk('open1', Severity.high, 60),
-      _mk('done', Severity.critical, 30, state: AlertState.resolved),
-      _mk('open2', Severity.medium, 0),
-    ]);
-    expect(_cardOrder(tester).toSet(), {'open1', 'done', 'open2'});
-
-    await tester.tap(find.text('Filter'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Hide resolved alerts'));
-    await tester.pumpAndSettle();
-    await tester.tapAt(const Offset(8, 8));
-    await tester.pumpAndSettle();
-
-    expect(_cardOrder(tester).contains('done'), isFalse); // hidden from view
-    // Nothing deleted: the resolved alert is still in the loaded data + state.
-    expect(state.alerts!.any((a) => a.id == 'done' && a.state == AlertState.resolved), isTrue);
   });
 
   testWidgets('filter keeps "Load older" available so it reaches the full list',
       (tester) async {
     // 2000 newest are Medium (fills the first page -> alertsHaveMore), with a
-    // Critical one older than the page. Filtering to Critical empties the loaded
-    // page, but the load-older affordance must remain so older matches load.
+    // Critical one older than the page. Restricting to Critical empties the
+    // loaded page, but the load-older affordance must remain so older matches
+    // load.
     final many = [
       for (var i = 0; i < 2000; i++) _mk('m$i', Severity.medium, 10000 - i),
       _mk('crit-old', Severity.critical, 0),
@@ -145,9 +128,9 @@ void main() {
 
     await tester.tap(find.text('Filter'));
     await tester.pumpAndSettle();
-    await tester.tap(find.bySemanticsLabel('Medium alerts shown')); // hide Medium -> page empties
+    await tester.tap(find.byKey(const ValueKey('sevchip_critical'))); // show only Critical
     await tester.pumpAndSettle();
-    await tester.tapAt(const Offset(8, 8));
+    await tester.tapAt(const Offset(10, 1000));
     await tester.pumpAndSettle();
 
     // No medium cards shown now, but the load-older control is still offered.

@@ -64,10 +64,14 @@ class _AlertListScreenState extends State<AlertListScreen> {
   final ScrollController _scroll = ScrollController();
   bool _showTop = false;
 
+  // Severity filter dropdown (same pattern as the devices list filter).
+  final _filterMenu = OverlayPortalController();
+  final _filterLink = LayerLink();
+
   // Display preferences (persisted; display-only, never sent to the appliance).
   AlertSort _sort = AlertSort.newest;
-  Set<Severity> _shown = Severity.values.toSet();
-  bool _hideResolved = false;
+  // Severities to show; EMPTY = all (no restriction), mirroring the devices filter.
+  final Set<Severity> _shown = {};
 
   AppState get state => widget.state;
 
@@ -88,12 +92,10 @@ class _AlertListScreenState extends State<AlertListScreen> {
     });
     UiMemory.alertSeverities().then((names) {
       if (names == null || !mounted) return;
-      final set = {for (final s in Severity.values) if (names.contains(s.name)) s};
-      // An empty stored set would hide everything; fall back to showing all.
-      setState(() => _shown = set.isEmpty ? Severity.values.toSet() : set);
-    });
-    UiMemory.alertHideResolved().then((v) {
-      if (mounted) setState(() => _hideResolved = v);
+      // Stored set of severities to show; empty list = all (no restriction).
+      setState(() => _shown
+        ..clear()
+        ..addAll([for (final s in Severity.values) if (names.contains(s.name)) s]));
     });
   }
 
@@ -119,7 +121,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
     UiMemory.setAlertSort(_sort.name);
   }
 
-  bool get _filterActive => _shown.length != Severity.values.length || _hideResolved;
+  bool get _filterActive => _shown.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -291,181 +293,176 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   // ---------- Sort + filter controls ----------
   Widget _controls() => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
         child: Row(
           children: [
-            _ctrlPill(
-              icon: Icons.swap_vert_rounded,
-              label: _sort == AlertSort.severity ? 'Most severe' : 'Newest',
-              active: _sort == AlertSort.severity,
-              onTap: _toggleSort,
-              semantic: 'Sort order: ${_sort.label}. Tap to switch.',
-            ),
+            _sortPill(),
             const SizedBox(width: 10),
-            _ctrlPill(
-              icon: Icons.tune_rounded,
-              label: 'Filter',
-              active: _filterActive,
-              dot: _filterActive,
-              onTap: _openFilterSheet,
-              semantic: 'Filter alerts by severity',
-            ),
+            _filterPill(),
           ],
         ),
       );
 
-  Widget _ctrlPill({
-    required IconData icon,
-    required String label,
-    required bool active,
-    required VoidCallback onTap,
-    String? semantic,
-    bool dot = false,
-  }) {
-    final c = active ? Ui.acc : Ui.mute;
+  Widget _sortPill() => Pressable(
+        semanticLabel: 'Sort order: ${_sort.label}. Tap to switch.',
+        onTap: _toggleSort,
+        child: Glass(
+          color: Ui.fade(Ui.surf, .82),
+          border: Ui.line,
+          radius: UiRadius.pill,
+          blur: 16,
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.swap_vert_rounded, size: 16, color: Ui.ink),
+              const SizedBox(width: 8),
+              Text(_sort == AlertSort.severity ? 'Most severe' : 'Newest', style: UiText.sans(12, 700)),
+            ],
+          ),
+        ),
+      );
+
+  Widget _filterPill() => CompositedTransformTarget(
+        link: _filterLink,
+        child: OverlayPortal(
+          controller: _filterMenu,
+          overlayChildBuilder: (context) => _filterOverlay(),
+          child: Pressable(
+            onTap: () => setState(_filterMenu.toggle),
+            semanticLabel: 'Filter alerts by severity${_filterActive ? ', active' : ''}',
+            child: Glass(
+              color: _filterActive ? Ui.mix(Ui.acc, .22, Ui.surf) : Ui.fade(Ui.surf, .82),
+              border: _filterActive ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
+              radius: UiRadius.pill,
+              blur: 16,
+              height: 42,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.tune_rounded, size: 16, color: Ui.ink),
+                  const SizedBox(width: 8),
+                  Text('Filter', style: UiText.sans(12, 700)),
+                  if (_filterActive) ...[
+                    const SizedBox(width: 8),
+                    GlowDot(Ui.acc, size: 6, glow: 0),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  Widget _filterOverlay() {
+    final alerts = Released.alertsOf(state) ?? const <SecurityAlert>[];
+    int countFor(Severity s) => alerts.where((a) => a.severity == s).length;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(_filterMenu.hide),
+          ),
+        ),
+        CompositedTransformFollower(
+          link: _filterLink,
+          targetAnchor: Alignment.bottomLeft,
+          followerAnchor: Alignment.topLeft,
+          offset: const Offset(0, 7),
+          child: FadeSlideIn(
+            duration: const Duration(milliseconds: 250),
+            child: SizedBox(
+              width: 240,
+              child: Glass(
+                color: Ui.fade(Ui.surf2, .92),
+                radius: UiRadius.dropdown,
+                blur: 18,
+                shadows: UiShadow.dropdown,
+                padding: const EdgeInsets.all(6),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // All = show every severity (clears the restriction).
+                    _severityAllRow(alerts.length),
+                    const SizedBox(height: 4),
+                    for (final s in const [Severity.critical, Severity.high, Severity.medium, Severity.low]) ...[
+                      _severityChip(s, countFor(s)),
+                      const SizedBox(height: 4),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _severityAllRow(int count) {
+    final on = _shown.isEmpty;
     return Pressable(
-      semanticLabel: semantic,
-      onTap: onTap,
+      onTap: () {
+        setState(_shown.clear);
+        UiMemory.setAlertSeverities(const []);
+      },
+      semanticLabel: 'All severities, $count alerts${on ? ', selected' : ''}',
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(UiRadius.pill),
-          border: Border.all(color: active ? Ui.fade(Ui.acc, .5) : Ui.line),
-          color: active ? Ui.fade(Ui.acc, .10) : null,
+          color: on ? Ui.fade(Ui.acc, .16) : Colors.transparent,
+          borderRadius: BorderRadius.circular(UiRadius.dropdownItem),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 15, color: c),
-            const SizedBox(width: 6),
-            Text(label, style: UiText.mono(11, 600, em: .04, color: c)),
-            if (dot) ...[
-              const SizedBox(width: 6),
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(color: Ui.acc, shape: BoxShape.circle),
-              ),
-            ],
+            GlowDot(Ui.acc, size: 8, glow: 0),
+            const SizedBox(width: 10),
+            Expanded(child: Text('All', style: UiText.menuItem)),
+            Text('$count', style: UiText.tabCount.copyWith(color: Ui.mute)),
+            const SizedBox(width: 10),
+            SizedBox(width: 14, child: Text(on ? '✓' : '', style: UiText.sans(13, 800, color: Ui.acc))),
           ],
         ),
       ),
     );
   }
 
-  void _openFilterSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Ui.surf,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) {
-          void refresh() => setSheet(() {});
-          void toggleSeverity(Severity s, bool on) {
-            final next = Set<Severity>.from(_shown);
-            on ? next.add(s) : next.remove(s);
-            setState(() => _shown = next);
-            UiMemory.setAlertSeverities([for (final x in _shown) x.name]);
-            refresh();
-          }
-
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(color: Ui.line, borderRadius: BorderRadius.circular(2)),
-                    ),
-                  ),
-                  Text('SHOW SEVERITIES', style: UiText.mono(10, 700, em: .1, color: Ui.mute)),
-                  const SizedBox(height: 6),
-                  for (final s in const [Severity.critical, Severity.high, Severity.medium, Severity.low])
-                    _severityRow(s, _shown.contains(s), (on) => toggleSeverity(s, on)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Divider(height: 1, color: Ui.line),
-                  ),
-                  _switchRow(
-                    'Hide resolved alerts',
-                    'They stay saved with their history — turn this off to see them again.',
-                    _hideResolved,
-                    (on) {
-                      setState(() => _hideResolved = on);
-                      UiMemory.setAlertHideResolved(on);
-                      refresh();
-                    },
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _severityRow(Severity s, bool on, ValueChanged<bool> onChanged) {
+  Widget _severityChip(Severity s, int count) {
+    final on = _shown.contains(s);
     final c = _severityColors(s);
     return Pressable(
-      semanticLabel: '${_severityLabel(s)} alerts ${on ? 'shown' : 'hidden'}',
-      onTap: () => onChanged(!on),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 9),
+      key: ValueKey('sevchip_${s.name}'),
+      // Multi-select: tapping keeps the menu open so several can be set.
+      onTap: () {
+        setState(() => on ? _shown.remove(s) : _shown.add(s));
+        UiMemory.setAlertSeverities([for (final x in _shown) x.name]);
+      },
+      semanticLabel: '${_severityLabel(s)}, $count alerts${on ? ', selected' : ''}',
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: on ? Ui.fade(Ui.acc, .16) : Colors.transparent,
+          borderRadius: BorderRadius.circular(UiRadius.dropdownItem),
+          border: Border.all(color: on ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line),
+        ),
         child: Row(
           children: [
-            Container(width: 9, height: 9, decoration: BoxDecoration(color: c.foreground, shape: BoxShape.circle)),
-            const SizedBox(width: 11),
-            Expanded(child: Text(_severityLabel(s), style: UiText.sans(14, 600))),
-            _check(on),
+            GlowDot(c.foreground, size: 7, glow: 0),
+            const SizedBox(width: 10),
+            Expanded(child: Text(_severityLabel(s), style: UiText.menuItem)),
+            Text('$count', style: UiText.tabCount.copyWith(color: Ui.mute)),
+            const SizedBox(width: 10),
+            SizedBox(width: 14, child: Text(on ? '✓' : '', style: UiText.sans(13, 800, color: Ui.acc))),
           ],
         ),
       ),
     );
   }
-
-  Widget _check(bool on) => Container(
-        width: 22,
-        height: 22,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: on ? Ui.acc : Ui.line, width: 1.5),
-          color: on ? Ui.fade(Ui.acc, .18) : null,
-        ),
-        child: on ? Icon(Icons.check_rounded, size: 15, color: Ui.acc) : null,
-      );
-
-  Widget _switchRow(String title, String sub, bool on, ValueChanged<bool> onChanged) => Pressable(
-        semanticLabel: '$title ${on ? 'on' : 'off'}',
-        onTap: () => onChanged(!on),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: UiText.sans(14, 600)),
-                  const SizedBox(height: 2),
-                  Text(sub, style: UiText.sans(11, 500, color: Ui.mute)),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Visual indicator; the whole row is the tap target (above).
-            IgnorePointer(
-              child: Switch(value: on, activeThumbColor: Ui.acc, onChanged: (_) {}),
-            ),
-          ],
-        ),
-      );
 
   // ---------- Body ----------
   Widget _body(BuildContext context, List<SecurityAlert>? alerts) {
@@ -492,11 +489,6 @@ class _AlertListScreenState extends State<AlertListScreen> {
     final tab = Released.alertManagement ? _tab : _AlertTab.all;
     Iterable<SecurityAlert> base = alerts.where(tab.matches);
     base = alertsWithSeverity(base, _shown);
-    // "Hide resolved" is a display filter only (nothing is deleted or re-stated).
-    // It is ignored on the Resolved tab, which is how the user gets back to them.
-    if (_hideResolved && tab != _AlertTab.resolved) {
-      base = base.where((a) => a.isUnresolved);
-    }
     final list = sortedAlerts(base, _sort);
 
     if (list.isEmpty) {
@@ -540,7 +532,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   (String, String) _emptyText(_AlertTab tab) {
-    final filtering = _shown.length != Severity.values.length || (_hideResolved && tab != _AlertTab.resolved);
+    final filtering = _shown.isNotEmpty;
     if (filtering) {
       return (
         'No alerts match the filter',

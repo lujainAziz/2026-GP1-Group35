@@ -12,7 +12,6 @@ class UiMemory {
   static const _alertTab = 'ui.alertTab';
   static const _alertSort = 'ui.alertSort';
   static const _alertSeverities = 'ui.alertSeverities';
-  static const _alertHideResolved = 'ui.alertHideResolved';
   static const _deviceAlertSort = 'ui.deviceAlertSort';
 
   static Future<SharedPreferences> get _p => SharedPreferences.getInstance();
@@ -47,11 +46,6 @@ class UiMemory {
   static Future<List<String>?> alertSeverities() async => (await _p).getStringList(_alertSeverities);
   static Future<void> setAlertSeverities(List<String> v) async {
     await (await _p).setStringList(_alertSeverities, v);
-  }
-
-  static Future<bool> alertHideResolved() async => (await _p).getBool(_alertHideResolved) ?? false;
-  static Future<void> setAlertHideResolved(bool v) async {
-    await (await _p).setBool(_alertHideResolved, v);
   }
 
   // Per-device alerts: sort order.
