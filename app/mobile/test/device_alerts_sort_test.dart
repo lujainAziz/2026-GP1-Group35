@@ -73,13 +73,23 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    // Newest first by default.
+    // Newest first by default; the control sits inside the header row and is
+    // neutral-coloured.
     expect(_order(tester), ['high', 'low', 'crit']);
-    expect(find.text('Newest'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SectionHeader, 'Alerts for this device'),
+        matching: find.text('Newest'),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.widget<Text>(find.text('Newest')).style?.color, Ui.mute);
 
     await tester.tap(find.text('Newest'));
     await tester.pump(const Duration(milliseconds: 300));
+    // Now Most severe: text switches and turns the active purple (Ui.acc).
     expect(find.text('Most severe'), findsOneWidget);
+    expect(tester.widget<Text>(find.text('Most severe')).style?.color, Ui.acc);
     expect(_order(tester), ['crit', 'high', 'low']);
     await tester.pumpWidget(const SizedBox());
   });

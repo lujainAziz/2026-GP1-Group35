@@ -56,6 +56,37 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
     UiMemory.setDeviceAlertSort(_alertSort.name);
   }
 
+  /// Sort control for the "Alerts for this device" header. Shows the current
+  /// mode in both colour and text: neutral for Newest, the active-button purple
+  /// (`Ui.acc`) for Most severe.
+  Widget _alertSortButton() {
+    final severe = _alertSort == AlertSort.severity;
+    final fg = severe ? Ui.acc : Ui.mute;
+    return Pressable(
+      semanticLabel: 'Sort: ${_alertSort.label}. Tap to switch.',
+      onTap: _toggleAlertSort,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(UiRadius.pill),
+          color: severe ? Ui.fade(Ui.acc, .16) : null,
+          border: Border.all(color: severe ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.swap_vert_rounded, size: 14, color: fg),
+            const SizedBox(width: 6),
+            Text(
+              severe ? 'Most severe' : 'Newest',
+              style: UiText.mono(10.5, 700, em: .04, color: fg),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadDetail() async {
     try {
       final d = await widget.state.repo.getDevice(widget.mac);
@@ -259,9 +290,12 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                       onTap: () => _setTrusted(d, !d.trusted),
                     ),
                   ),
-                  const SectionHeader(
+                  SectionHeader(
                     'Alerts for this device',
-                    padding: EdgeInsets.fromLTRB(22, 26, 22, 10),
+                    padding: const EdgeInsets.fromLTRB(22, 26, 22, 10),
+                    // Sort control sits to the right of the header, on the same
+                    // row; only once there are enough alerts to reorder.
+                    trailing: (_deviceAlertList?.length ?? 0) >= 2 ? _alertSortButton() : null,
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: UiSpace.pageCards),
@@ -367,34 +401,6 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
     final alerts = sortedAlerts(raw, _alertSort);
     return Column(
       children: [
-        // Only worth a sort control once there are a few alerts to reorder.
-        if (raw.length >= 2)
-          Align(
-            alignment: Alignment.centerRight,
-            child: Pressable(
-              semanticLabel: 'Sort: ${_alertSort.label}. Tap to switch.',
-              onTap: _toggleAlertSort,
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(UiRadius.pill),
-                  border: Border.all(color: Ui.line),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.swap_vert_rounded, size: 14, color: Ui.mute),
-                    const SizedBox(width: 6),
-                    Text(
-                      _alertSort == AlertSort.severity ? 'Most severe' : 'Newest',
-                      style: UiText.mono(10.5, 600, em: .04, color: Ui.mute),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
         for (var i = 0; i < alerts.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),
           TimelineAlertCard(
