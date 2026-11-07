@@ -85,12 +85,21 @@ void main() {
     );
     expect(tester.widget<Text>(find.text('Newest')).style?.color, Ui.mute);
 
+    // The pill is fixed to the wider option, so its width does not change on
+    // toggle.
+    final stack = find.descendant(
+      of: find.widgetWithText(SectionHeader, 'Alerts for this device'),
+      matching: find.byType(IndexedStack),
+    );
+    final widthNewest = tester.getSize(stack).width;
+
     await tester.tap(find.text('Newest'));
     await tester.pump(const Duration(milliseconds: 300));
     // Now Most severe: text switches and turns the active purple (Ui.acc).
     expect(find.text('Most severe'), findsOneWidget);
     expect(tester.widget<Text>(find.text('Most severe')).style?.color, Ui.acc);
     expect(_order(tester), ['crit', 'high', 'low']);
+    expect(tester.getSize(stack).width, widthNewest); // same size both ways
     await tester.pumpWidget(const SizedBox());
   });
 }

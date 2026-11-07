@@ -62,6 +62,14 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
   Widget _alertSortButton() {
     final severe = _alertSort == AlertSort.severity;
     final fg = severe ? Ui.acc : Ui.mute;
+    Widget content(String label) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.swap_vert_rounded, size: 14, color: fg),
+            const SizedBox(width: 6),
+            Text(label, maxLines: 1, style: UiText.mono(10.5, 700, em: .04, color: fg)),
+          ],
+        );
     return Pressable(
       semanticLabel: 'Sort: ${_alertSort.label}. Tap to switch.',
       onTap: _toggleAlertSort,
@@ -72,16 +80,14 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
           color: severe ? Ui.fade(Ui.acc, .16) : null,
           border: Border.all(color: severe ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.swap_vert_rounded, size: 14, color: fg),
-            const SizedBox(width: 6),
-            Text(
-              severe ? 'Most severe' : 'Newest',
-              style: UiText.mono(10.5, 700, em: .04, color: fg),
-            ),
-          ],
+        // Fixed to the WIDEST option ("Most severe") so the pill keeps one size
+        // on toggle; the shown label is centred. IndexedStack measures both at
+        // the current text scale, so the size adapts to the system font size and
+        // stays equal for both options.
+        child: IndexedStack(
+          alignment: Alignment.center,
+          index: severe ? 1 : 0,
+          children: [content('Newest'), content('Most severe')],
         ),
       ),
     );
