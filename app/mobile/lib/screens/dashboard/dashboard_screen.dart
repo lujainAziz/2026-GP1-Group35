@@ -365,37 +365,36 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  /// Stat card content for a feature from a later sprint.
-  Widget _soonInner(String label, int sprint) {
+  /// Shared layout for the two stacked stat cards (Open alerts + Unrecognized):
+  /// identical padding and edge alignment, label on the left and value on the
+  /// right. Both cards sit in the same column, so they share their width; this
+  /// gives them the same internal padding and right-edge alignment too. Wrap
+  /// keeps the label at its designed size: at normal sizes label and value sit
+  /// side by side; when they no longer fit together at large text sizes the
+  /// value flows onto the next line and the card grows instead of clipping, so
+  /// both stay readable.
+  Widget _statCard(String label, Widget value) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        children: [
-          Expanded(child: Text(label, style: UiText.sans(13, 600, height: 1.2))),
-          Text('SOON', style: UiText.mono(13, 700, em: .1, color: Ui.mute)),
-        ],
-      ),
-    );
-  }
-
-  Widget _statInner(String label, String value, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      // The label keeps its designed size (no shrink-to-fit): at normal sizes
-      // label and number sit side by side exactly as before; when they no
-      // longer fit together at large text sizes, the number flows onto the
-      // next line and the card grows.
       child: Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
         runSpacing: 2,
         children: [
           Text(label, style: UiText.sans(13, 600, height: 1.2)),
-          Text(value, style: UiText.statNumber.copyWith(color: color)),
+          value,
         ],
       ),
     );
   }
+
+  /// Stat card content for a feature from a later sprint (same layout as a live
+  /// stat card, with the deferred marker in place of the number).
+  Widget _soonInner(String label, int sprint) =>
+      _statCard(label, Text('SOON', style: UiText.mono(13, 700, em: .1, color: Ui.mute)));
+
+  Widget _statInner(String label, String value, Color color) =>
+      _statCard(label, Text(value, style: UiText.statNumber.copyWith(color: color)));
 
   Widget _recent(BuildContext context) {
     if (!Released.alertsHome) {

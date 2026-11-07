@@ -87,8 +87,10 @@ Future<void> _eachLayout(
 void main() {
   testWidgets('dashboard has no overflow at every text size; Open alerts shows SOON', (tester) async {
     await _eachLayout(tester, DemoRepository(), (reason) {
+      // Open alerts and Unrecognized now share one card layout (a Wrap): label
+      // on the left, value (here the deferred "SOON" marker) on the right.
       final label = find.text('Open\nalerts');
-      final card = find.ancestor(of: label, matching: find.byType(Row)).first;
+      final card = find.ancestor(of: label, matching: find.byType(Wrap)).first;
       expect(find.descendant(of: card, matching: find.text('SOON')), findsOneWidget, reason: reason);
     });
   });
