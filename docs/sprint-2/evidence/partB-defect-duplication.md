@@ -1,4 +1,4 @@
-# Defect found in live verification — Threat Alert Ingestion (PBI-14)
+# Defect found in on-device verification — security alert ingestion
 
 Found 2026-11-02 during live verification (read-only inspection; redacted — counts/rule-ids/offsets
 only, no addresses). Two real defects in `appliance/alerts.py`. Automated unit tests pass but did not
@@ -17,7 +17,7 @@ size 7667712; re-reading from 0`. `process_file()` responds to `offset > size` b
 Re-read events carry their original (older) timestamps; against existing alerts whose
 `last_event_time` is newer than the dedup window, they create **new** duplicate rows, and
 within-window ones double `occurrence_count`. The exact `2×` excess (1496 vs 748) matches one full
-re-read. PBI-14 requires logging a gap and **not** silently continuing; re-reading from 0 silently
+re-read. Resume-safe ingestion requires logging a gap and **not** silently continuing; re-reading from 0 silently
 re-ingests. (Why size < offset with the same inode 909942: eve.json was replaced/inode-reused around
 the restart; logrotate is **not** the cause — `/etc/logrotate.d/suricata` correctly excludes
 eve.json. File identity on `(st_dev, st_ino)` alone is unsafe against inode reuse.)
@@ -40,7 +40,7 @@ rows** result. No test feeds a line that triggers `UnicodeDecodeError` (only `JS
    (`offset = size`, persisted) → never re-ingests. **This is DETECTED DATA LOSS, not a no-loss
    guarantee:** the events in the gap (between the lost EOF and the stored offset) are dropped and
    logged, never recovered. It trades unrecoverable loss of a small gap for the guarantee of no
-   duplication (PBI-14: "log a gap, don't silently continue").
+   duplication (the resume-safety requirement: "log a gap, don't silently continue").
 3. ✅ Tests (`appliance/test_alerts.py`): truncation → no duplicate rows + resume-forward;
    `UnicodeDecodeError` line skipped without stalling, offset advances. Appliance suite 504 passed.
 4. ☐ **Residual hardening (not yet done):** inode reuse where the replaced file is *larger* than the

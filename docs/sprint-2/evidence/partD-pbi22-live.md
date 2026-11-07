@@ -1,11 +1,11 @@
 # Alert State-Management Endpoints — Live Verification (2026-11-04)
 
-**Status.** Alert state management (PBI-22) is **RELEASED in Sprint 2** (team
+**Status.** Alert state management is **RELEASED in Sprint 2** (team
 decision, 2026-11-07): `alertManagement = true`, surfacing the All/Open/Resolved
 tabs, the New/Reviewed/Resolved badges, the Review/Resolve actions and the live
 unresolved (New+Reviewed) counter. The endpoint results below were executed on
 2026-11-04 and remain valid. The per-criterion acceptance verification for the
-seven PBI-22 criteria is in the section at the end of this document.
+seven acceptance criteria is in the section at the end of this document.
 
 **Test context.** Deployed `sprint-2 @ 16a4de2` (configuration backup
 `/etc/suricata/assas.yaml.bak-20261104T160917Z`; `suricata -T` passed with the
@@ -93,7 +93,7 @@ else
 fi
 ```
 
-## PBI-22 — per-criterion acceptance verification (2026-11-07)
+## Alert state management — per-criterion acceptance verification (2026-11-07)
 
 Verification method per criterion: **A** = automated test, **C** = code/SQL path.
 Suites green at verification: appliance **555 passed**, mobile **80 passed**,

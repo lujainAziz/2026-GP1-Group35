@@ -63,11 +63,11 @@ address in the prefix `2001:16a2:dea6:2200::/64` (e.g.
 SLAAC address** that is **not** the single global IPv6 the inventory stored for
 the device (inventory has e.g. `...:2200:6854:...` for a device in the same /64).
 Devices rotate privacy addresses and the /64 holds several devices, so matching by
-the stored address fails and matching by prefix would be **ambiguous** — PBI-14
-therefore correctly leaves `device_mac = NULL` rather than guess.
+the stored address fails and matching by prefix would be **ambiguous** — the
+device-linking rule therefore correctly leaves `device_mac = NULL` rather than guess.
 
-**Proposal (NOT applied — needs approval + a discovery/inventory change, out of
-PBI-14's "link only when reliable"):** attribute IPv6 flows to devices by tracking
+**Proposal (NOT applied — needs approval + a discovery/inventory change, outside
+the "link only when reliable" rule):** attribute IPv6 flows to devices by tracking
 each device's *set* of current IPv6 addresses (from the NDP neighbour cache /
 observed traffic), so privacy-address flows resolve to the owning MAC. Prefix-only
 matching is not added because it is not a reliable host match.

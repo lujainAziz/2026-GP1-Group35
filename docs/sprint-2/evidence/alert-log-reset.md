@@ -41,6 +41,6 @@ reuse). All three services `active`; the app refreshes itself via polling.
    restarted clean.
 3. Still pending: testmynids detection self-test (mirrored device over plain
    HTTP), capture/mirror check → then the STREAM/decoder decision, deferred IPv6
-   attribution plan. (As of 2026-11-05 PBI-22 was hidden behind
+   attribution plan. (As of 2026-11-05 alert state management was hidden behind
    `alertManagement=false`; it was **released on 2026-11-07** — see
    `partD-pbi22-live.md` per-criterion verification.)

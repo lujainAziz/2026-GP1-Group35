@@ -10,8 +10,8 @@ The functions delivered in this sprint are:
   capture interface and records detections, without ever blocking or modifying traffic.
 - **Security alert ingestion** — detections are recorded as security alerts, de-duplicated, and
   linked to the device they concern.
-- **The security alert service** — authenticated, read-only access to the stored alerts for the
-  applications.
+- **The security alert service** — authenticated access for the applications to view the stored
+  alerts and to update each alert's state.
 - **Security alert display and state management** — the mobile application presents a single list
   of security alerts and lets the operator manage each alert's state (New, Reviewed, Resolved).
 - **Device signals from unresolved alerts** — unresolved alerts raise the affected device's
@@ -49,8 +49,8 @@ that `sprint-2` had been showing. All Sprint 2 functionality is preserved.
 | Detection | none | Suricata 7.0.10 IDS (ET Open signatures) on the capture interface |
 | Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (☑ active), `assas-suricata-rotate.timer` (☑ active), + `assas-alerts` (☑ active) |
 | Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☑) |
-| API | inventory endpoints | + read-only alert endpoints (☑) |
-| Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☑ code+tests; visual review outstanding) |
+| API | inventory endpoints | + alert endpoints: view + state update (☑) |
+| Mobile | alerts UI gated off | alert list/details/per-device alerts + state management enabled (☑ code+tests; visual review outstanding) |
 
 ## Requirements tracking
 Requirements grouped by function; the sections below carry the detail. Final per-requirement
@@ -69,7 +69,7 @@ pass / fail / not-tested verdicts (automated vs live) are in `VERIFICATION.md`.
 | Alert ingestion | Link each alert to the device it concerns | Security Alert Ingestion | ☑ | `test_alerts.py` |
 | Alert ingestion | De-duplicate recurring detections; keep count and first/last time | Security Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
 | Alert ingestion | Resume safely across restarts and log rotation | Security Alert Ingestion | ☑ | `test_alerts.py` |
-| Alert service | Authenticated, read-only access to alerts | Alert API | ☑ | `test_api.py`, `test_frontend_contract.py`, `partBC-live.txt` |
+| Alert service | Authenticated access to view alerts and update their state | Security Alert Service | ☑ | `test_api.py`, `test_frontend_contract.py`, `partBC-live.txt` |
 | Alert display & state management | Single alert list; view details; per-device alerts; manage New/Reviewed/Resolved | Security Alert Display and State Management | ☑ code+tests; visual review outstanding | `test/alerts_test.dart`, `evidence/ui/`, `evidence/partD-pbi22-live.md` |
 | Detection accuracy | Evaluation on replayed attack traffic | Evaluation | ☐ dataset download outstanding | `EVALUATION.md` |
 
@@ -225,13 +225,22 @@ committed — no raw addresses.
 ### Commits (Security Alert Ingestion)
 - `6d15b7d` feat(alerts): Suricata eve.json ingestion into alerts table.
 
-## Alert API  ☑ Done & tested
+## Security Alert Service  ☑ Done & tested
 
-Additive endpoints in `appliance/api.py`, gated by the existing `require_auth` (paired bearer token;
-localhost bypass). A missing `alerts` table reads as empty.
+The service **supports both viewing alerts and updating their state**. Additive endpoints in
+`appliance/api.py`, gated by the existing `require_auth` (paired bearer token; localhost bypass). A
+missing `alerts` table reads as empty.
+
+Viewing:
 - `GET /alerts` — all security alerts, newest first by `last_event_time` (`limit` 1–1000, default 200).
 - `GET /alerts/{alert_id}` — one alert (404 if unknown).
 - `GET /devices/{mac}/alerts` — a device's alerts, newest first.
+- `GET /alerts/open_count` — the count of unresolved alerts (New + Reviewed) across the database.
+
+State update:
+- `PATCH /alerts/{alert_id}` — move one alert's state (New→Reviewed, New→Resolved, Reviewed→Resolved;
+  Resolved is final). The transition is one atomic, guarded write; an illegal or backward move is
+  rejected (409) and never reverts a Resolved alert.
 
 Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="threat"`,
 `state="new"`, `severity ∈ {critical,high,medium,low}`; plus `id`, `title`, `device_mac`,
@@ -240,8 +249,9 @@ Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="t
 `src_port`/`dst_port`; `explanation` and the anomaly fields are `null`. A contract test asserts the
 exact strings so casing can't drift.
 
-### Commits (Alert API)
-- `810c3ab` feat(api): read-only alert endpoints with exact app contract.
+### Commits (Security Alert Service)
+- `810c3ab` feat(api): alert viewing endpoints with the exact app contract.
+- state-update endpoint (`PATCH /alerts/{id}`) and the unresolved counter (`GET /alerts/open_count`) verified in `evidence/partD-pbi22-live.md`.
 
 ## Security Alert Display and State Management  ☑ code + analyze + unit tests; visual review pending
 
@@ -283,9 +293,18 @@ appliance session is headless). See `evidence/ui/README.md` and the per-criterio
 - `68cc749` feat: restore security alert state management (states, transitions, counter).
 
 ## Evaluation
-Dataset download and detection replay are outstanding; the resource baseline is in progress. See
-`PLAN.md` / `EVALUATION.md`.
-The sprint report maps this document's evidence to its sections directly.
+Two evaluations, by function:
+- **Detection accuracy** on replayed attack traffic — **not yet performed**: no dataset has been
+  downloaded (awaiting approval) and no replay has run. The on-device test showed only that a
+  detection travels end-to-end into the application, which is not an accuracy measure.
+- **Resource usage** — measured. The 2-hour live-traffic baseline is complete (CPU and packet-drop
+  targets met; **memory target not met**). The additional run **taken without the development agent
+  co-resident is complete** and confirms the **memory target is still not met**; its packet-drop
+  figure is recorded but **not yet validated** — a measurement-tool defect (the process-name
+  detector) has been fixed, and the **re-measurement of the drop rate is still pending** an
+  agent-free window.
+
+Full figures, the memory accounting and the held replay commands are in `EVALUATION.md`.
 
 ## Documentation discipline
 - Software/package versions, final configs, file/service paths, changes vs Sprint 1, and commit
