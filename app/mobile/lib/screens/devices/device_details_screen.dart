@@ -9,6 +9,7 @@ import '../../widgets/device_signals.dart';
 import '../../widgets/radar_hero.dart';
 import '../../widgets/rename_dialog.dart';
 import '../../widgets/ui_kit.dart';
+import '../../widgets/ui_memory.dart';
 import '../../widgets/ui_overlays.dart';
 import '../alerts/alert_details_screen.dart';
 
@@ -35,11 +36,24 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
   List<SecurityAlert>? _deviceAlertList;
   bool _alertsLoaded = false;
 
+  // Order for this device's alerts — useful on devices with many alerts.
+  AlertSort _alertSort = AlertSort.newest;
+
   @override
   void initState() {
     super.initState();
     _loadDetail();
     _loadAlerts();
+    UiMemory.deviceAlertSort().then((name) {
+      for (final s in AlertSort.values) {
+        if (s.name == name && mounted) setState(() => _alertSort = s);
+      }
+    });
+  }
+
+  void _toggleAlertSort() {
+    setState(() => _alertSort = _alertSort == AlertSort.newest ? AlertSort.severity : AlertSort.newest);
+    UiMemory.setDeviceAlertSort(_alertSort.name);
   }
 
   Future<void> _loadDetail() async {
@@ -342,16 +356,45 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
     if (!_alertsLoaded) {
       return const Padding(padding: EdgeInsets.all(26), child: Center(child: UiSpinner(size: 20)));
     }
-    final alerts = _deviceAlertList;
-    if (alerts == null || alerts.isEmpty) {
+    final raw = _deviceAlertList;
+    if (raw == null || raw.isEmpty) {
       return EmptyDashed(
         padding: const EdgeInsets.all(26),
-        title: alerts == null ? 'Alerts are not available yet' : 'All quiet',
+        title: raw == null ? 'Alerts are not available yet' : 'All quiet',
         hint: 'Alerts related to this device will appear here.',
       );
     }
+    final alerts = sortedAlerts(raw, _alertSort);
     return Column(
       children: [
+        // Only worth a sort control once there are a few alerts to reorder.
+        if (raw.length >= 2)
+          Align(
+            alignment: Alignment.centerRight,
+            child: Pressable(
+              semanticLabel: 'Sort: ${_alertSort.label}. Tap to switch.',
+              onTap: _toggleAlertSort,
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(UiRadius.pill),
+                  border: Border.all(color: Ui.line),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.swap_vert_rounded, size: 14, color: Ui.mute),
+                    const SizedBox(width: 6),
+                    Text(
+                      _alertSort == AlertSort.severity ? 'Most severe' : 'Newest',
+                      style: UiText.mono(10.5, 600, em: .04, color: Ui.mute),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         for (var i = 0; i < alerts.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),
           TimelineAlertCard(
