@@ -1,13 +1,22 @@
 # Sprint 2 — Evaluation
 
-Replay setup, detection results, and resource measurements. Status: ☐ Planned · ◐ In progress ·
-☑ Done. **No detection/resource number is recorded without a linked raw-evidence file** under
-`docs/sprint-2/evidence/`. No private network data (real MACs/IPs/hostnames) is committed.
+This document covers two evaluations: **detection accuracy** on replayed attack traffic, and
+**resource usage** of the appliance under load. Status markers: ☐ Planned · ◐ In progress ·
+☑ Done. **No detection or resource figure is recorded without a linked raw-evidence file** under
+`docs/sprint-2/evidence/`. No private network data (real addresses, MAC addresses or hostnames) is
+committed.
 
-Current status: **no dataset downloaded** (selection below awaits approval); **detection replay not
-run yet**; the **2-hour live-traffic resource baseline is complete** (§4 — CPU and drop-rate targets
-met; memory not validly judged until a run without the co-resident dev agent). Datasets are
-downloaded only after explicit approval.
+**Detection-accuracy evaluation — not yet performed.** No dataset has been downloaded (the
+selection below awaits approval) and no replay has been run; the live appliance has only
+demonstrated that a detection travels end-to-end into the application, which is not a measure of
+accuracy. Datasets are downloaded only after explicit approval.
+
+**Resource-usage evaluation — measured; one target not met, one measurement pending.** The 2-hour
+live-traffic baseline is complete (CPU and packet-drop targets met; memory target not met). An
+additional run taken without the development agent co-resident is also complete and is reported
+alongside the baseline; it confirms the memory target is still not met, and its packet-drop figure
+is recorded but not yet validated (a measurement-tool defect, since fixed). Details in sections 4
+onward.
 
 ---
 
@@ -130,16 +139,20 @@ capture are recorded as false positives. Nothing here runs until the download
 approval.
 
 ## 3. Detection results — ☐ Planned
-Per-attack table (one row per labelled attack class), filled from raw eve evidence:
+Per-attack table (one row per labelled attack class), filled from the raw detection-event evidence:
 
-| Dataset | Attack class | Time window | Related signature(s) (sid) | Rule↔label match? | Detected? | Raw evidence |
+| Dataset | Attack class | Time window | Related signature(s) | Signature matches the label? | Detected? | Raw evidence |
 |---|---|---|---|---|---|
 | *(pending)* | | | | | | |
 
-- Benign-traffic alerts (false positives) recorded separately with sid + count + evidence path.
-- ET Open has partial coverage by design: undetected attacks are recorded as-is, no full-coverage
-  assumption.
-- Raw eve slices and the matching script/output saved under `evidence/detection/`.
+- **Precision and recall are computed only for attack classes whose labels permit it** (a window
+  and addresses that isolate the attack traffic); classes whose labels do not support the
+  computation are reported descriptively, not scored.
+- Alerts raised on benign traffic are recorded separately as false positives, with the signature,
+  count and evidence path.
+- The signature set has partial coverage by design: undetected attacks are recorded as such, with
+  no full-coverage assumption.
+- Raw detection-event slices and the matching tool's output are saved under `evidence/detection/`.
 
 ## 4. Resources — ☑ 2-hour live-traffic baseline complete (2026-11-02 13:37–15:37 UTC)
 
