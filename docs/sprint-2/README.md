@@ -1,9 +1,33 @@
 # Sprint 2 — Scope and Changes from Sprint 1
 
-Sprint 2 adds **signature-based threat detection** and **Threat Alerts** to the Assas appliance
-(see the requirements-tracking table for the PBI-13 / PBI-14 items). Sprint 1 delivered passive
-discovery, capture, classification, pairing, the read-only inventory API, and the mobile/display
-apps; Sprint 2 is **additive** and must not change that behaviour.
+Sprint 2 adds **signature-based threat detection** and **security alert display and state
+management** to the Assas appliance. Sprint 1 delivered passive discovery, capture, classification,
+pairing, the read-only inventory service, and the mobile and display applications; Sprint 2 is
+**additive** and must not change that behaviour.
+
+The functions delivered in this sprint are:
+- **Signature-based threat detection** — an intrusion-detection engine inspects traffic on the
+  capture interface and records detections, without ever blocking or modifying traffic.
+- **Security alert ingestion** — detections are recorded as security alerts, de-duplicated, and
+  linked to the device they concern.
+- **The security alert service** — authenticated, read-only access to the stored alerts for the
+  applications.
+- **Security alert display and state management** — the mobile application presents a single list
+  of security alerts and lets the operator manage each alert's state (New, Reviewed, Resolved).
+- **Device signals from unresolved alerts** — unresolved alerts raise the affected device's
+  attention level and priority.
+
+**What is implemented and verified by automated tests:** threat detection and its configuration;
+security alert ingestion (de-duplication, device linking, resume safety); the security alert
+service; security alert display and state management; and device signals from unresolved alerts.
+
+**What is implemented but still awaiting verification:** the operator's on-device visual review of
+the alert screens; a validated packet-drop measurement with the corrected tool; and a resource
+measurement taken without the development agent co-resident.
+
+**What is still in progress / not yet done:** the detection-accuracy evaluation on replayed attack
+traffic (awaiting approval to download the datasets); and confirming the appliance's memory usage
+against its target (the recorded measurement did not meet it).
 
 Status legend: ☐ Planned · ◐ In progress · ☑ Done & tested. Every "Done" row links to the evidence
 (commit, log path, or test). Results without evidence are not recorded.
@@ -29,25 +53,25 @@ that `sprint-2` had been showing. All Sprint 2 functionality is preserved.
 | Mobile | alerts UI gated off | alerts tab/detail/device-alerts enabled (☑ code+tests; visual review outstanding) |
 
 ## Requirements tracking
-Single source for the PBI-13 / PBI-14 acceptance items; sections below carry the detail. Final
-per-requirement pass/fail/not-tested verdicts (automated vs live) are in `VERIFICATION.md`.
+Requirements grouped by function; the sections below carry the detail. Final per-requirement
+pass / fail / not-tested verdicts (automated vs live) are in `VERIFICATION.md`.
 
-| PBI | Requirement | Section | Status | Evidence |
+| Function | Requirement | Section | Status | Evidence |
 |---|---|---|---|---|
-| 13 | Suricata installed; version reported | Suricata Configuration | ☑ | `partA-suricata-T.log`, README |
-| 13 | IDS mode on the capture interface (`eth1`); never blocks/modifies | Suricata Configuration | ☑ | `assas.yaml`, `partA-service-state.txt` |
-| 13 | ET Open rules via `suricata-update` | Suricata Configuration | ☑ | `partA-et-open-source.txt`, `partA-suricata-T.log` |
-| 13 | `eve.json` with alert events (+ stats for drop rate) | Suricata Configuration | ☑ | `partA-eve-event-types.txt` |
-| 13 | systemd service consistent with existing units | Suricata Configuration | ☑ | `assas-suricata.service` |
-| 13 | Resource targets: total CPU ≤75% avg, memory <4 GB | Evaluation | ◐ CPU 29.5% avg + 0% drops PASS; memory not validly judged (dev agent co-resident) | `resources/resource-2h-summary.json` |
-| 14 | Ingest alerts from `eve.json` into `alerts` table | Threat Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
-| 14 | Severity from rule priority (1→Critical … ≥4→Low) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
-| 14 | Device linking (one/both→source/neither) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
-| 14 | Dedup window; `occurrence_count`/`last_event_time` | Threat Alert Ingestion | ☑ | `partBC-live.txt` (24→1), `test_alerts.py` |
-| 14 | Resume safety (checkpoint, rotation, gap logging) | Threat Alert Ingestion | ☑ | `test_alerts.py` |
-| 14 | Authenticated read-only alert endpoints | Alert API | ☑ | `test_api.py`, `test_frontend_contract.py`, `partBC-live.txt` |
-| 14 | Mobile: alerts tab, details, device alerts | Mobile Alert Screens | ☑ code+tests; visual review outstanding | `test/alerts_test.dart`, `evidence/ui/` |
-| 13+14 | Detection evaluation on replayed attack traffic | Evaluation | ☐ dataset download outstanding | `EVALUATION.md` |
+| Threat detection | Detection engine installed; version reported | Suricata Configuration | ☑ | `partA-suricata-T.log`, README |
+| Threat detection | Detection-only on the capture interface (`eth1`); never blocks/modifies | Suricata Configuration | ☑ | `assas.yaml`, `partA-service-state.txt` |
+| Threat detection | Community signature set installed and updatable | Suricata Configuration | ☑ | `partA-et-open-source.txt`, `partA-suricata-T.log` |
+| Threat detection | Event log with alert events (plus statistics for the drop rate) | Suricata Configuration | ☑ | `partA-eve-event-types.txt` |
+| Threat detection | Service definition consistent with the existing services | Suricata Configuration | ☑ | `assas-suricata.service` |
+| Resource usage | Within limits: total CPU ≤75% avg, memory under target | Evaluation | ◐ CPU and drop-rate PASS; memory target not met; drop re-measurement pending | `resources/`, `EVALUATION.md` |
+| Alert ingestion | Record detections as security alerts | Security Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
+| Alert ingestion | Severity from detection priority (highest→Critical … lowest→Low) | Security Alert Ingestion | ☑ | `test_alerts.py` |
+| Alert ingestion | Link each alert to the device it concerns | Security Alert Ingestion | ☑ | `test_alerts.py` |
+| Alert ingestion | De-duplicate recurring detections; keep count and first/last time | Security Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
+| Alert ingestion | Resume safely across restarts and log rotation | Security Alert Ingestion | ☑ | `test_alerts.py` |
+| Alert service | Authenticated, read-only access to alerts | Alert API | ☑ | `test_api.py`, `test_frontend_contract.py`, `partBC-live.txt` |
+| Alert display & state management | Single alert list; view details; per-device alerts; manage New/Reviewed/Resolved | Security Alert Display and State Management | ☑ code+tests; visual review outstanding | `test/alerts_test.dart`, `evidence/ui/`, `evidence/partD-pbi22-live.md` |
+| Detection accuracy | Evaluation on replayed attack traffic | Evaluation | ☐ dataset download outstanding | `EVALUATION.md` |
 
 ---
 
@@ -118,7 +142,7 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
   (`/run/assas-suricata-rotate.lock`) serialises the timer and any manual/forced run so two
   rotations can never overlap. The script **only renames — it never compresses or deletes** — so it
   is safe to run even while the ingester is stopped (rotated files accumulate until consumed). Deletion
-  of a rotated eve file is owned exclusively by the Threat Alert Ingestion reaper, which
+  of a rotated eve file is owned exclusively by the security-alert-ingestion reaper, which
   acts only after a file is fully consumed. This is the complete replacement for logrotate on
   eve.json; logrotate never touches eve.json, so it can never delete an unread file.
 
@@ -151,7 +175,7 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 - **Sensitive-data scan**: all evidence files scanned for IPv4/MAC/IPv6 → clean (no addresses
   committed).
 
-> Operational note for Threat Alert Ingestion: for ~1–3 s after a rotation (before Suricata handles `SIGHUP`)
+> Operational note for security alert ingestion: for ~1–3 s after a rotation (before Suricata handles `SIGHUP`)
 > `eve.json` briefly does not exist. The ingester must tolerate this (retry, not error).
 
 ### Official sources (accessed 2026-11-02)
@@ -168,11 +192,11 @@ the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
 
 ---
 
-## Threat Alert Ingestion  ☑ Done, unit-tested & live-verified
+## Security Alert Ingestion  ☑ Done, unit-tested & live-verified
 
 New daemon `appliance/alerts.py` + `appliance/systemd/assas-alerts.service` (runs as `root`, like
-`assas-discovery`). It reads Suricata `alert` events from `eve.json` (+ rotated `eve.json-<ts>`) and
-writes Threat Alerts into SQLite. Tests: `appliance/test_alerts.py` (22 passed).
+`assas-discovery`). It reads detection `alert` events from `eve.json` (+ rotated `eve.json-<ts>`) and
+records them as security alerts in SQLite. Tests: `appliance/test_alerts.py` (51 passed).
 
 **New tables (created by the ingester; API reads them read-only):**
 - `alerts` — ER columns (`alert_id, device_mac, alert_type, title, rule_id, event_time, src_ip,
@@ -198,14 +222,14 @@ truncation/gaps. Configurable via env (`ASSAS_DB_PATH`, `ASSAS_EVE_PATH`,
 decoder alert correctly left unlinked (`device_mac` NULL). Only aggregates/signature names are
 committed — no raw addresses.
 
-### Commits (Threat Alert Ingestion)
+### Commits (Security Alert Ingestion)
 - `6d15b7d` feat(alerts): Suricata eve.json ingestion into alerts table.
 
 ## Alert API  ☑ Done & tested
 
 Additive endpoints in `appliance/api.py`, gated by the existing `require_auth` (paired bearer token;
 localhost bypass). A missing `alerts` table reads as empty.
-- `GET /alerts` — all Threat Alerts, newest first by `last_event_time` (`limit` 1–1000, default 200).
+- `GET /alerts` — all security alerts, newest first by `last_event_time` (`limit` 1–1000, default 200).
 - `GET /alerts/{alert_id}` — one alert (404 if unknown).
 - `GET /devices/{mac}/alerts` — a device's alerts, newest first.
 
@@ -219,44 +243,44 @@ exact strings so casing can't drift.
 ### Commits (Alert API)
 - `810c3ab` feat(api): read-only alert endpoints with exact app contract.
 
-## Mobile Alert Screens  ☑ code + analyze + unit tests; visual review pending
+## Security Alert Display and State Management  ☑ code + analyze + unit tests; visual review pending
 
-Only the three Sprint-2 deliverables are enabled; later-sprint surfaces are kept hidden behind their
-own flags.
+The mobile application presents the security alerts and lets the operator manage their states.
+Functions belonging to later sprints are kept hidden behind their own release gates; the gating is
+locked by an automated test.
 
-`FeatureRelease` (shared `assas_design`): `alerts = true`; new gates `alertsHome`,
-`alertSeverityBadges`, `alertDisplay`, `alertExplanations` all **false**; `alertManagement`, `risk`
-stay false.
+**Delivered in this sprint.** The operator sees a **single list of security alerts, newest first**,
+with All / Open / Resolved views. Each alert shows its title, severity, affected device and last
+event time, and a state badge. Opening an alert shows its details and the device it concerns (with
+navigation to that device), and offers the **Review** and **Resolve** actions. An alert begins as
+**New**; it can move New → Reviewed, New → Resolved, or Reviewed → Resolved; **Resolved is final**.
+A counter of **unresolved alerts (New and Reviewed)** is shown, and alert states are stored on the
+appliance so they survive restarts of the application or the appliance services. If the same
+detection recurs after an alert has been resolved, it is recorded as a **new, independent alert**
+rather than reopening the resolved one. **Device signals from unresolved alerts** are also live:
+an unresolved alert raises its device's attention level, priority and severity accent.
 
-**Current scope.** PBI-14 is live: the alerts list, alert
-details (including Last seen), and device alerts with device linking. PBI-09/10
-is live: unresolved linked alerts feed the device signals (Attention, Home
-priority, severity colours). **PBI-22 (alert state management) is RELEASED in
-Sprint 2**: `alertManagement` is on — the All/Open/Resolved tabs, the
-New/Reviewed/Resolved badges, the Review/Resolve actions and the live
-unresolved (New+Reviewed) counter are live, backed by `PATCH /alerts/{id}` and
-`GET /alerts/open_count`. State is persisted in SQLite; a matching event after
-an alert is Resolved starts a new independent alert (new id, state New).
-
-| Surface | Sprint 2 | How |
+| Surface | This sprint | How |
 |---|---|---|
-| Alerts tab (list) | ✓ shown | hero shows the live unresolved count (DB aggregate of New+Reviewed); All/Open/Resolved tabs; rows: title, severity, device, last event time, state badge; newest first (`alertManagement` on). |
-| Alert details | ✓ shown | title, time, device (+nav), state badge, **Review/Resolve** actions (New→Reviewed, New→Resolved, Reviewed→Resolved; Resolved terminal), and Signal details: alert type, severity, **Last seen** (= last event time), source/destination IP. First seen, rule ID and ports hidden in UI (kept in DB + API); explanation block hidden (later sprint). |
-| Device details → alerts | ✓ shown | this device's alerts replace "Coming soon" |
-| Home open-alerts count + recent summary | ✗ hidden | gated on `alertsHome` → stays "SOON" |
-| Device-list severity badges / sort | ✗ hidden | gated on `alertSeverityBadges` |
-| 7-inch display alert count | ✗ hidden | gated on `alertDisplay` → stays "SOON" |
+| Alert list | shown | unresolved counter (New + Reviewed) in the header; All / Open / Resolved views; rows show title, severity, device, last event time and state; newest first. |
+| Alert details | shown | title, time, device (with navigation), state badge and **Review / Resolve** actions (New→Reviewed, New→Resolved, Reviewed→Resolved; Resolved is final). Details: alert type, severity, **Last seen** (= last event time), source/destination address. First-seen time, rule identifier and ports are kept in the database and service but not shown; the plain-language explanation is a later sprint. |
+| A device's own alerts | shown | shown in the device details screen. |
+| Home summary of open alerts | hidden | later sprint; shows "SOON". |
+| 7-inch display alert count | hidden | later sprint; shows "SOON". |
 
-Model `SecurityAlert` extended additively (`ruleId`, `srcPort`, `dstPort`, `occurrenceCount`,
-`firstTime`, `lastTime`); `fromApi` reads the new keys.
+The alert model carries the recurrence count, first/last event times, ports and rule identifier,
+read additively from the service response.
 
-Tests: `flutter analyze` clean (mobile + display); `flutter test` 63 passed/1 skipped incl.
-`test/alerts_test.dart` (contract, gating, badge-hiding). Visual review of the three screens is
-outstanding — screenshots are captured on a dev machine (the Pi session is headless); see
-`evidence/ui/README.md`.
+Tests: `flutter analyze` clean (mobile + display); `flutter test` **80 passed** including the alert
+contract, state transitions, release gating and device-signal rules. The operator's on-device
+**visual review** of the alert screens — including a Review → Resolve round-trip and the counter
+decrementing as alerts resolve — is outstanding; screenshots are captured on a workstation (the
+appliance session is headless). See `evidence/ui/README.md` and the per-criterion verification in
+`evidence/partD-pbi22-live.md`.
 
-### Commits (Mobile Alert Screens)
-- `87d819e` feat(app): Threat Alerts in mobile (Alerts tab, details, device alerts).
+### Commits
+- `87d819e` feat(app): security alert screens in mobile (list, details, per-device alerts).
+- `68cc749` feat: restore security alert state management (states, transitions, counter).
 
 ## Evaluation
 Dataset download and detection replay are outstanding; the resource baseline is in progress. See
