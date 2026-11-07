@@ -70,22 +70,21 @@ List<String> _cardOrder(WidgetTester tester) =>
         .toList();
 
 void main() {
-  testWidgets('default sort is newest first; toggling sorts most-severe first',
+  testWidgets('list is newest-first; the sort control is not on this screen',
       (tester) async {
     await _pump(tester, [
       _mk('crit', Severity.critical, 0),   // oldest
       _mk('low', Severity.low, 30),
       _mk('high', Severity.high, 60),      // newest
     ]);
-    // Newest first by default.
+    // Newest first, always (sort toggle moved to device details).
     expect(_cardOrder(tester), ['high', 'low', 'crit']);
-    expect(find.text('Newest'), findsOneWidget);
-
-    // Switch to most-severe first.
-    await tester.tap(find.text('Newest'));
-    await tester.pumpAndSettle();
-    expect(find.text('Most severe'), findsOneWidget);
-    expect(_cardOrder(tester), ['crit', 'high', 'low']);
+    expect(find.text('Newest'), findsNothing);
+    expect(find.text('Most severe'), findsNothing);
+    // Tabs and the Filter control share one row.
+    expect(find.text('All'), findsOneWidget);
+    expect(find.text('Resolved'), findsOneWidget);
+    expect(find.text('Filter'), findsOneWidget);
   });
 
   testWidgets('severity filter (devices-style dropdown) shows only the selected severities',

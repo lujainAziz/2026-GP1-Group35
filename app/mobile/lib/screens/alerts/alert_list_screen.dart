@@ -68,8 +68,6 @@ class _AlertListScreenState extends State<AlertListScreen> {
   final _filterMenu = OverlayPortalController();
   final _filterLink = LayerLink();
 
-  // Display preferences (persisted; display-only, never sent to the appliance).
-  AlertSort _sort = AlertSort.newest;
   // Severities to show; EMPTY = all (no restriction), mirroring the devices filter.
   final Set<Severity> _shown = {};
 
@@ -83,11 +81,6 @@ class _AlertListScreenState extends State<AlertListScreen> {
     UiMemory.alertTab().then((name) {
       for (final t in _AlertTab.values) {
         if (t.name == name && mounted) setState(() => _tab = t);
-      }
-    });
-    UiMemory.alertSort().then((name) {
-      for (final s in AlertSort.values) {
-        if (s.name == name && mounted) setState(() => _sort = s);
       }
     });
     UiMemory.alertSeverities().then((names) {
@@ -116,11 +109,6 @@ class _AlertListScreenState extends State<AlertListScreen> {
     UiMemory.setAlertTab(t.name);
   }
 
-  void _toggleSort() {
-    setState(() => _sort = _sort == AlertSort.newest ? AlertSort.severity : AlertSort.newest);
-    UiMemory.setAlertSort(_sort.name);
-  }
-
   bool get _filterActive => _shown.isNotEmpty;
 
   @override
@@ -130,7 +118,6 @@ class _AlertListScreenState extends State<AlertListScreen> {
       listenable: state,
       builder: (context, _) {
         final alerts = Released.alertsOf(state);
-        final showControls = Released.alerts && (alerts?.isNotEmpty ?? false);
         return SafeArea(
           bottom: false,
           child: Stack(
@@ -143,15 +130,16 @@ class _AlertListScreenState extends State<AlertListScreen> {
                   controller: _scroll,
                   slivers: [
                     SliverToBoxAdapter(child: _hero()),
+                    // Tabs on the left, Filter on the far right of the same row.
                     if (Released.alerts && Released.alertManagement)
                       SliverPersistentHeader(
                         pinned: true,
                         delegate: _TabsDelegate(child: _tabs(alerts)),
                       ),
-                    if (showControls) SliverToBoxAdapter(child: _controls()),
+                    // The list starts directly under the tabs row.
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                         child: _body(context, alerts),
                       ),
                     ),
@@ -221,19 +209,34 @@ class _AlertListScreenState extends State<AlertListScreen> {
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 7, sigmaY: 7),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 6, 22, 0),
+          padding: const EdgeInsets.fromLTRB(22, 6, 16, 0),
           child: DecoratedBox(
             decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (final tab in _AlertTab.values) ...[
-                    if (tab != _AlertTab.all) const SizedBox(width: 26),
-                    _tabItem(tab, list.where(tab.matches).length),
-                  ],
-                ],
-              ),
+            child: Row(
+              // Filter pill centred vertically against the tab labels.
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Tabs on the left; scroll horizontally if they outgrow the row.
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final tab in _AlertTab.values) ...[
+                          if (tab != _AlertTab.all) const SizedBox(width: 26),
+                          _tabItem(tab, list.where(tab.matches).length),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Filter at the far right of the same row.
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: _filterPill(),
+                ),
+              ],
             ),
           ),
         ),
@@ -291,39 +294,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
     );
   }
 
-  // ---------- Sort + filter controls ----------
-  Widget _controls() => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
-        child: Row(
-          children: [
-            _sortPill(),
-            const SizedBox(width: 10),
-            _filterPill(),
-          ],
-        ),
-      );
-
-  Widget _sortPill() => Pressable(
-        semanticLabel: 'Sort order: ${_sort.label}. Tap to switch.',
-        onTap: _toggleSort,
-        child: Glass(
-          color: Ui.fade(Ui.surf, .82),
-          border: Ui.line,
-          radius: UiRadius.pill,
-          blur: 16,
-          height: 42,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.swap_vert_rounded, size: 16, color: Ui.ink),
-              const SizedBox(width: 8),
-              Text(_sort == AlertSort.severity ? 'Most severe' : 'Newest', style: UiText.sans(12, 700)),
-            ],
-          ),
-        ),
-      );
-
+  // ---------- Filter control (in the tabs row) ----------
   Widget _filterPill() => CompositedTransformTarget(
         link: _filterLink,
         child: OverlayPortal(
@@ -369,8 +340,10 @@ class _AlertListScreenState extends State<AlertListScreen> {
         ),
         CompositedTransformFollower(
           link: _filterLink,
-          targetAnchor: Alignment.bottomLeft,
-          followerAnchor: Alignment.topLeft,
+          // Anchor to the right edge so the menu opens leftward and stays
+          // on-screen (the Filter pill sits at the far right of the row).
+          targetAnchor: Alignment.bottomRight,
+          followerAnchor: Alignment.topRight,
           offset: const Offset(0, 7),
           child: FadeSlideIn(
             duration: const Duration(milliseconds: 250),
@@ -489,7 +462,8 @@ class _AlertListScreenState extends State<AlertListScreen> {
     final tab = Released.alertManagement ? _tab : _AlertTab.all;
     Iterable<SecurityAlert> base = alerts.where(tab.matches);
     base = alertsWithSeverity(base, _shown);
-    final list = sortedAlerts(base, _sort);
+    // Newest first (the sort control now lives only in device details).
+    final list = sortedAlerts(base, AlertSort.newest);
 
     if (list.isEmpty) {
       final (title, hint) = _emptyText(tab);

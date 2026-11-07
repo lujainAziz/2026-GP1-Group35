@@ -10,7 +10,6 @@ class UiMemory {
   static const _deviceFilter = 'ui.deviceFilter';
   static const _deviceSearch = 'ui.deviceSearch';
   static const _alertTab = 'ui.alertTab';
-  static const _alertSort = 'ui.alertSort';
   static const _alertSeverities = 'ui.alertSeverities';
   static const _deviceAlertSort = 'ui.deviceAlertSort';
 
@@ -36,13 +35,7 @@ class UiMemory {
     await (await _p).setString(_alertTab, v);
   }
 
-  // Alert list: sort order, which severities are shown, and whether resolved
-  // alerts are hidden from the list (display only — never changes stored state).
-  static Future<String?> alertSort() async => (await _p).getString(_alertSort);
-  static Future<void> setAlertSort(String v) async {
-    await (await _p).setString(_alertSort, v);
-  }
-
+  // Alert list: which severities are shown (empty = all). Display only.
   static Future<List<String>?> alertSeverities() async => (await _p).getStringList(_alertSeverities);
   static Future<void> setAlertSeverities(List<String> v) async {
     await (await _p).setStringList(_alertSeverities, v);
