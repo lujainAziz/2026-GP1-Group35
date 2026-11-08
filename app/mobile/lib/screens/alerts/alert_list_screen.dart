@@ -261,26 +261,35 @@ class _AlertListScreenState extends State<AlertListScreen> {
         filter: ui.ImageFilter.blur(sigmaX: 7, sigmaY: 7),
         child: Container(
           alignment: Alignment.bottomCenter,
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
+          decoration: BoxDecoration(
+            // Near-opaque wash over the blur so pinned content masks the list
+            // scrolling beneath it (pure blur let cards show through).
+            color: Ui.fade(Ui.bg, .88),
+            border: Border(bottom: BorderSide(color: Ui.line)),
+          ),
           // Inset to the page text margin so the row lines up with the big title
           // and the Filter's right edge meets the end of "open alerts" above it.
           padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 4, UiSpace.pageText, 6),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // Tabs grouped on the left (shrink-to-scroll only as a last resort
-              // so All/Open/Resolved and their counts stay visible).
-              Flexible(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      for (final tab in _AlertTab.values) ...[
-                        if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
-                        _tabItem(tab, list.where(tab.matches).length, stacked),
+              // Tabs grouped on the left; Expanded (not Flexible) so the free
+              // space lives HERE and the Filter is pushed to the far right even
+              // when the tabs are narrow. Scrolls only as a last resort.
+              Expanded(
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        for (final tab in _AlertTab.values) ...[
+                          if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
+                          _tabItem(tab, list.where(tab.matches).length, stacked),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
