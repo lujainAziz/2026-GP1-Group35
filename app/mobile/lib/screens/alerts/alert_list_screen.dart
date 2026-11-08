@@ -261,7 +261,9 @@ class _AlertListScreenState extends State<AlertListScreen> {
         child: Container(
           alignment: Alignment.bottomCenter,
           decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
-          padding: const EdgeInsets.fromLTRB(18, 4, 12, 6),
+          // Right padding 16 so the Filter's right edge lines up with the alert
+          // cards below (which inset 16).
+          padding: const EdgeInsets.fromLTRB(18, 4, 16, 6),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -377,15 +379,20 @@ class _AlertListScreenState extends State<AlertListScreen> {
               radius: UiRadius.search,
               blur: 16,
               height: 36,
-              padding: const EdgeInsets.fromLTRB(9, 0, 10, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 7),
               // Fixed, compact width across states: reserve the width of the
               // widest content ("2 filters"), so the pill never resizes between
-              // "Filter" and any count and the tabs keep every spare pixel.
+              // "Filter" and any count and the tabs keep every spare pixel. The
+              // icon+text are centred together within that width, so "Filter"
+              // doesn't leave a gap on the right.
               child: SizedBox(
                 width: _pillContentWidth(context),
-                child: _filterActive
-                    ? _pillRow(_filterSummary, dot: true)
-                    : _pillRow('Filter', dot: false),
+                child: Center(
+                  widthFactor: 1,
+                  child: _filterActive
+                      ? _pillRow(_filterSummary, dot: true)
+                      : _pillRow('Filter', dot: false),
+                ),
               ),
             ),
           ),
