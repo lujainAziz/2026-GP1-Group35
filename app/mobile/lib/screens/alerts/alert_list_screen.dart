@@ -305,9 +305,19 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   // ---------- Filter control (in the tabs row) ----------
-  // Identical in shape, colours and font to the devices-list filter button:
-  // icon only when inactive; icon + a severity-coloured dot + the summary
-  // ("Critical" / "2 filters") when active.
+  // Same shape, colours and font as the devices-list filter button: shows
+  // "Filter" when inactive and the summary ("Critical" / "2 filters") with a
+  // severity-coloured dot when active.
+  Widget _pillRow(String text, {required bool dot}) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          UiIcon(UiIcons.filter, size: 18, stroke: 2, color: Ui.ink),
+          const SizedBox(width: 8),
+          if (dot) ...[GlowDot(_summaryDotColor, glow: 0), const SizedBox(width: 6)],
+          Text(text, style: UiText.sans(12, 700)),
+        ],
+      );
+
   Widget _filterPill() => CompositedTransformTarget(
         link: _filterLink,
         child: OverlayPortal(
@@ -316,7 +326,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
           child: Pressable(
             key: const ValueKey('alertFilterButton'),
             onTap: () => setState(_filterMenu.toggle),
-            semanticLabel: 'Filter alerts by severity, $_filterSummary',
+            semanticLabel: 'Filter alerts by severity, ${_filterActive ? _filterSummary : 'off'}',
             child: Glass(
               color: _filterActive ? Ui.mix(Ui.acc, .22, Ui.surf) : Ui.fade(Ui.surf, .82),
               border: _filterActive ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
@@ -324,16 +334,18 @@ class _AlertListScreenState extends State<AlertListScreen> {
               blur: 16,
               height: 40,
               padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              // Fixed width across states: invisible sizers reserve the width of
+              // the widest content ("Critical" / "4 filters"), so the pill does
+              // not resize between inactive and active and the tab counts keep
+              // their space. The sizers scale with the font.
+              child: Stack(
+                alignment: Alignment.centerLeft,
                 children: [
-                  UiIcon(UiIcons.filter, size: 18, stroke: 2, color: Ui.ink),
-                  if (_filterActive) ...[
-                    const SizedBox(width: 8),
-                    GlowDot(_summaryDotColor, glow: 0),
-                    const SizedBox(width: 6),
-                    Text(_filterSummary, style: UiText.sans(12, 700)),
-                  ],
+                  Opacity(opacity: 0, child: _pillRow('4 filters', dot: true)),
+                  Opacity(opacity: 0, child: _pillRow('Critical', dot: true)),
+                  _filterActive
+                      ? _pillRow(_filterSummary, dot: true)
+                      : _pillRow('Filter', dot: false),
                 ],
               ),
             ),

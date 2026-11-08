@@ -145,6 +145,56 @@ void main() {
     expect(_cardOrder(tester), ['crit-old']);
   });
 
+  testWidgets('Filter button keeps one width inactive vs active, at normal and large font',
+      (tester) async {
+    for (final scale in [1.0, 1.3]) {
+      SharedPreferences.setMockInitialValues({});
+      await _loadFonts();
+      final state = AppState(_Repo([
+        for (var i = 0; i < 6; i++) _mk('c$i', Severity.critical, 100 - i),
+        for (var i = 0; i < 5; i++) _mk('h$i', Severity.high, 60 - i),
+      ]));
+      addTearDown(state.dispose);
+      addTearDown(tester.view.reset);
+      await tester.runAsync(state.refresh);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 1600); // the screen width in the image
+      await tester.pumpWidget(MaterialApp(
+        theme: MobileTheme.light,
+        home: Builder(
+          builder: (c) => MediaQuery(
+            data: MediaQuery.of(c).copyWith(textScaler: TextScaler.linear(scale)),
+            child: Scaffold(body: AlertListScreen(state: state)),
+          ),
+        ),
+      ));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final pill = find.byKey(const ValueKey('alertFilterButton'));
+      expect(find.text('Filter'), findsOneWidget, reason: 'scale=$scale inactive -> "Filter"');
+      final wInactive = tester.getSize(pill).width;
+      expect(tester.takeException(), isNull, reason: 'scale=$scale inactive no overflow');
+
+      // Activate two severities.
+      await tester.tap(pill);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sevchip_critical')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sevchip_high')));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(10, 1300));
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 filters'), findsOneWidget, reason: 'scale=$scale active -> "2 filters"');
+      final wActive = tester.getSize(pill).width;
+      expect(wActive, moreOrLessEquals(wInactive, epsilon: 0.5),
+          reason: 'scale=$scale: pill width constant between states');
+      expect(tester.takeException(), isNull, reason: 'scale=$scale active no overflow');
+
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
   testWidgets('back-to-top button appears after scrolling and returns to top',
       (tester) async {
     await _pump(
