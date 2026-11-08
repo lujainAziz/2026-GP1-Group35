@@ -116,15 +116,28 @@ class _AlertListScreenState extends State<AlertListScreen> {
   List<Severity> get _selectedBySeverity =>
       _shown.toList()..sort((a, b) => b.index.compareTo(a.index));
 
-  // Same summary style as the devices filter: a single label, or "N filters".
+  // Count only on the button ("1 filter" / "2 filters"); the severity NAMES live
+  // in the filter panel, so the button stays compact and fixed-width.
   String get _filterSummary => _shown.isEmpty
       ? ''
       : _shown.length == 1
-          ? _severityLabel(_shown.first)
+          ? '1 filter'
           : '${_shown.length} filters';
 
   Color get _summaryDotColor =>
       _shown.isEmpty ? Ui.acc : _severityColors(_selectedBySeverity.first).foreground;
+
+  // Fixed content width for the filter pill = the widest state ("2 filters"
+  // with the dot), measured at the current font scale so the pill never resizes
+  // between "Filter" and any count. No ghost widget, so no duplicate text.
+  double _pillContentWidth(BuildContext context) {
+    final tp = TextPainter(
+      text: TextSpan(text: '2 filters', style: UiText.sans(12, 700)),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    return 16 + 5 + 5 + 4 + tp.width; // icon + gap + dot + gap + text
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -235,7 +248,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
   double _tabsExtent(BuildContext context, bool stacked) {
     final s = _systemScale(context);
     final tabH = stacked ? 30 + 28 * s : 22 + 18 * s;
-    return math.max(tabH, 40) + 14; // max(tab, pill) + vertical padding + buffer
+    return math.max(tabH, 36) + 14; // max(tab, pill) + vertical padding + buffer
   }
 
   Widget _tabs(List<SecurityAlert>? alerts, bool stacked) {
@@ -342,9 +355,9 @@ class _AlertListScreenState extends State<AlertListScreen> {
   Widget _pillRow(String text, {required bool dot}) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          UiIcon(UiIcons.filter, size: 17, stroke: 2, color: Ui.ink),
-          const SizedBox(width: 6),
-          if (dot) ...[GlowDot(_summaryDotColor, glow: 0), const SizedBox(width: 5)],
+          UiIcon(UiIcons.filter, size: 16, stroke: 2, color: Ui.ink),
+          const SizedBox(width: 5),
+          if (dot) ...[GlowDot(_summaryDotColor, size: 5, glow: 0), const SizedBox(width: 4)],
           Text(text, style: UiText.sans(12, 700)),
         ],
       );
@@ -363,21 +376,16 @@ class _AlertListScreenState extends State<AlertListScreen> {
               border: _filterActive ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
               radius: UiRadius.search,
               blur: 16,
-              height: 38,
-              padding: const EdgeInsets.fromLTRB(11, 0, 12, 0),
-              // Fixed width across states: invisible sizers reserve the width of
-              // the widest content ("Critical" / "4 filters"), so the pill does
-              // not resize between inactive and active and the tab counts keep
-              // their space. The sizers scale with the font.
-              child: Stack(
-                alignment: Alignment.centerLeft,
-                children: [
-                  Opacity(opacity: 0, child: _pillRow('4 filters', dot: true)),
-                  Opacity(opacity: 0, child: _pillRow('Critical', dot: true)),
-                  _filterActive
-                      ? _pillRow(_filterSummary, dot: true)
-                      : _pillRow('Filter', dot: false),
-                ],
+              height: 36,
+              padding: const EdgeInsets.fromLTRB(9, 0, 10, 0),
+              // Fixed, compact width across states: reserve the width of the
+              // widest content ("2 filters"), so the pill never resizes between
+              // "Filter" and any count and the tabs keep every spare pixel.
+              child: SizedBox(
+                width: _pillContentWidth(context),
+                child: _filterActive
+                    ? _pillRow(_filterSummary, dot: true)
+                    : _pillRow('Filter', dot: false),
               ),
             ),
           ),
