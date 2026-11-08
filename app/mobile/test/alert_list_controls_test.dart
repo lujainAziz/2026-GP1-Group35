@@ -84,7 +84,7 @@ void main() {
     // Tabs and the Filter control share one row.
     expect(find.text('All'), findsOneWidget);
     expect(find.text('Resolved'), findsOneWidget);
-    expect(find.text('Filter'), findsOneWidget);
+    expect(find.byKey(const ValueKey('alertFilterButton')), findsOneWidget);
   });
 
   testWidgets('severity filter (devices-style dropdown) shows only the selected severities',
@@ -97,7 +97,7 @@ void main() {
     expect(_cardOrder(tester).toSet(), {'crit', 'med', 'high'});
 
     // Open the filter dropdown and restrict to Critical + High.
-    await tester.tap(find.text('Filter'));
+    await tester.tap(find.byKey(const ValueKey('alertFilterButton')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('sevchip_critical')));
     await tester.pumpAndSettle();
@@ -110,6 +110,8 @@ void main() {
     final ids = _cardOrder(tester).toSet();
     expect(ids.contains('med'), isFalse); // medium not selected -> hidden
     expect(ids.containsAll({'crit', 'high'}), isTrue);
+    // The filter button shows the active count like the devices filter.
+    expect(find.text('2 filters'), findsOneWidget);
   });
 
   testWidgets('filter keeps "Load older" available so it reaches the full list',
@@ -125,7 +127,7 @@ void main() {
     final state = await _pump(tester, many);
     expect(state.alertsHaveMore, isTrue);
 
-    await tester.tap(find.text('Filter'));
+    await tester.tap(find.byKey(const ValueKey('alertFilterButton')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('sevchip_critical'))); // show only Critical
     await tester.pumpAndSettle();

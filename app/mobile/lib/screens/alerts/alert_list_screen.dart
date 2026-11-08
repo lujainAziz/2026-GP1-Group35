@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../state/app_state.dart';
 import '../../theme/assas_ui.dart';
 import '../../widgets/coming_soon.dart';
+import '../../widgets/ui_icons.dart';
 import '../../widgets/ui_kit.dart';
 import '../../widgets/ui_memory.dart';
 import 'alert_details_screen.dart';
@@ -111,6 +111,20 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   bool get _filterActive => _shown.isNotEmpty;
 
+  // Active severities, strongest first — for a stable dot/summary.
+  List<Severity> get _selectedBySeverity =>
+      _shown.toList()..sort((a, b) => b.index.compareTo(a.index));
+
+  // Same summary style as the devices filter: a single label, or "N filters".
+  String get _filterSummary => _shown.isEmpty
+      ? ''
+      : _shown.length == 1
+          ? _severityLabel(_shown.first)
+          : '${_shown.length} filters';
+
+  Color get _summaryDotColor =>
+      _shown.isEmpty ? Ui.acc : _severityColors(_selectedBySeverity.first).foreground;
+
   @override
   Widget build(BuildContext context) {
     final bottomPad = UiSpace.navBottomPad + math.max(0.0, MediaQuery.paddingOf(context).bottom - 14);
@@ -131,11 +145,10 @@ class _AlertListScreenState extends State<AlertListScreen> {
                   slivers: [
                     SliverToBoxAdapter(child: _hero()),
                     // Tabs on the left, Filter on the far right of the same row.
+                    // Scrolls with the content (not pinned) so its background is
+                    // just the screen's — no frosted/tinted bar.
                     if (Released.alerts && Released.alertManagement)
-                      SliverPersistentHeader(
-                        pinned: true,
-                        delegate: _TabsDelegate(child: _tabs(alerts)),
-                      ),
+                      SliverToBoxAdapter(child: _tabs(alerts)),
                     // The list starts directly under the tabs row.
                     SliverToBoxAdapter(
                       child: Padding(
@@ -205,40 +218,37 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   Widget _tabs(List<SecurityAlert>? alerts) {
     final list = alerts ?? const <SecurityAlert>[];
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 7, sigmaY: 7),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 6, 16, 0),
-          child: DecoratedBox(
-            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
-            child: Row(
-              // Filter pill centred vertically against the tab labels.
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Tabs on the left; scroll horizontally if they outgrow the row.
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final tab in _AlertTab.values) ...[
-                          if (tab != _AlertTab.all) const SizedBox(width: 26),
-                          _tabItem(tab, list.where(tab.matches).length),
-                        ],
-                      ],
-                    ),
-                  ),
+    // Transparent background (no blur/fill) so the row blends with the screen's
+    // gradient; only the bottom hairline marks the tab strip.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 6, 14, 0),
+      child: DecoratedBox(
+        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
+        child: Row(
+          // Filter pill centred vertically against the tab labels.
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Tabs on the left; scroll horizontally only if they can't fit.
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final tab in _AlertTab.values) ...[
+                      if (tab != _AlertTab.all) const SizedBox(width: 20),
+                      _tabItem(tab, list.where(tab.matches).length),
+                    ],
+                  ],
                 ),
-                const SizedBox(width: 12),
-                // Filter at the far right of the same row.
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: _filterPill(),
-                ),
-              ],
+              ),
             ),
-          ),
+            const SizedBox(width: 10),
+            // Filter at the far right of the same row.
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _filterPill(),
+            ),
+          ],
         ),
       ),
     );
@@ -295,30 +305,34 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   // ---------- Filter control (in the tabs row) ----------
+  // Identical in shape, colours and font to the devices-list filter button:
+  // icon only when inactive; icon + a severity-coloured dot + the summary
+  // ("Critical" / "2 filters") when active.
   Widget _filterPill() => CompositedTransformTarget(
         link: _filterLink,
         child: OverlayPortal(
           controller: _filterMenu,
           overlayChildBuilder: (context) => _filterOverlay(),
           child: Pressable(
+            key: const ValueKey('alertFilterButton'),
             onTap: () => setState(_filterMenu.toggle),
-            semanticLabel: 'Filter alerts by severity${_filterActive ? ', active' : ''}',
+            semanticLabel: 'Filter alerts by severity, $_filterSummary',
             child: Glass(
               color: _filterActive ? Ui.mix(Ui.acc, .22, Ui.surf) : Ui.fade(Ui.surf, .82),
               border: _filterActive ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
-              radius: UiRadius.pill,
+              radius: UiRadius.search,
               blur: 16,
-              height: 42,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+              height: 40,
+              padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.tune_rounded, size: 16, color: Ui.ink),
-                  const SizedBox(width: 8),
-                  Text('Filter', style: UiText.sans(12, 700)),
+                  UiIcon(UiIcons.filter, size: 18, stroke: 2, color: Ui.ink),
                   if (_filterActive) ...[
                     const SizedBox(width: 8),
-                    GlowDot(Ui.acc, size: 6, glow: 0),
+                    GlowDot(_summaryDotColor, glow: 0),
+                    const SizedBox(width: 6),
+                    Text(_filterSummary, style: UiText.sans(12, 700)),
                   ],
                 ],
               ),
@@ -599,23 +613,4 @@ class _AlertListScreenState extends State<AlertListScreen> {
       ),
     );
   }
-}
-
-class _TabsDelegate extends SliverPersistentHeaderDelegate {
-  _TabsDelegate({required this.child});
-
-  final Widget child;
-
-  @override
-  double get minExtent => 58;
-
-  @override
-  double get maxExtent => 58;
-
-  @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
-      SizedBox(height: 58, child: Align(alignment: Alignment.topLeft, child: child));
-
-  @override
-  bool shouldRebuild(_TabsDelegate old) => true;
 }
