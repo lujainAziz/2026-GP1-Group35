@@ -84,6 +84,13 @@ class Device {
   String get ipLabel => _clean(ip) ?? 'Unknown';
   String get macLabel => mac.toUpperCase();
 
+  /// IPv6 addresses worth showing: non-empty and not the unspecified address
+  /// (`::`). Valid link-local (`fe80::…`) and global addresses are kept.
+  List<String> get displayIpv6 => ipv6.where((v) {
+        final t = v.trim().toLowerCase();
+        return t.isNotEmpty && t != '::' && t != '0:0:0:0:0:0:0:0';
+      }).toList();
+
   bool get isOnline => presence == Presence.online;
   bool get isUnrecognized => !trusted;
   bool get isNotMonitored => monitored == false;

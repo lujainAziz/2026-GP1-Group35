@@ -373,7 +373,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   field('IP ADDRESS', d.ipLabel, UiText.ip),
-                  for (final address in d.ipv6.where((v) => v != d.ip))
+                  for (final address in d.displayIpv6.where((v) => v != d.ip))
                     field('IPV6 ADDRESS', address, UiText.ip),
                   field('MAC ADDRESS', d.macLabel, UiText.mac),
                 ],

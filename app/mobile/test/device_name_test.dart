@@ -2,6 +2,7 @@ import 'package:assas_core/assas_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  _ipv6();
   const device = Device(
     mac: 'aa:bb:cc:dd:ee:ff',
     hostname: 'detected-phone',
@@ -32,5 +33,28 @@ void main() {
     });
     expect(parsed.displayName, 'Kitchen phone');
     expect(parsed.copyWith(userName: '   ').displayName, 'detected-phone');
+  });
+}
+
+void _ipv6() {
+  group('displayIpv6 excludes the unspecified address', () {
+    test('drops :: and empties, keeps fe80:: and global', () {
+      const d = Device(
+        mac: 'aa:bb:cc:dd:ee:ff',
+        presence: Presence.online,
+        trusted: false,
+        ipv6: [
+          '::',
+          'fe80::1ff:fe23:4567:890a',
+          '0:0:0:0:0:0:0:0',
+          '  ',
+          '2001:16a2:c83e:5700:78f5:8a3d:cbf4:b5fe',
+        ],
+      );
+      expect(d.displayIpv6, [
+        'fe80::1ff:fe23:4567:890a',
+        '2001:16a2:c83e:5700:78f5:8a3d:cbf4:b5fe',
+      ]);
+    });
   });
 }
