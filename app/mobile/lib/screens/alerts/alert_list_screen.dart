@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
@@ -254,17 +253,19 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   Widget _tabs(List<SecurityAlert>? alerts, bool stacked) {
     final list = alerts ?? const <SecurityAlert>[];
-    // Frosted, pinned strip: fills the header height, content sits at the
-    // bottom above the hairline; the big title scrolls away above it.
+    // Pinned strip: fills the header height, content sits at the bottom above
+    // the hairline; the big title scrolls away above it. The background is an
+    // OPAQUE gradient matching the screen background's direction and colours,
+    // so nothing ghosts through while scrolling and there is no flat band.
     return ClipRect(
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 7, sigmaY: 7),
-        child: Container(
+      child: Container(
           alignment: Alignment.bottomCenter,
           decoration: BoxDecoration(
-            // Near-opaque wash over the blur so pinned content masks the list
-            // scrolling beneath it (pure blur let cards show through).
-            color: Ui.fade(Ui.bg, .88),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AssasColors.bgTop, AssasColors.bgMid],
+            ),
             border: Border(bottom: BorderSide(color: Ui.line)),
           ),
           // Inset to the page text margin so the row lines up with the big title
@@ -299,7 +300,6 @@ class _AlertListScreenState extends State<AlertListScreen> {
               Padding(padding: const EdgeInsets.only(bottom: 4), child: _filterPill()),
             ],
           ),
-        ),
       ),
     );
   }
