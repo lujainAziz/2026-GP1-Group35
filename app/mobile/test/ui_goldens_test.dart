@@ -204,7 +204,7 @@ void main() {
   // active, 3-digit counts (like All 281 / Open 280 / Resolved 1).
   Future<void> alertsHeaderShot(WidgetTester tester, String name, {required bool active}) async {
     SharedPreferences.setMockInitialValues(
-        active ? {'ui.alertSeverities': ['high', 'critical']} : {});
+        active ? {'ui.alertSeverities': ['low', 'medium', 'high', 'critical']} : {});
     for (final f in ['BricolageGrotesque', 'JetBrainsMono']) {
       final l = FontLoader(f == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
       l.addFont(rootBundle.load('assets/fonts/$f.ttf'));

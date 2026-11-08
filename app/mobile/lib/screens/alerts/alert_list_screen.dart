@@ -127,12 +127,13 @@ class _AlertListScreenState extends State<AlertListScreen> {
   Color get _summaryDotColor =>
       _shown.isEmpty ? Ui.acc : _severityColors(_selectedBySeverity.first).foreground;
 
-  // Fixed content width for the filter pill = the widest state ("2 filters"
-  // with the dot), measured at the current font scale so the pill never resizes
-  // between "Filter" and any count. No ghost widget, so no duplicate text.
+  // Fixed content width for the filter pill = the LONGEST possible state
+  // ("4 filters" — all four severities — with the dot), measured at the current
+  // font scale so the pill never resizes between "Filter" and any count. No
+  // ghost widget, so no duplicate text.
   double _pillContentWidth(BuildContext context) {
     final tp = TextPainter(
-      text: TextSpan(text: '2 filters', style: UiText.sans(12, 700)),
+      text: TextSpan(text: '4 filters', style: UiText.sans(12, 700)),
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
@@ -261,18 +262,17 @@ class _AlertListScreenState extends State<AlertListScreen> {
         child: Container(
           alignment: Alignment.bottomCenter,
           decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
-          // Right padding 16 so the Filter's right edge lines up with the alert
-          // cards below (which inset 16).
-          padding: const EdgeInsets.fromLTRB(18, 4, 16, 6),
+          // Inset to the page text margin so the row lines up with the big title
+          // and the Filter's right edge meets the end of "open alerts" above it.
+          padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 4, UiSpace.pageText, 6),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // Tabs stay on the left; shrink-to-scroll only as a last resort so
-              // All/Open/Resolved and their counts remain visible.
+              // Tabs grouped on the left (shrink-to-scroll only as a last resort
+              // so All/Open/Resolved and their counts stay visible).
               Flexible(
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  reverse: false,
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
@@ -284,8 +284,9 @@ class _AlertListScreenState extends State<AlertListScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              // Filter beside the tabs, aligned to the label baseline area.
+              // Free space between the tabs and the button; the button takes its
+              // fixed width from here and stays pinned to the right edge.
+              const SizedBox(width: 12),
               Padding(padding: const EdgeInsets.only(bottom: 4), child: _filterPill()),
             ],
           ),

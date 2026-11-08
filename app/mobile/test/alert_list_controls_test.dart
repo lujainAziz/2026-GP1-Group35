@@ -250,6 +250,46 @@ void main() {
     }
   });
 
+  testWidgets('4 filters at the largest font: button text + all tab counts on one pinned row',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(
+        {'ui.alertSeverities': ['low', 'medium', 'high', 'critical']});
+    await _loadFonts();
+    final state = AppState(_Repo([
+      for (var i = 0; i < 8; i++) _mk('o$i', Severity.high, 100 - i),
+      _mk('done', Severity.critical, 0, state: AlertState.resolved),
+    ]));
+    addTearDown(state.dispose);
+    addTearDown(tester.view.reset);
+    await tester.runAsync(state.refresh);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(360, 1600);
+    await tester.pumpWidget(MaterialApp(
+      theme: MobileTheme.light,
+      home: Builder(
+        builder: (c) => MediaQuery(
+          data: MediaQuery.of(c).copyWith(textScaler: const TextScaler.linear(1.4)),
+          child: Scaffold(body: AlertListScreen(state: state)),
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('4 filters'), findsOneWidget); // longest label fits
+    expect(tester.takeException(), isNull);
+
+    // All / Open / Resolved + counts and the button all on one line.
+    final resolved = tester.getRect(find.text('Resolved').first);
+    expect(resolved.left, greaterThanOrEqualTo(0));
+    expect(resolved.right, lessThanOrEqualTo(360));
+    final all = tester.getRect(find.text('All').first);
+    final filter = tester.getRect(find.byKey(const ValueKey('alertFilterButton')));
+    expect(filter.top < all.bottom && filter.bottom > all.top, isTrue,
+        reason: 'filter shares the tabs row');
+    expect(filter.right, lessThanOrEqualTo(360)); // within the right margin
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('back-to-top button appears after scrolling and returns to top',
       (tester) async {
     await _pump(
