@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
@@ -144,11 +145,20 @@ class _AlertListScreenState extends State<AlertListScreen> {
                   controller: _scroll,
                   slivers: [
                     SliverToBoxAdapter(child: _hero()),
-                    // Tabs on the left, Filter on the far right of the same row.
-                    // Scrolls with the content (not pinned) so its background is
-                    // just the screen's — no frosted/tinted bar.
+                    // Tabs (left) + Filter (right) pinned at the top, always one
+                    // row: the big title scrolls up while this row stays. When
+                    // the system font makes the row tight, each tab stacks its
+                    // count UNDER its name (narrower) so All/Open/Resolved and
+                    // the Filter stay on the same line; the pinned height grows
+                    // to match so the first alert is never covered.
                     if (Released.alerts && Released.alertManagement)
-                      SliverToBoxAdapter(child: _tabs(alerts)),
+                      SliverPersistentHeader(
+                        pinned: true,
+                        delegate: _TabsDelegate(
+                          extent: _tabsExtent(context, _stackedTabs(context)),
+                          child: _tabs(alerts, _stackedTabs(context)),
+                        ),
+                      ),
                     // The list starts directly under the tabs row.
                     SliverToBoxAdapter(
                       child: Padding(
@@ -216,66 +226,87 @@ class _AlertListScreenState extends State<AlertListScreen> {
     );
   }
 
-  Widget _tabs(List<SecurityAlert>? alerts) {
+  // Pinned header is tight enough to stack the tab counts under their names.
+  double _systemScale(BuildContext context) => MediaQuery.textScalerOf(context).scale(1.0);
+  bool _stackedTabs(BuildContext context) => _systemScale(context) >= 1.15;
+
+  // Height the pinned header reserves, grown to the content so it never covers
+  // the first alert. Stacked tabs (name over count) are ~two text lines tall.
+  double _tabsExtent(BuildContext context, bool stacked) {
+    final s = _systemScale(context);
+    final tabH = stacked ? 30 + 28 * s : 22 + 18 * s;
+    return math.max(tabH, 40) + 14; // max(tab, pill) + vertical padding + buffer
+  }
+
+  Widget _tabs(List<SecurityAlert>? alerts, bool stacked) {
     final list = alerts ?? const <SecurityAlert>[];
-    // Transparent background (no blur/fill) so the row blends with the screen's
-    // gradient; only the bottom hairline marks the tab strip.
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 6, 14, 0),
-      child: DecoratedBox(
-        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
-        child: Row(
-          // Filter pill centred vertically against the tab labels.
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // Tabs on the left; scroll horizontally only if they can't fit.
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final tab in _AlertTab.values) ...[
-                      if (tab != _AlertTab.all) const SizedBox(width: 20),
-                      _tabItem(tab, list.where(tab.matches).length),
+    // Frosted, pinned strip: fills the header height, content sits at the
+    // bottom above the hairline; the big title scrolls away above it.
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 7, sigmaY: 7),
+        child: Container(
+          alignment: Alignment.bottomCenter,
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Ui.line))),
+          padding: const EdgeInsets.fromLTRB(18, 4, 12, 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Tabs stay on the left; shrink-to-scroll only as a last resort so
+              // All/Open/Resolved and their counts remain visible.
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: false,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      for (final tab in _AlertTab.values) ...[
+                        if (tab != _AlertTab.all) SizedBox(width: stacked ? 12 : 14),
+                        _tabItem(tab, list.where(tab.matches).length, stacked),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            // Filter at the far right of the same row.
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _filterPill(),
-            ),
-          ],
+              const SizedBox(width: 8),
+              // Filter beside the tabs, aligned to the label baseline area.
+              Padding(padding: const EdgeInsets.only(bottom: 4), child: _filterPill()),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _tabItem(_AlertTab tab, int count) {
+  Widget _tabItem(_AlertTab tab, int count, bool stacked) {
     final on = tab == _tab;
+    final name = AnimatedDefaultTextStyle(
+      duration: const Duration(milliseconds: 250),
+      style: UiText.tab.copyWith(color: on ? Ui.ink : Ui.mute),
+      child: Text(tab.label),
+    );
+    final countText = Text('$count', style: UiText.tabCount.copyWith(color: on ? tab.color : Ui.mute));
     return Pressable(
       onTap: () => _setTab(tab),
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Padding(
-            padding: const EdgeInsets.only(top: 10, bottom: 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                AnimatedDefaultTextStyle(
-                  duration: const Duration(milliseconds: 250),
-                  style: UiText.tab.copyWith(color: on ? Ui.ink : Ui.mute),
-                  child: Text(tab.label),
-                ),
-                const SizedBox(width: 6),
-                Text('$count', style: UiText.tabCount.copyWith(color: on ? tab.color : Ui.mute)),
-              ],
-            ),
+            padding: const EdgeInsets.only(top: 8, bottom: 12),
+            // Tight layout: count UNDER the name (narrower). Otherwise side by
+            // side on one line.
+            child: stacked
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [name, const SizedBox(height: 1), countText],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [name, const SizedBox(width: 6), countText],
+                  ),
           ),
           Positioned(
             left: 0,
@@ -311,9 +342,9 @@ class _AlertListScreenState extends State<AlertListScreen> {
   Widget _pillRow(String text, {required bool dot}) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          UiIcon(UiIcons.filter, size: 18, stroke: 2, color: Ui.ink),
-          const SizedBox(width: 8),
-          if (dot) ...[GlowDot(_summaryDotColor, glow: 0), const SizedBox(width: 6)],
+          UiIcon(UiIcons.filter, size: 17, stroke: 2, color: Ui.ink),
+          const SizedBox(width: 6),
+          if (dot) ...[GlowDot(_summaryDotColor, glow: 0), const SizedBox(width: 5)],
           Text(text, style: UiText.sans(12, 700)),
         ],
       );
@@ -332,8 +363,8 @@ class _AlertListScreenState extends State<AlertListScreen> {
               border: _filterActive ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
               radius: UiRadius.search,
               blur: 16,
-              height: 40,
-              padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
+              height: 38,
+              padding: const EdgeInsets.fromLTRB(11, 0, 12, 0),
               // Fixed width across states: invisible sizers reserve the width of
               // the widest content ("Critical" / "4 filters"), so the pill does
               // not resize between inactive and active and the tab counts keep
@@ -625,4 +656,26 @@ class _AlertListScreenState extends State<AlertListScreen> {
       ),
     );
   }
+}
+
+/// Pinned tabs+filter header. Its [extent] is grown to the content (one or two
+/// text lines of tabs) so the pinned strip never covers the first alert.
+class _TabsDelegate extends SliverPersistentHeaderDelegate {
+  _TabsDelegate({required this.child, required this.extent});
+
+  final Widget child;
+  final double extent;
+
+  @override
+  double get minExtent => extent;
+
+  @override
+  double get maxExtent => extent;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      SizedBox.expand(child: child);
+
+  @override
+  bool shouldRebuild(_TabsDelegate old) => true;
 }

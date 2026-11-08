@@ -195,6 +195,61 @@ void main() {
     }
   });
 
+  testWidgets('large font: Resolved + count stay visible with Filter on the same row',
+      (tester) async {
+    for (final active in [false, true]) {
+      SharedPreferences.setMockInitialValues({});
+      await _loadFonts();
+      final state = AppState(_Repo([
+        for (var i = 0; i < 11; i++) _mk('o$i', Severity.high, 100 - i),
+        _mk('done', Severity.critical, 0, state: AlertState.resolved),
+      ]));
+      addTearDown(state.dispose);
+      addTearDown(tester.view.reset);
+      await tester.runAsync(state.refresh);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(360, 1600);
+      await tester.pumpWidget(MaterialApp(
+        theme: MobileTheme.light,
+        home: Builder(
+          builder: (c) => MediaQuery(
+            data: MediaQuery.of(c).copyWith(textScaler: const TextScaler.linear(1.4)),
+            child: Scaffold(body: AlertListScreen(state: state)),
+          ),
+        ),
+      ));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      if (active) {
+        await tester.tap(find.byKey(const ValueKey('alertFilterButton')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('sevchip_high')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('sevchip_critical')));
+        await tester.pumpAndSettle();
+        await tester.tapAt(const Offset(8, 1300));
+        await tester.pumpAndSettle();
+        expect(find.text('2 filters'), findsOneWidget);
+      } else {
+        expect(find.text('Filter'), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull, reason: 'active=$active no overflow');
+
+      // Resolved label is fully on-screen (not clipped off the right).
+      final resolved = tester.getRect(find.text('Resolved').first); // the tab (not a card's state pill)
+      expect(resolved.left, greaterThanOrEqualTo(0));
+      expect(resolved.right, lessThanOrEqualTo(360));
+
+      // Filter sits on the SAME row as the tabs (vertical overlap with "All").
+      final all = tester.getRect(find.text('All').first);
+      final filter = tester.getRect(find.byKey(const ValueKey('alertFilterButton')));
+      expect(filter.top < all.bottom && filter.bottom > all.top, isTrue,
+          reason: 'active=$active: filter should share the tabs row');
+
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
   testWidgets('back-to-top button appears after scrolling and returns to top',
       (tester) async {
     await _pump(
