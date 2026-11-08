@@ -291,6 +291,9 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: PillButton(
                       label: d.trusted ? 'Remove trust' : 'Mark as trusted',
+                      // Reserve the wider label so the pill keeps one width when
+                      // trust toggles (no jump).
+                      reserveLabel: 'Mark as trusted',
                       filled: !d.trusted,
                       busy: _saving,
                       onTap: () => _setTrusted(d, !d.trusted),

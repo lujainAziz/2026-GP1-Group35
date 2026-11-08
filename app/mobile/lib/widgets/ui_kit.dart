@@ -595,6 +595,7 @@ class PillButton extends StatelessWidget {
     this.borderColor,
     this.textColor,
     this.background,
+    this.reserveLabel,
   });
 
   final String label;
@@ -607,6 +608,12 @@ class PillButton extends StatelessWidget {
   final Color? borderColor;
   final Color? textColor;
   final Color? background;
+
+  /// When set, the button reserves the width of this label (the longest the
+  /// button can show) so it keeps ONE width as [label] toggles — no jump when a
+  /// stateful button flips its text (e.g. "Mark as trusted" ⇄ "Remove trust").
+  /// Scales with the font and the label is centred within it.
+  final String? reserveLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -625,21 +632,41 @@ class PillButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(UiRadius.button),
             border: Border.all(color: borderColor ?? Ui.acc, width: 1.5),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (busy) ...[
-                UiSpinner(size: 16, color: fg),
-                const SizedBox(width: 10),
-              ] else if (icon != null) ...[
-                IconTheme(data: IconThemeData(color: fg), child: icon!),
-                const SizedBox(width: 10),
+          child: _sized(
+            context,
+            fg,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (busy) ...[
+                  UiSpinner(size: 16, color: fg),
+                  const SizedBox(width: 10),
+                ] else if (icon != null) ...[
+                  IconTheme(data: IconThemeData(color: fg), child: icon!),
+                  const SizedBox(width: 10),
+                ],
+                Text(busy ? (busyLabel ?? label) : label, style: UiText.button.copyWith(color: fg)),
               ],
-              Text(busy ? (busyLabel ?? label) : label, style: UiText.button.copyWith(color: fg)),
-            ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  // Reserve the widest label's width (icon/spinner + gap + text) so the button
+  // keeps one width across its states; the content is centred within it.
+  Widget _sized(BuildContext context, Color fg, Widget content) {
+    if (reserveLabel == null) return content;
+    final tp = TextPainter(
+      text: TextSpan(text: reserveLabel, style: UiText.button.copyWith(color: fg)),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final lead = (busy || icon != null) ? 16.0 + 10.0 : 0.0; // spinner/icon + gap
+    return SizedBox(
+      width: lead + tp.width,
+      child: Center(widthFactor: 1, child: content),
     );
   }
 }
