@@ -338,14 +338,17 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
           quarterTurns: topLeft ? 0 : 2,
           child: CustomPaint(size: const Size(14, 14), painter: _BracketPainter(hero)),
         );
-    // Value is tap-to-copy (raw text); long IPv6 wraps at `:`/`.` groups so it
-    // stays readable without clipping.
-    Widget field(String k, String v, TextStyle style) => Padding(
+    // One uniform style for every address VALUE (IPv4, IPv6, MAC) and a smaller
+    // uniform style for the labels. The value is tap-to-copy (raw text); long
+    // addresses wrap at `:`/`.` groups at the SAME font size (no shrink/clip).
+    final labelStyle = UiText.mono(9, 600, em: .14, color: Ui.mute);
+    final valueStyle = UiText.ip; // same size + weight for IPv4, IPv6 and MAC
+    Widget field(String k, String v) => Padding(
           padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(k, style: UiText.identityLabel.copyWith(color: Ui.mute)),
+              Text(k, style: labelStyle),
               const SizedBox(height: 5),
               Pressable(
                 semanticLabel: 'Copy $k',
@@ -353,7 +356,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                   Clipboard.setData(ClipboardData(text: v));
                   showToast(context, 'Copied');
                 },
-                child: Text(breakAddress(v), style: style, softWrap: true),
+                child: Text(breakAddress(v), style: valueStyle, softWrap: true),
               ),
             ],
           ),
@@ -372,10 +375,10 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  field('IP ADDRESS', d.ipLabel, UiText.ip),
+                  field('IP ADDRESS', d.ipLabel),
                   for (final address in d.displayIpv6.where((v) => v != d.ip))
-                    field('IPV6 ADDRESS', address, UiText.ip),
-                  field('MAC ADDRESS', d.macLabel, UiText.mac),
+                    field('IPV6 ADDRESS', address),
+                  field('MAC ADDRESS', d.macLabel),
                 ],
               ),
             ),
