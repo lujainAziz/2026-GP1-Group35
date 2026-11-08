@@ -133,11 +133,11 @@ class _AlertListScreenState extends State<AlertListScreen> {
   // ghost widget, so no duplicate text.
   double _pillContentWidth(BuildContext context) {
     final tp = TextPainter(
-      text: TextSpan(text: '4 filters', style: UiText.sans(12, 700)),
+      text: TextSpan(text: '4 filters', style: UiText.sans(11.5, 700)),
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
-    return 16 + 5 + 5 + 4 + tp.width; // icon + gap + dot + gap + text
+    return 15 + 4 + 5 + 4 + tp.width; // icon + gap + dot + gap + text
   }
 
   @override
@@ -277,7 +277,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       for (final tab in _AlertTab.values) ...[
-                        if (tab != _AlertTab.all) SizedBox(width: stacked ? 12 : 14),
+                        if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
                         _tabItem(tab, list.where(tab.matches).length, stacked),
                       ],
                     ],
@@ -286,7 +286,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
               ),
               // Free space between the tabs and the button; the button takes its
               // fixed width from here and stays pinned to the right edge.
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Padding(padding: const EdgeInsets.only(bottom: 4), child: _filterPill()),
             ],
           ),
@@ -297,12 +297,18 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   Widget _tabItem(_AlertTab tab, int count, bool stacked) {
     final on = tab == _tab;
+    // Stacked (tight) tabs use a slightly smaller type so all three names and
+    // counts + the Filter button genuinely fit on one row at the app's largest
+    // font; the regular row keeps the designed tab size.
+    final nameStyle = (stacked ? UiText.sans(13.5, 700, em: -0.01) : UiText.tab)
+        .copyWith(color: on ? Ui.ink : Ui.mute);
     final name = AnimatedDefaultTextStyle(
       duration: const Duration(milliseconds: 250),
-      style: UiText.tab.copyWith(color: on ? Ui.ink : Ui.mute),
+      style: nameStyle,
       child: Text(tab.label),
     );
-    final countText = Text('$count', style: UiText.tabCount.copyWith(color: on ? tab.color : Ui.mute));
+    final countText = Text('$count',
+        style: UiText.mono(stacked ? 10.5 : 11, 600).copyWith(color: on ? tab.color : Ui.mute));
     return Pressable(
       onTap: () => _setTab(tab),
       child: Stack(
@@ -358,10 +364,10 @@ class _AlertListScreenState extends State<AlertListScreen> {
   Widget _pillRow(String text, {required bool dot}) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          UiIcon(UiIcons.filter, size: 16, stroke: 2, color: Ui.ink),
-          const SizedBox(width: 5),
+          UiIcon(UiIcons.filter, size: 15, stroke: 2, color: Ui.ink),
+          const SizedBox(width: 4),
           if (dot) ...[GlowDot(_summaryDotColor, size: 5, glow: 0), const SizedBox(width: 4)],
-          Text(text, style: UiText.sans(12, 700)),
+          Text(text, style: UiText.sans(11.5, 700)),
         ],
       );
 

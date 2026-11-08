@@ -215,13 +215,13 @@ void main() {
     await tester.runAsync(s.refresh);
     addTearDown(tester.view.reset);
     tester.view.devicePixelRatio = 2;
-    tester.view.physicalSize = const Size(390 * 2, 360 * 2); // just the top of the screen
+    tester.view.physicalSize = const Size(390 * 2, 430 * 2); // just the top of the screen
     await tester.pumpWidget(MaterialApp(
       theme: MobileTheme.light,
       home: Builder(
         builder: (ctx) => MediaQuery(
-          data: MediaQuery.of(ctx).copyWith(textScaler: const TextScaler.linear(1.4)),
-          child: DesignScale(zoom: 1, child: Material(color: Ui.bg, child: AlertListScreen(state: s))),
+          data: MediaQuery.of(ctx).copyWith(textScaler: const TextScaler.linear(1.3)),
+          child: DesignScale(zoom: 1.2, child: Material(color: Ui.bg, child: AlertListScreen(state: s))),
         ),
       ),
     ));
@@ -234,12 +234,12 @@ void main() {
   testWidgets('alerts-filter-active-large', (t) => alertsHeaderShot(t, 'alerts-filter-active-large', active: true), skip: !gen);
 }
 
-/// 281 alerts: 280 open (mostly Low, a couple High) + 1 resolved Critical, so
-/// the tabs read All 281 / Open 280 / Resolved 1. The active filter (High +
+/// 288 alerts: 287 open (mostly Low, a couple High) + 1 resolved Critical, so
+/// the tabs read All 288 / Open 287 / Resolved 1. The active filter (High +
 /// Critical) renders only a few cards, keeping the shot light.
 class _AlertsBulkRepo extends DemoRepository {
   final List<SecurityAlert> _list = [
-    for (var i = 0; i < 278; i++)
+    for (var i = 0; i < 285; i++)
       SecurityAlert(id: 'l$i', kind: AlertKind.threat, title: 'sig l$i', deviceName: 'dev',
           time: DateTime(2026, 11, 7, 10).add(Duration(seconds: 1000 - i)),
           severity: Severity.low, state: AlertState.newAlert),
