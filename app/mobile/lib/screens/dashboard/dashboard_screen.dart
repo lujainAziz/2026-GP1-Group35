@@ -334,29 +334,35 @@ class DashboardScreen extends StatelessWidget {
             Expanded(
               flex: 100,
               child: Column(
-                // Stretch so both cards fill the column width with identical
-                // left/right edges (they share one fixed width).
+                // Stretch so both cards share one width; Expanded makes the two
+                // cards + the gap span the full column height, which (in the
+                // IntrinsicHeight row) equals the Online card — Open alerts
+                // aligns to Online's top and Unrecognized to its bottom.
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Pressable(
-                    onTap: onOpenAlerts, // PBI-17
-                    child: _CardX(
-                      radius: UiRadius.card,
-                      color: Ui.mix(Ui.high, .16, Ui.surf),
-                      child: Released.alertsHome
-                          ? _statInner('Open\nalerts', open?.toString() ?? '–', Ui.high)
-                          : _soonInner('Open\nalerts', 2),
+                  Expanded(
+                    child: Pressable(
+                      onTap: onOpenAlerts, // PBI-17
+                      child: _CardX(
+                        radius: UiRadius.card,
+                        color: Ui.mix(Ui.high, .16, Ui.surf),
+                        child: Released.alertsHome
+                            ? _statInner('Open\nalerts', open?.toString() ?? '–', Ui.high)
+                            : _soonInner('Open\nalerts', 2),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Pressable(
-                    onTap: onOpenUnrecognized ?? onOpenDevices,
-                    child: _CardX(
-                      radius: UiRadius.card,
-                      stripes: Ui.mix(Ui.med, .14, Ui.surf),
-                      // Soft hyphen (U+00AD): invisible normally; if the word must break at
-                      // the largest size it hyphenates cleanly instead of a raw mid-word cut.
-                      child: _statInner('Unrecog\u00adnized', '${state.unrecognizedCount}', Ui.med),
+                  Expanded(
+                    child: Pressable(
+                      onTap: onOpenUnrecognized ?? onOpenDevices,
+                      child: _CardX(
+                        radius: UiRadius.card,
+                        stripes: Ui.mix(Ui.med, .14, Ui.surf),
+                        // Soft hyphen (U+00AD): invisible normally; if the word must break at
+                        // the largest size it hyphenates cleanly instead of a raw mid-word cut.
+                        child: _statInner('Unrecog\u00adnized', '${state.unrecognizedCount}', Ui.med),
+                      ),
                     ),
                   ),
                 ],
@@ -377,13 +383,22 @@ class DashboardScreen extends StatelessWidget {
   Widget _statCard(String label, Widget value) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        runSpacing: 2,
+      // Centre the label/value row vertically now the card fills the column
+      // height; stretch keeps the Wrap full-width so the value sits at the
+      // right edge.
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(label, style: UiText.sans(13, 600, height: 1.2)),
-          value,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 2,
+            children: [
+              Text(label, style: UiText.sans(13, 600, height: 1.2)),
+              value,
+            ],
+          ),
         ],
       ),
     );

@@ -3,6 +3,7 @@ import 'package:assas_mobile/screens/dashboard/dashboard_screen.dart';
 import 'package:assas_mobile/state/app_state.dart';
 import 'package:assas_mobile/theme/assas_ui.dart';
 import 'package:assas_mobile/widgets/design_scale.dart';
+import 'package:assas_mobile/widgets/ui_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -93,6 +94,44 @@ void main() {
       final card = find.ancestor(of: label, matching: find.byType(Wrap)).first;
       expect(find.descendant(of: card, matching: find.text('SOON')), findsOneWidget, reason: reason);
     });
+  });
+
+  testWidgets('right column fills the Online card height; the two cards share one width',
+      (tester) async {
+    for (final font in ['BricolageGrotesque', 'JetBrainsMono']) {
+      final loader = FontLoader(font == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
+      loader.addFont(rootBundle.load('assets/fonts/$font.ttf'));
+      await loader.load();
+    }
+    final state = AppState(DemoRepository());
+    addTearDown(state.dispose);
+    addTearDown(tester.view.reset);
+    await tester.runAsync(state.refresh);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 900);
+    await tester.pumpWidget(MaterialApp(
+      theme: MobileTheme.light,
+      home: Scaffold(
+        body: DashboardScreen(state: state, onOpenDevices: () {}, onOpenAlerts: () {}),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // The card = the Pressable wrapping each stat card.
+    Rect cardOf(Finder text) => tester.getRect(
+          find.ancestor(of: text, matching: find.byType(Pressable)).first,
+        );
+    final online = cardOf(find.text('ONLINE'));
+    final openAlerts = cardOf(find.text('Open\nalerts'));
+    final unrecognized = cardOf(find.text('Unrecog\u00adnized'));
+
+    // Open alerts aligns to Online's top; Unrecognized to its bottom.
+    expect(openAlerts.top, moreOrLessEquals(online.top, epsilon: 1.0));
+    expect(unrecognized.bottom, moreOrLessEquals(online.bottom, epsilon: 1.0));
+    // The two right cards share one width and the same right/left edges.
+    expect(openAlerts.width, moreOrLessEquals(unrecognized.width, epsilon: 0.5));
+    expect(openAlerts.left, moreOrLessEquals(unrecognized.left, epsilon: 0.5));
+    expect(openAlerts.right, moreOrLessEquals(unrecognized.right, epsilon: 0.5));
   });
 
   testWidgets('dashboard with 170 devices (3-digit counts) has no overflow; Unrecognized is one word',
