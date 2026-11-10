@@ -365,9 +365,28 @@ and reasons is in `appliance/suricata/disable.conf`.
   Assas-Test: none of the 86 disabled rules produced an event (checked by
   `last_event_time`, so deduplicated repeats are included). New alerts came only
   from rules outside the list.
-- Pi tests after the change: `test_api`, `test_frontend_contract` and
-  `test_alerts`, 148 tests, all OK.
+- Pi tests after the change: test_api and test_frontend_contract with unittest
+  (148 tests, OK). test_alerts.py uses pytest and was not collected by that
+  run; on 2026-11-10 the full suite was run with pytest: 559 passed.
 - No stored alerts were altered or deleted.
+
+### Rule-scope tuning, round 3 (applied 2026-11-10)
+
+Same team decision as round 2: disable every rule that only produces trivial
+alerts. The names and reasons are in `appliance/suricata/disable.conf`.
+
+- Scope: 8 SIDs: 2029575, 2054136, 2054151, 2064184, 2064185, 2031231, 2034636
+  and 2200075. This includes ZeroSSL (2031231), which round 2 had kept enabled.
+  packed-exe rules and 2100498 (detection self-test) stay enabled.
+- 2029575 showed as Critical and 2054136/2054151 as High because their
+  classtypes have priority 1 and 2 in `classification.config`; the severity
+  mapping itself is correct.
+- Applied with `suricata-update --offline` after backups of
+  `/etc/suricata/disable.conf` and the rules file (stored outside the
+  repository).
+- Enabled rules **53,207 → 53,199 (−8)**, same counting method as round 2. The
+  enabled-SID diff equals exactly the 8 SIDs; nothing was added.
+- `suricata -T` passed; the service was restarted and all services are active.
 
 ## Alert-log reset (2026-11-05)
 
@@ -378,6 +397,18 @@ deleted in a single transaction after a validated WAL-aware SQLite backup
 immediately after the reader restarted the table held 0 rows, and only events
 newer than the reset enter the new log. Devices, names, trust, pairing and rule
 configuration were untouched. Evidence: `evidence/alert-log-reset.md`.
+
+## Alert-log reset (2026-11-10)
+
+Team decision: start a clean log after rule-scope tuning round 3, so the list
+shows only events after all three tuning rounds. Same procedure as 2026-11-05:
+the 352 existing `alerts` rows were deleted in a single transaction after a
+WAL-aware SQLite backup (integrity check ok, 352 rows in both the database and
+the backup; stored outside the repository). Read checkpoints
+(`alert_ingest_state`) and devices were unchanged; after the reader restarted
+the table stayed at 0 rows (no re-ingestion). A live self-test afterwards
+produced exactly one alert (2100498, High), linked to the correct phone.
+Evidence: `evidence/alert-log-reset-2026-11-10.md`.
 
 ## Known limitations
 
