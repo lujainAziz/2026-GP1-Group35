@@ -340,6 +340,35 @@ Application and verification (evidence: `evidence/rule-tuning/`):
   SURICATA STREAM/decoder rule group is unchanged pending the capture-path
   check (see Known limitations).
 
+### Rule-scope tuning, round 2 (applied 2026-11-10)
+
+Team decision on 2026-11-09: disable every rule that only produces trivial
+alerts (normal usage or harmless protocol oddities). The full list with names
+and reasons is in `appliance/suricata/disable.conf`.
+
+- Prerequisite: the capture-load check (`evidence/capture-load-check.md`) found
+  no capture loss, so STREAM events are not caused by missed packets.
+- Scope: 27 SIDs plus the whole `stream-events.rules` group (59 rules: 58 alert
+  rules and 1 drop rule, 2210057, which acts as an alert in IDS mode). 2100498
+  stays enabled as the detection self-test. packed-exe and ZeroSSL rules stay
+  enabled.
+- Applied with `suricata-update --offline` after backups of
+  `/etc/suricata/disable.conf` and the rules file (stored outside the
+  repository).
+- Enabled rules **53,293 → 53,207 (−86)**, counted as lines starting with
+  `alert`, `drop`, `pass` or `reject`; this method matches the round 1 figure of
+  53,293. The enabled-SID diff equals exactly the 27 SIDs plus the 59
+  stream-events SIDs; nothing was added.
+- `suricata -T` passed; the service was restarted at 2026-11-10 00:49:55 (+03)
+  and loaded 53,212 signatures; all services active.
+- Post-apply monitoring 00:49:55 to 01:03 (+03), with a phone streaming video on
+  Assas-Test: none of the 86 disabled rules produced an event (checked by
+  `last_event_time`, so deduplicated repeats are included). New alerts came only
+  from rules outside the list.
+- Pi tests after the change: `test_api`, `test_frontend_contract` and
+  `test_alerts`, 148 tests, all OK.
+- No stored alerts were altered or deleted.
+
 ## Alert-log reset (2026-11-05)
 
 To start a clean log after the rule tuning, the 645 existing `alerts` rows were
@@ -386,7 +415,8 @@ configuration were untouched. Evidence: `evidence/alert-log-reset.md`.
   anomalies, truncated IPv6 packets) surface as Medium threat alerts. They are
   diagnostics of traffic/capture quality rather than threat indicators; their
   tuning is deliberately deferred until the capture path (mirror/offload
-  settings) is examined.
+  settings) is examined. (Decision made on 2026-11-09: see "Rule-scope
+  tuning, round 2".)
 - **Detection evaluation:** the replayed-dataset evaluation has not been run
   (datasets on hold); unit and live tests do not substitute for it
   (`EVALUATION.md`).
