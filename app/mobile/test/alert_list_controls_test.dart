@@ -300,6 +300,47 @@ void main() {
     }
   });
 
+  testWidgets('375px, normal text: All 267 / Open 266 / Resolved 1 fit beside Filter',
+      (tester) async {
+    // Web at 375 wide goes through DesignScale; the unstacked tabs row is at its
+    // tightest here with three-digit counts.
+    SharedPreferences.setMockInitialValues({});
+    await _loadFonts();
+    final state = AppState(_Repo([
+      for (var i = 0; i < 266; i++) _mk('o$i', Severity.high, 1000 - i),
+      _mk('done', Severity.critical, 0, state: AlertState.resolved),
+    ]));
+    addTearDown(state.dispose);
+    addTearDown(tester.view.reset);
+    await tester.runAsync(state.refresh);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(375, 1600);
+    await tester.pumpWidget(MaterialApp(
+      theme: MobileTheme.light,
+      home: Builder(
+        builder: (c) => MediaQuery(
+          data: MediaQuery.of(c).copyWith(textScaler: TextScaler.noScaling),
+          child: DesignScale(
+            child: Material(color: Ui.bg, child: AlertListScreen(state: state)),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+
+    for (final t in ['All', 'Open', 'Resolved', '267', '266']) {
+      expect(find.text(t).first, findsOneWidget, reason: t);
+    }
+    // "Resolved" is whole: on-screen and left of the Filter button, not clipped.
+    final resolved = tester.getRect(find.text('Resolved').first); // the tab
+    final filter = tester.getRect(find.byKey(const ValueKey('alertFilterButton')));
+    expect(resolved.right, lessThanOrEqualTo(filter.left));
+    expect(filter.right, lessThanOrEqualTo(375));
+    expect(resolved.top < filter.bottom && resolved.bottom > filter.top, isTrue,
+        reason: 'Resolved shares the row with Filter');
+  });
+
   testWidgets('back-to-top button appears after scrolling and returns to top',
       (tester) async {
     await _pump(

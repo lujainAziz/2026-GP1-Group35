@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:assas_core/assas_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:assas_design/widgets/ui_kit.dart' show surfCard;
@@ -198,24 +199,30 @@ class Glass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = BorderRadius.circular(radius);
+    final surface = Container(
+      height: height,
+      width: width,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: r,
+        border: Border.all(color: border ?? Ui.line),
+      ),
+      child: child,
+    );
     return DecoratedBox(
       decoration: BoxDecoration(borderRadius: r, boxShadow: shadows),
       child: ClipRRect(
         borderRadius: r,
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: blur / 2, sigmaY: blur / 2),
-          child: Container(
-            height: height,
-            width: width,
-            padding: padding,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: r,
-              border: Border.all(color: border ?? Ui.line),
-            ),
-            child: child,
-          ),
-        ),
+        // No backdrop blur on web: under the app-wide DesignScale transform and
+        // TopFade's ShaderMask it paints faint, shifted copies of the text
+        // behind it ("ghost text"). The fill colour alone keeps the look.
+        child: kIsWeb
+            ? surface
+            : BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: blur / 2, sigmaY: blur / 2),
+                child: surface,
+              ),
       ),
     );
   }
