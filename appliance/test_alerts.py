@@ -16,6 +16,15 @@ import alerts
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers
 # --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def _no_host_excluded_ips(monkeypatch):
+    # Never read the test host's real interface/gateway addresses: tests that
+    # need exclusions set the cache themselves.
+    monkeypatch.setitem(alerts._excluded_ip_cache, "ips", set())
+    monkeypatch.setitem(alerts._excluded_ip_cache, "known", True)
+    monkeypatch.setitem(alerts._excluded_ip_cache, "ts", 9e18)
+
+
 def make_conn(tmp_path):
     conn = sqlite3.connect(tmp_path / "test.db")
     alerts.ensure_schema(conn)
@@ -269,6 +278,76 @@ def test_link_device_ambiguous_ip_reuse_stays_unlinked(tmp_path):
     conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('solo','10.0.0.5')")
     conn.commit()
     assert alerts.link_device(conn, "10.0.0.5", "8.8.8.8") == "solo"
+
+
+def _set_excluded_ips(monkeypatch, *ips):
+    monkeypatch.setitem(
+        alerts._excluded_ip_cache, "ips", {alerts.ipaddress.ip_address(i) for i in ips})
+
+
+def test_link_device_appliance_self_ip_is_never_a_link_target(tmp_path, monkeypatch):
+    # 2026-11-10 incident: DHCP gave the appliance 192.168.8.102, which an
+    # offline iPhone still holds in its stale last_ipv4. An alert .102 -> .104
+    # linked to the iPhone (source wins); it must link the .104 device.
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,ip,last_ipv4) "
+                 "VALUES('22:d4:ef:df:c4:6a','fe80::1cd4:efff:fedf:c46a','192.168.8.102')")
+    conn.execute("INSERT INTO devices(mac,ip,last_ipv4) "
+                 "VALUES('dc:97:ba:fc:34:ce','192.168.8.104','192.168.8.104')")
+    conn.execute("INSERT INTO devices(mac,ip,last_ipv4) "
+                 "VALUES('da:ce:83:df:22:d0','192.168.8.104','192.168.8.104')")
+    conn.commit()
+    add_addr_table(conn, [
+        ("da:ce:83:df:22:d0", "192.168.8.104", "ipv4", "arp",
+         "2026-11-09T08:00:00", "2026-11-10T21:00:00"),
+    ])
+    t = "2026-11-10T20:30:00"
+    # without the exclusion this is the mislink observed on the device
+    assert alerts.link_device(conn, "192.168.8.102", "192.168.8.104", t) == "22:d4:ef:df:c4:6a"
+    _set_excluded_ips(monkeypatch, "192.168.8.102", "192.168.8.255", "192.168.8.1")
+    assert alerts.link_device(conn, "192.168.8.102", "192.168.8.104", t) == "da:ce:83:df:22:d0"
+    # and in the reverse direction
+    assert alerts.link_device(conn, "192.168.8.104", "192.168.8.102", t) == "da:ce:83:df:22:d0"
+
+
+def test_link_device_gateway_multicast_broadcast_sides_stay_unlinked(tmp_path, monkeypatch):
+    # Even when an inventory row claims the address, a gateway, multicast,
+    # broadcast or unspecified side never links; the other side still does.
+    conn = make_conn(tmp_path)
+    for mac, ip in [("gw:gw", "192.168.8.1"), ("mc:4", "224.0.0.251"),
+                    ("bc:lim", "255.255.255.255"), ("bc:net", "192.168.8.255"),
+                    ("mc:6", "ff02::1"), ("un:sp", "0.0.0.0")]:
+        conn.execute("INSERT INTO devices(mac,ip) VALUES(?,?)", (mac, ip))
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('aa:aa','192.168.8.50')")
+    conn.commit()
+    _set_excluded_ips(monkeypatch, "192.168.8.102", "192.168.8.255", "192.168.8.1")
+    t = "2026-11-10T20:30:00"
+    assert alerts.link_device(conn, "192.168.8.1", "8.8.8.8", t) is None        # gateway
+    assert alerts.link_device(conn, "8.8.8.8", "224.0.0.251", t) is None        # v4 multicast
+    assert alerts.link_device(conn, "8.8.8.8", "255.255.255.255", t) is None    # limited bcast
+    assert alerts.link_device(conn, "8.8.8.8", "192.168.8.255", t) is None      # subnet bcast
+    assert alerts.link_device(conn, "2606:4700::1", "ff02::1", t) is None       # v6 multicast
+    assert alerts.link_device(conn, "0.0.0.0", "8.8.8.8", t) is None            # unspecified
+    # the excluded side is skipped, the other side resolved as usual
+    assert alerts.link_device(conn, "192.168.8.1", "192.168.8.50", t) == "aa:aa"
+
+
+IP_ADDR = (
+    "1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever\n"
+    "2: eth0    inet 192.168.8.102/24 brd 192.168.8.255 scope global dynamic eth0\\       "
+    "valid_lft 85000sec preferred_lft 85000sec\n"
+    "2: eth0    inet6 fe80::dea6:32ff:fe01:0203/64 scope link \\       "
+    "valid_lft forever preferred_lft forever\n"
+)
+
+
+def test_parse_interface_addrs():
+    ip = alerts.ipaddress.ip_address
+    assert alerts.parse_interface_addrs(IP_ADDR) == {
+        ip("127.0.0.1"), ip("192.168.8.102"), ip("192.168.8.255"),
+        ip("fe80::dea6:32ff:fe01:203"),
+    }
+    assert alerts.parse_interface_addrs("") == set()
 
 
 # --------------------------------------------------------------------------- #

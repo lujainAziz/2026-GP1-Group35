@@ -230,10 +230,12 @@ def link_device(conn, src_ip, dst_ip, event_time=None):
     The link is made ONLY when exactly one device owns the address; a conflict
     (more than one MAC) or absence of evidence leaves the alert unlinked
     (device_mac NULL) with the reason logged. Network-prefix membership alone
-    is never used.
+    is never used. Multicast/broadcast/unspecified addresses and the
+    appliance's own and gateway IPs (excluded_ips_now) are never link targets;
+    the other side is still resolved.
     """
     def resolve(ip):
-        if not ip:
+        if not ip or _is_excluded_ip(ip):
             return None
         # The evidence table is AUTHORITATIVE for any address it knows: when
         # the address has evidence rows, only the time-windowed evidence may
@@ -414,6 +416,77 @@ def gateway_macs_now(conn, now=None):
         _gateway_cache["known"] = bool(macs)
         _gateway_cache["ts"] = now
     return _gateway_cache["macs"], _gateway_cache["known"]
+
+
+# Excluded-IP cache (appliance's own addresses + gateway next hops): same TTL
+# policy as the gateway cache, since DHCP can change the appliance's address.
+_excluded_ip_cache = {"ips": set(), "known": False, "ts": 0.0}
+
+
+def parse_interface_addrs(out):
+    """Addresses (and IPv4 `brd` broadcasts) from `ip -o addr show` output."""
+    ips = set()
+    for line in out.splitlines():
+        parts = line.split()
+        for key in ("inet", "inet6", "brd"):
+            if key not in parts or parts.index(key) + 1 >= len(parts):
+                continue
+            value = parts[parts.index(key) + 1].split("/", 1)[0].split("%", 1)[0]
+            try:
+                ips.add(ipaddress.ip_address(value))
+            except ValueError:
+                continue
+    return ips
+
+
+def _resolve_excluded_ips():
+    """The appliance's own interface addresses plus the default-route next
+    hops (IPv4 + IPv6): never link targets for IP-based attribution."""
+    ips = set()
+    try:
+        ips |= parse_interface_addrs(
+            subprocess.check_output(["ip", "-o", "addr", "show"], text=True, timeout=5))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for args in (["ip", "route", "show", "default"],
+                 ["ip", "-6", "route", "show", "default"]):
+        try:
+            out = subprocess.check_output(args, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for ip_, _dev in parse_default_routes(out):
+            try:
+                ips.add(ipaddress.ip_address(ip_.split("%", 1)[0]))
+            except ValueError:
+                continue
+    return ips
+
+
+def excluded_ips_now(now=None):
+    """Appliance + gateway IPs with a TTL cache. A failed (empty) resolution
+    excludes nothing and is retried on the short interval."""
+    now = time.time() if now is None else now
+    ttl = GATEWAY_REFRESH_SECONDS if _excluded_ip_cache["known"] else GATEWAY_RETRY_SECONDS
+    if now - _excluded_ip_cache["ts"] >= ttl:
+        ips = _resolve_excluded_ips()
+        _excluded_ip_cache["ips"] = ips
+        _excluded_ip_cache["known"] = bool(ips)
+        _excluded_ip_cache["ts"] = now
+    return _excluded_ip_cache["ips"]
+
+
+def _is_excluded_ip(ip):
+    """Multicast, broadcast, unspecified, the appliance itself or a gateway:
+    such an address never identifies a device to link an alert to."""
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return False
+    if addr.is_multicast or addr.is_unspecified:
+        return True
+    if addr.version == 4 and addr == ipaddress.IPv4Address("255.255.255.255"):
+        return True
+    return addr in excluded_ips_now()
 
 
 def _is_multicast_mac(mac):
