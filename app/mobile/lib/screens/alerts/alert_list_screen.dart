@@ -276,12 +276,14 @@ class _AlertListScreenState extends State<AlertListScreen> {
             children: [
               // Tabs grouped on the left; Expanded (not Flexible) so the free
               // space lives HERE and the Filter is pushed to the far right even
-              // when the tabs are narrow. Scrolls only as a last resort.
+              // when the tabs are narrow. Shrinks slightly only as a last resort
+              // (never clips "Resolved").
               Expanded(
                 child: Align(
                   alignment: Alignment.bottomLeft,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.bottomLeft,
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
