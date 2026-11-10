@@ -365,8 +365,9 @@ and reasons is in `appliance/suricata/disable.conf`.
   Assas-Test: none of the 86 disabled rules produced an event (checked by
   `last_event_time`, so deduplicated repeats are included). New alerts came only
   from rules outside the list.
-- Pi tests after the change: `test_api`, `test_frontend_contract` and
-  `test_alerts`, 148 tests, all OK.
+- Pi tests after the change: test_api and test_frontend_contract with unittest
+  (148 tests, OK). test_alerts.py uses pytest and was not collected by that
+  run; on 2026-11-10 the full suite was run with pytest: 559 passed.
 - No stored alerts were altered or deleted.
 
 ## Alert-log reset (2026-11-05)
