@@ -1,0 +1,17 @@
+# ASSAS suricata-update config. Deployed to /etc/suricata/update.yaml.
+#
+# Adds the demo/self-test rules (assas-test.rules) as a local rule source, so
+# suricata-update merges them into suricata.rules on every run. Use a single
+# explicit file only: /etc/suricata/rules holds Suricata's bundled rules, so a
+# directory or *.rules wildcard there would load them twice.
+#
+# /etc/suricata/disable.conf must still be applied. Verify after
+# `suricata-update --offline`: the enabled-rule count must be exactly 53,203
+# (53,199 + 4) and the enabled-SID diff exactly 1000001-1000004. If the count
+# is higher, disable.conf was not applied: restore the backups.
+
+# Explicit, so the disabled SIDs from all tuning rounds stay applied.
+disable-conf: /etc/suricata/disable.conf
+
+local:
+  - /etc/suricata/assas-test.rules
