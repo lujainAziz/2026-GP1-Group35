@@ -388,6 +388,30 @@ alerts. The names and reasons are in `appliance/suricata/disable.conf`.
   enabled-SID diff equals exactly the 8 SIDs; nothing was added.
 - `suricata -T` passed; the service was restarted and all services are active.
 
+### Severity test rules (applied 2026-11-10)
+
+Purpose: verify that the full pipeline handles all four severity levels
+(capture, detection, priority-to-severity mapping, device linking, display).
+These are test rules, not attack simulation; real-attack detection is shown by
+the ET Open rules and the dataset evaluation.
+
+- Four local rules, SIDs 1000001-1000004, priority 1-4 (Critical, High,
+  Medium, Low). Each fires on an HTTP request to `/assas-test/<level>` on the
+  appliance. The request is harmless (the server answers 404).
+- Loaded through `suricata-update` with `/etc/suricata/update.yaml`: a `local:`
+  entry for `/etc/suricata/assas-test.rules` and an explicit `disable-conf`,
+  so all tuning rounds stay applied. Both files are in `appliance/suricata/`.
+- Applied with `suricata-update --offline` after a backup of the rules file
+  (stored outside the repository).
+- Enabled rules **53,199 → 53,203 (+4)**, same counting method as round 2. The
+  enabled-SID diff equals exactly 1000001-1000004; nothing was removed.
+- `suricata -T` passed; the service was restarted and all services are active.
+- Live check: requests from a laptop, an iPad and a phone on the monitored
+  Wi-Fi produced Critical, High, Medium and Low alerts, each linked to the
+  requesting device.
+- Note: repeated requests to the same path from the same device within 5
+  minutes merge into one alert (the occurrence count increases).
+
 ## Alert-log reset (2026-11-05)
 
 To start a clean log after the rule tuning, the 645 existing `alerts` rows were
