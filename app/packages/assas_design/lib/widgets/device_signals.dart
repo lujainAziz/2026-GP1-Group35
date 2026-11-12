@@ -93,14 +93,14 @@ class DeviceSignal {
 class ConnectionLook {
   ConnectionLook._();
 
-  // User-facing connection is Online / Offline, with Outdated when the last data
-  // could not be refreshed. This describes the app<->appliance link only; each
-  // device keeps its own Online/Offline presence regardless of this.
+  // User-facing connection is Connected / Disconnected, with Outdated when the
+  // last data could not be refreshed. This describes the app<->appliance link
+  // only; Online/Offline is reserved for each device's own presence.
   static String text(ConnectionStatus c) => switch (c) {
         ConnectionStatus.checking => 'CONNECTING',
-        ConnectionStatus.live => 'ONLINE',
+        ConnectionStatus.live => 'CONNECTED',
         ConnectionStatus.stale => 'OUTDATED',
-        ConnectionStatus.unreachable => 'OFFLINE',
+        ConnectionStatus.unreachable => 'DISCONNECTED',
       };
 
   static Color color(ConnectionStatus c) => switch (c) {
