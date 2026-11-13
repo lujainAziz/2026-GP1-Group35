@@ -424,9 +424,13 @@ Team decision on 2026-11-11: `EXTERNAL_NET` changed from `"!$HOME_NET"` to
 stock `"any"` line uncommented), so rules also match attacks coming from
 devices inside the home network.
 
-- Why: of the 42,978 enabled rule lines that reference `EXTERNAL_NET`, 41,153
-  use it as the source. With `"!$HOME_NET"`, an attacking device inside the
-  home network would not match them.
+- Why: of the 53,203 enabled rules, 32,412 reference `EXTERNAL_NET` on one
+  side: 12,015 use it as the source (an attacker outside the home), and the
+  rest mostly as the destination (for example, a device contacting a server on
+  the Internet). With `"!$HOME_NET"`, none of these rules could match traffic
+  where both sides are devices inside the home network. Counted on the device
+  on 2026-11-14 over enabled rule lines only (lines starting with alert, drop,
+  pass or reject).
 - Applied after a backup of `/etc/suricata/assas.yaml` (stored outside the
   repository). `suricata -T` passed; the service was restarted and all
   services are active.
