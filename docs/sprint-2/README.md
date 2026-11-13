@@ -437,6 +437,8 @@ devices inside the home network.
 - `appliance/suricata/assas.yaml` and `gen_assas_yaml.py` (edit 7) match the
   device.
 - Effect on alert volume: monitoring in progress.
+- Evidence: `evidence/internal-scan-detection.md` (an internal scan by a laptop
+  on Assas-Test, detected only because of this change).
 
 ## Alert-log reset (2026-11-05)
 
