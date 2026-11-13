@@ -10,6 +10,8 @@ Surgical, assertion-guarded edits only (fails fast if the stock layout shifts):
   6. eve-log ethernet: yes — log the Ethernet header (src/dest MAC) in events,
      so address-less decoder events (e.g. IPv6 truncated packet) can be
      attributed to a known device by MAC.
+  7. EXTERNAL_NET "!$HOME_NET" -> "any" (stock "any" line uncommented), so
+     rules also match attacks coming from devices inside the home network.
 Everything else is left exactly as Debian ships it.
 """
 import sys
@@ -30,6 +32,8 @@ def expect(n, text):
 
 # --- anchor checks ---------------------------------------------------------
 expect(18, '    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"')
+expect(24, '    EXTERNAL_NET: "!$HOME_NET"')
+expect(25, '    #EXTERNAL_NET: "any"')
 expect(104, "      #ethernet: no  # log ethernet header in events when available")
 expect(64, "stats:")
 expect(68, "  interval: 8")
@@ -89,6 +93,14 @@ for i, ln in enumerate(lines):
         break
 if not done:
     sys.exit("ASSERT FAIL: af-packet eth0 interface not found")
+
+# 7. EXTERNAL_NET "!$HOME_NET" -> "any": comment out the stock line and
+#    uncomment the stock "any" line. Lines 24/25 are untouched by the edits
+#    above (all at lines > 25) and must run before the HOME_NET insert at 18.
+assert lines[24 - 1] == '    EXTERNAL_NET: "!$HOME_NET"', "EXTERNAL_NET line moved before the edit"
+assert lines[25 - 1] == '    #EXTERNAL_NET: "any"', "EXTERNAL_NET any line moved before the edit"
+lines[24 - 1] = '    #EXTERNAL_NET: "!$HOME_NET"'
+lines[25 - 1] = '    EXTERNAL_NET: "any"'
 
 # 5. HOME_NET: add the standard local IPv6 ranges. The ISP-delegated global
 #    IPv6 prefix is dynamic, so it is deferred (documented, not hardcoded).

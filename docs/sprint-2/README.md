@@ -128,7 +128,12 @@ reproducible via the generator):
    packet events, no stored payloads (keeps Sprint 1's no-payload rule).
 3. `outputs.fast` (fast.log) disabled.
 4. Global `stats.interval` `8` → **`30`** s (modest; feeds the Evaluation drop-rate).
-5. Rules path unchanged: `default-rule-path: /var/lib/suricata/rules`, `rule-files: [suricata.rules]`.
+5. `HOME_NET`: local IPv6 ranges `fc00::/7` (ULA) and `fe80::/10` (link-local) added.
+6. `eve-log` `ethernet: yes` (src/dest MAC in events, for device attribution).
+7. `EXTERNAL_NET` `"!$HOME_NET"` → **`"any"`** (see "EXTERNAL_NET widened (applied 2026-11-11)").
+8. ASSAS header comment block inserted after the `---` line.
+
+Rules path unchanged: `default-rule-path: /var/lib/suricata/rules`, `rule-files: [suricata.rules]`.
 
 **Log rotation.** The stock `/etc/logrotate.d/suricata` used `copytruncate` (forbidden — corrupts
 the ingester's offset resume) and globbed `*.json`. It is replaced as follows:
@@ -411,6 +416,23 @@ the ET Open rules and the dataset evaluation.
   requesting device.
 - Note: repeated requests to the same path from the same device within 5
   minutes merge into one alert (the occurrence count increases).
+
+### EXTERNAL_NET widened (applied 2026-11-11)
+
+Team decision on 2026-11-11: `EXTERNAL_NET` changed from `"!$HOME_NET"` to
+`"any"` in `/etc/suricata/assas.yaml` (the stock line is commented out and the
+stock `"any"` line uncommented), so rules also match attacks coming from
+devices inside the home network.
+
+- Why: of the 42,978 enabled rule lines that reference `EXTERNAL_NET`, 41,153
+  use it as the source. With `"!$HOME_NET"`, an attacking device inside the
+  home network would not match them.
+- Applied after a backup of `/etc/suricata/assas.yaml` (stored outside the
+  repository). `suricata -T` passed; the service was restarted and all
+  services are active.
+- `appliance/suricata/assas.yaml` and `gen_assas_yaml.py` (edit 7) match the
+  device.
+- Effect on alert volume: monitoring in progress.
 
 ## Alert-log reset (2026-11-05)
 
