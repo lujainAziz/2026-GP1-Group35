@@ -23,6 +23,11 @@ const _ipv6 = '2001:16a2:dea6:2200:79ee:14d2:e191:965e';
 const _opaqueHost = 'a7f3e9c1b2d84f60a7f3e9c1b2d84f60'; // 32 hex -> machine id
 const _longTitle =
     'ET FILE_SHARING Commonly Abused File Sharing Domain (wasabisys .com) in TLS SNI';
+// Longest reviewed explanation (policy-violation) to exercise wrapping.
+const _longExplanation =
+    'Activity that puts privacy or security at serious risk, such as sending a password '
+    'without encryption or using anonymity networks. It is not always an attack, but it '
+    'should not happen without a reason. Check whether this activity is expected on this device.';
 
 class _FixtureRepo extends DemoRepository {
   final Device _dev = const Device(
@@ -38,6 +43,8 @@ class _FixtureRepo extends DemoRepository {
   Future<List<SecurityAlert>?> getAlerts({int? limit}) async => [
         SecurityAlert.fromApi({
           'id': '1', 'kind': 'threat', 'title': _longTitle,
+          'display_title': 'Unsafe activity', 'explanation': _longExplanation,
+          'classtype': 'policy-violation', 'device_role': 'source',
           'device_mac': _mac, 'device_name': 'Unknown device',
           'time': '2026-11-04T10:00:00', 'severity': 'medium', 'state': 'new',
           'source_ip': '192.168.100.238', 'destination_ip': _ipv6,
@@ -128,6 +135,14 @@ void main() {
     expect(find.textContaining(':443'), findsNothing);
     expect(find.text('SOURCE IP'), findsOneWidget);
     expect(find.text('DESTINATION IP'), findsOneWidget);
+    // Plain title as heading; original rule name in the details (rule id hidden).
+    expect(find.text('Unsafe activity'), findsOneWidget);
+    expect(find.text('RULE'), findsOneWidget);
+    expect(find.text(_longTitle), findsOneWidget);
+    expect(find.textContaining('2046657'), findsNothing);
+    // Explanation + device role line.
+    expect(find.text(_longExplanation), findsOneWidget);
+    expect(find.text('This device started the activity.'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 

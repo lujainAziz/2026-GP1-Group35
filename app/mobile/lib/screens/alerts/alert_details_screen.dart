@@ -116,8 +116,8 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                       ],
                     ),
                   ),
-                  // Plain-language explanation ships in a later sprint; hidden
-                  // now since explanation is NULL for Sprint 2 threat alerts.
+                  // Plain-language explanation per classtype (Sprint 2, Option 2),
+                  // followed by the device role line when it is known.
                   if (Released.alertExplanations) ...[
                     SectionHeader(
                       'What happened',
@@ -133,13 +133,16 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                   // Device shown once via the tappable pill above the time, so it
                   // is not repeated here. Occurrences, first/last seen, rule id and
                   // ports are intentionally hidden from this screen (they remain in
-                  // the database and API); only source/destination IP are shown.
+                  // the database and API); the original rule name and the
+                  // source/destination IP are shown.
                   SpecList(
                     railColor: c,
                     copyable: const {'Source IP', 'Destination IP'},
                     onCopy: (_) => showToast(context, 'Copied'),
                     rows: [
                       ('Alert type', a.kindLabel, Ui.ink),
+                      if (a.kind == AlertKind.threat && a.ruleName != null && a.ruleName != a.title)
+                        ('Rule', a.ruleName!, Ui.ink),
                       ('Severity', a.severityLabel, c),
                       // Last seen = the actual last event time (dedup bumps it).
                       // First seen stays hidden per the field-hiding decision.
@@ -306,9 +309,21 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            a.explanation ?? 'A plain-language explanation is not available for this alert yet.',
-                            style: UiText.alertDescription,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                a.explanation ?? 'A plain-language explanation is not available for this alert yet.',
+                                style: UiText.alertDescription,
+                              ),
+                              if (a.roleLine != null) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  a.roleLine!,
+                                  style: UiText.alertDescription.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ),

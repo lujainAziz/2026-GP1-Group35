@@ -11,6 +11,12 @@ Design notes:
   1 -> Critical, 2 -> High, 3 -> Medium, >=4 -> Low.
 - Device linking matches src/dst against the device inventory; both match ->
   source device (the other IP is still stored); neither -> device_mac NULL.
+  The matched side is stored as device_role ('source' / 'target'); it is NULL
+  for unlinked and MAC-attributed alerts.
+- Classtype: eve gives `alert.category` (the classtype DESCRIPTION). It is
+  stored as-is and mapped back to the short classtype name through Suricata's
+  classification.config; an unknown/ambiguous description or a missing file
+  stores classtype NULL (the API then shows the fallback title).
 - Deduplication: the same rule firing for the same device again within the
   window (default 5 min, from the last event) updates the existing alert
   (occurrence_count++ / last_event_time bumped; event_time kept). For alerts
@@ -28,6 +34,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import signal
 import sqlite3
 import subprocess
@@ -37,6 +44,10 @@ from datetime import datetime, timedelta
 
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 EVE_PATH = os.getenv("ASSAS_EVE_PATH", "/var/log/suricata/eve.json")
+# The file Suricata loads (assas.yaml `classification-file`).
+CLASSIFICATION_PATH = os.getenv(
+    "ASSAS_CLASSIFICATION_PATH", "/etc/suricata/classification.config"
+)
 DEDUP_WINDOW_SECONDS = int(os.getenv("ASSAS_ALERT_DEDUP_WINDOW", "300"))
 POLL_SECONDS = float(os.getenv("ASSAS_ALERT_POLL_SECONDS", "2"))
 # How many fully-consumed rotated eve files to keep (for debugging) before the
@@ -81,9 +92,20 @@ CREATE TABLE IF NOT EXISTS alerts (
     anomaly_score    REAL,
     threshold        REAL,
     occurrence_count INTEGER NOT NULL DEFAULT 1,
-    last_event_time  TEXT NOT NULL
+    last_event_time  TEXT NOT NULL,
+    category         TEXT,
+    classtype        TEXT,
+    device_role      TEXT
 )
 """
+
+# Columns added after the table first shipped; ensure_alert_columns adds them
+# to an existing table (existing rows keep NULL: fallback title, no role line).
+ADDED_ALERT_COLUMNS = (
+    ("category", "TEXT"),      # eve alert.category (classtype description)
+    ("classtype", "TEXT"),     # short classtype name, NULL when unresolved
+    ("device_role", "TEXT"),   # 'source' / 'target' / NULL
+)
 
 STATE_DDL = """
 CREATE TABLE IF NOT EXISTS alert_ingest_state (
@@ -112,6 +134,27 @@ def ensure_schema(conn):
         conn.execute(STATE_DDL)
         for ddl in INDEX_DDL:
             conn.execute(ddl)
+    ensure_alert_columns(conn)
+
+
+def ensure_alert_columns(conn):
+    """Add ADDED_ALERT_COLUMNS to an existing alerts table (idempotent).
+
+    Also called by the API at startup, which may run before the ingester has
+    migrated. A missing alerts table is left alone (the ingester creates it).
+    """
+    with conn:
+        have = {r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+        if not have:
+            return
+        for column, sql_type in ADDED_ALERT_COLUMNS:
+            if column not in have:
+                try:
+                    conn.execute(f"ALTER TABLE alerts ADD COLUMN {column} {sql_type}")
+                except sqlite3.OperationalError as exc:
+                    # Another process added it between PRAGMA and ALTER.
+                    if "duplicate column" not in str(exc).lower():
+                        raise
 
 
 # --------------------------------------------------------------------------- #
@@ -182,8 +225,11 @@ def parse_alert_event(obj):
             ether_src = eth["src_mac"].lower()
         if isinstance(eth.get("dest_mac"), str):
             ether_dst = eth["dest_mac"].lower()
+    cat = a.get("category")
     return {
         "title": sig if isinstance(sig, str) and sig.strip() else "Suricata alert",
+        # Classtype description; absent for rules with no classtype.
+        "category": cat.strip() if isinstance(cat, str) and cat.strip() else None,
         "rule_id": _as_int(a.get("signature_id")),
         "severity": severity_label(a.get("severity")),
         "event_time": local_naive_iso(obj.get("timestamp")),
@@ -194,6 +240,82 @@ def parse_alert_event(obj):
         "ether_src": ether_src,
         "ether_dst": ether_dst,
     }
+
+
+# Same shape Suricata accepts: shortname, description (may contain commas), priority.
+_CLASSIFICATION_RE = re.compile(
+    r"^\s*config\s+classification\s*:\s*([A-Za-z0-9_-]+)\s*,\s*(.+?)\s*,\s*(\d+)\s*$"
+)
+
+
+def parse_classification_config(text):
+    """classification.config text -> {description: short classtype name}.
+
+    A description shared by two different classtypes maps to None, since eve's
+    `category` could not tell them apart. Comments and malformed lines are
+    skipped.
+    """
+    by_desc = {}
+    for line in text.splitlines():
+        m = _CLASSIFICATION_RE.match(line)
+        if not m:
+            continue
+        name, desc = m.group(1), m.group(2).strip()
+        if desc in by_desc and by_desc[desc] not in (None, name):
+            by_desc[desc] = None
+        elif desc not in by_desc:
+            by_desc[desc] = name
+    return by_desc
+
+
+# Reloaded when the file's mtime changes (suricata-update may rewrite it).
+_classification_cache = {"path": None, "mtime": None, "map": {}}
+_classification_warned = set()
+
+
+def _warn_once(key, msg, *args):
+    if key not in _classification_warned:
+        _classification_warned.add(key)
+        log.warning(msg, *args)
+
+
+def classification_map(path=None):
+    """The description -> classtype map for `path`; {} if the file is unreadable."""
+    path = path or CLASSIFICATION_PATH
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError as exc:
+        _warn_once(("missing", path), "classification file %s unavailable (%s); "
+                   "alerts get classtype NULL (fallback title)", path, exc)
+        return {}
+    c = _classification_cache
+    if c["path"] != path or c["mtime"] != mtime:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                c["map"] = parse_classification_config(f.read())
+        except OSError as exc:
+            _warn_once(("unreadable", path), "could not read classification file "
+                       "%s (%s); alerts get classtype NULL", path, exc)
+            return {}
+        c["path"], c["mtime"] = path, mtime
+    return c["map"]
+
+
+def classtype_for(category, path=None):
+    """Short classtype name for an eve `category`, or None if unresolvable."""
+    if not category:
+        return None
+    mapping = classification_map(path)
+    if not mapping:
+        return None
+    if category not in mapping:
+        _warn_once(("unknown", category), "eve category %r not in classification "
+                   "file; classtype NULL", category)
+        return None
+    if mapping[category] is None:
+        _warn_once(("ambiguous", category), "eve category %r maps to more than one "
+                   "classtype; classtype NULL", category)
+    return mapping[category]
 
 
 def _addr_forms(ip):
@@ -212,9 +334,15 @@ def _addr_forms(ip):
 
 
 def link_device(conn, src_ip, dst_ip, event_time=None):
+    """The linked device MAC only; see link_device_with_role."""
+    return link_device_with_role(conn, src_ip, dst_ip, event_time)[0]
+
+
+def link_device_with_role(conn, src_ip, dst_ip, event_time=None):
     """Match src/dst IPs against the inventory and the address-evidence set.
 
-    one side -> that device; both -> source device; neither -> None.
+    Returns (mac, role): one side -> that device, role 'source' or 'target';
+    both -> source device, role 'source'; neither -> (None, None).
     The caller still stores both IPs on the alert, so the other IP is retained.
 
     Two sources are consulted per address:
@@ -297,9 +425,11 @@ def link_device(conn, src_ip, dst_ip, event_time=None):
 
     src_mac = resolve(src_ip)
     dst_mac = resolve(dst_ip)
-    if src_mac and dst_mac:
-        return src_mac  # both match -> link to the source device
-    return src_mac or dst_mac
+    if src_mac:
+        return src_mac, "source"  # src only, or both match -> the source device
+    if dst_mac:
+        return dst_mac, "target"
+    return None, None
 
 
 _LOCAL_MACS = None
@@ -547,7 +677,7 @@ def relink_recent(conn, window_hours=None, now_iso=None):
     Discovery can lag an address's first use (a fresh privacy IPv6 may alert
     before NDP/ARP evidence lands). This pass re-runs link_device for alerts
     with device_mac NULL whose last_event_time lies within the bounded window,
-    and sets ONLY device_mac on a reliable single match. occurrence_count,
+    and sets ONLY device_mac (and its device_role) on a reliable single match. occurrence_count,
     event times and states are never touched; events are not re-read; alerts
     older than the window are never rewritten.
     """
@@ -566,13 +696,13 @@ def relink_recent(conn, window_hours=None, now_iso=None):
         raise
     linked = 0
     for alert_id, src, dst, event_time in rows:
-        mac = link_device(conn, src, dst, event_time)
+        mac, role = link_device_with_role(conn, src, dst, event_time)
         if mac:
             with conn:
                 cur = conn.execute(
-                    "UPDATE alerts SET device_mac=? "
+                    "UPDATE alerts SET device_mac=?, device_role=? "
                     "WHERE alert_id=? AND device_mac IS NULL",
-                    (mac, alert_id),
+                    (mac, role, alert_id),
                 )
                 linked += cur.rowcount
     if linked:
@@ -584,8 +714,12 @@ def _parse_iso(s):
     return datetime.fromisoformat(s) if s else None
 
 
-def upsert_alert(conn, a, device_mac, window_seconds):
-    """Insert a new Threat Alert, or merge into an existing one within the window."""
+def upsert_alert(conn, a, device_mac, window_seconds, device_role=None):
+    """Insert a new Threat Alert, or merge into an existing one within the window.
+
+    A merge leaves category/classtype/device_role as first stored: like the
+    stored IPs, the role describes the alert's first event.
+    """
     event_time = a["event_time"] or local_naive_iso(
         datetime.now().isoformat(timespec="seconds")
     )
@@ -630,14 +764,31 @@ def upsert_alert(conn, a, device_mac, window_seconds):
     conn.execute(
         "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
         "src_ip, dst_ip, src_port, dst_port, severity, state, occurrence_count, "
-        "last_event_time) VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', 1, ?)",
+        "last_event_time, category, classtype, device_role) "
+        "VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', 1, ?, ?, ?, ?)",
         (
             device_mac, a["title"], a["rule_id"], event_time,
             a["src_ip"], a["dst_ip"], a["src_port"], a["dst_port"],
             a["severity"], event_time,
+            a.get("category"), a.get("classtype"),
+            device_role if device_mac is not None else None,
         ),
     )
     return "inserted"
+
+
+def ingest_alert(conn, a, window_seconds):
+    """Resolve classtype, link the device (with its role), and upsert one alert."""
+    a = dict(a, classtype=classtype_for(a.get("category")))
+    if a["src_ip"] is None and a["dst_ip"] is None:
+        # Address-less event (e.g. truncated packet): MAC attribution. No role:
+        # the frame MAC does not show which side started the activity.
+        device_mac = link_device_by_mac(conn, a["ether_src"], a["ether_dst"])
+        role = None
+    else:
+        device_mac, role = link_device_with_role(
+            conn, a["src_ip"], a["dst_ip"], a["event_time"])
+    return upsert_alert(conn, a, device_mac, window_seconds, role)
 
 
 def split_complete_lines(data):
@@ -716,12 +867,7 @@ def process_file(conn, path, window_seconds):
                 continue
             if a is None:
                 continue
-            if a["src_ip"] is None and a["dst_ip"] is None:
-                # Address-less event (e.g. truncated packet): MAC attribution.
-                device_mac = link_device_by_mac(conn, a["ether_src"], a["ether_dst"])
-            else:
-                device_mac = link_device(conn, a["src_ip"], a["dst_ip"], a["event_time"])
-            upsert_alert(conn, a, device_mac, window_seconds)
+            ingest_alert(conn, a, window_seconds)
         conn.execute(
             "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
             "VALUES (?, ?, ?, ?, ?) "

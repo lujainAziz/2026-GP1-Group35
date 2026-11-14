@@ -15,6 +15,7 @@ import unittest
 from collections import namedtuple
 from datetime import datetime, timedelta
 
+import alert_text
 import api
 
 # Full devices schema, matching what discovery.py creates.
@@ -1550,8 +1551,79 @@ class AlertEndpointTests(_SeededDBTest):
         self.assertEqual((b.source_ip, b.destination_ip), ("203.0.113.1", "198.51.100.1"))
         self.assertEqual(a.device_name, "cam-1")  # hostname (no user_name)
         self.assertEqual(a.first_event_time, "2026-11-02T10:00:00")
-        self.assertIsNone(a.explanation)
+        # No classtype stored -> fallback text; rule name stays in title.
+        self.assertEqual(a.display_title, "Security alert")
+        self.assertEqual(a.explanation, alert_text.FALLBACK_TEXT[1])
+        self.assertIsNone(a.device_role)
         self.assertIsNone(a.anomaly_score)
+
+    def test_classtype_gives_plain_title_explanation_and_role(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="laptop", status="online")
+        self._add_alert(
+            device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat",
+            title="ET SCAN Suspicious inbound to mySQL port 3306", rule_id=2010937,
+            event_time="2026-11-02T10:00:00", severity="Medium", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            src_ip="192.168.8.50", dst_ip="192.168.8.60",
+            category="Detection of a Network Scan", classtype="network-scan",
+            device_role="source")
+        self._add_alert(
+            device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET WEB X",
+            rule_id=7, event_time="2026-11-02T11:00:00", severity="Critical",
+            state="New", occurrence_count=1, last_event_time="2026-11-02T11:00:00",
+            src_ip="203.0.113.9", dst_ip="192.168.8.50",
+            classtype="web-application-attack", device_role="target")
+        target, source = api.list_alerts(conn=self.conn, limit=200)
+        # The original rule name is kept in `title`; nothing existing is removed.
+        self.assertEqual(source.title, "ET SCAN Suspicious inbound to mySQL port 3306")
+        self.assertEqual(source.rule_id, 2010937)
+        self.assertEqual(source.display_title, "Network scan")
+        self.assertEqual(source.explanation, alert_text.CLASSTYPE_TEXT["network-scan"][1])
+        self.assertEqual(source.classtype, "network-scan")
+        self.assertEqual(source.category, "Detection of a Network Scan")
+        self.assertEqual(source.device_role, "source")
+        self.assertEqual(target.display_title, "Web attack attempt")
+        self.assertEqual(target.device_role, "target")
+        # Single-alert and per-device endpoints carry the same fields.
+        one = api.get_alert(int(source.id), conn=self.conn)
+        self.assertEqual((one.display_title, one.device_role), ("Network scan", "source"))
+        dev = api.list_device_alerts("aa:bb:cc:dd:ee:ff", conn=self.conn, limit=200)
+        self.assertEqual([a.display_title for a in dev], ["Web attack attempt", "Network scan"])
+
+    def test_unknown_classtype_and_unlinked_role_fall_back(self):
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ASSAS TEST Critical",
+            rule_id=1000001, event_time="2026-11-02T10:00:00", severity="Critical",
+            state="New", occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            classtype="tcp-connection", device_role="source")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual(a.title, "ASSAS TEST Critical")
+        self.assertEqual(a.severity, "critical")  # severity unchanged
+        self.assertEqual((a.display_title, a.explanation), alert_text.FALLBACK_TEXT)
+        self.assertIsNone(a.device_role)  # no device -> no role line
+
+    def test_table_without_new_columns_still_reads(self):
+        # An alerts table the ingester has not migrated yet (pre-classtype).
+        self.conn.execute(
+            "CREATE TABLE alerts (alert_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "device_mac TEXT, alert_type TEXT NOT NULL DEFAULT 'Threat', "
+            "title TEXT NOT NULL, rule_id INTEGER, event_time TEXT NOT NULL, "
+            "src_ip TEXT, dst_ip TEXT, src_port INTEGER, dst_port INTEGER, "
+            "severity TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'New', "
+            "explanation TEXT, model_version TEXT, anomaly_score REAL, "
+            "threshold REAL, occurrence_count INTEGER NOT NULL DEFAULT 1, "
+            "last_event_time TEXT NOT NULL)")
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ET OLD", rule_id=3,
+            event_time="2026-11-02T10:00:00", severity="Low", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual(a.title, "ET OLD")
+        self.assertEqual(a.display_title, "Security alert")
+        self.assertIsNone(a.classtype)
+        self.assertIsNone(a.device_role)
 
     def test_user_name_preferred_for_device_name(self):
         self._schema()

@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool, field_validator, model_validator
 
 import model_db
+from alert_text import alert_text
 
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 
@@ -445,11 +446,11 @@ class AlertOut(BaseModel):
 
     String casing is locked to what SecurityAlert.fromApi matches: kind
     "threat", state "new", severity one of critical/high/medium/low (all
-    lowercase). explanation and the anomaly fields are null this sprint.
+    lowercase). The anomaly fields are null this sprint.
     """
     id: str
     kind: str = "threat"
-    title: str
+    title: str  # the original Suricata rule name (unchanged)
     device_mac: Optional[str] = None
     device_name: str
     time: Optional[str] = None  # = last_event_time (app orders/display by this)
@@ -464,8 +465,14 @@ class AlertOut(BaseModel):
     destination_ip: Optional[str] = None
     src_port: Optional[int] = None
     dst_port: Optional[int] = None
-    # Hidden this sprint; sent explicitly as null so the contract is stable.
+    # Plain-language text per classtype (alert_text.py; fallback when unknown).
+    display_title: Optional[str] = None
     explanation: Optional[str] = None
+    classtype: Optional[str] = None
+    category: Optional[str] = None
+    # "source" (device started the activity) / "target" / null (no line).
+    device_role: Optional[str] = None
+    # Hidden this sprint; sent explicitly as null so the contract is stable.
     model_version: Optional[str] = None
     anomaly_score: Optional[float] = None
     threshold: Optional[float] = None
@@ -860,10 +867,23 @@ def set_device_name(mac: str, body: NameUpdate):
 _ALERT_SELECT = (
     "SELECT a.alert_id, a.device_mac, a.title, a.rule_id, a.event_time, "
     "a.src_ip, a.dst_ip, a.src_port, a.dst_port, a.severity, a.state, "
-    "a.occurrence_count, a.last_event_time, "
+    "a.occurrence_count, a.last_event_time, a.explanation, {added}, "
     "d.user_name, d.hostname, d.model "
     "FROM alerts a LEFT JOIN devices d ON d.mac = a.device_mac "
 )
+
+# Columns the ingester adds to existing tables (alerts.ADDED_ALERT_COLUMNS).
+# The API may run before the ingester has migrated, so a missing one reads as
+# NULL instead of failing the query; the API never alters the alerts table.
+_ALERT_ADDED_COLUMNS = ("category", "classtype", "device_role")
+
+
+def _alert_select(conn) -> str:
+    have = {r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+    added = ", ".join(
+        f"a.{c}" if c in have else f"NULL AS {c}" for c in _ALERT_ADDED_COLUMNS
+    )
+    return _ALERT_SELECT.format(added=added)
 
 _SEVERITIES = ("critical", "high", "medium", "low")
 _STATES = ("new", "reviewed", "resolved")
@@ -936,6 +956,8 @@ _ALLOWED_SOURCES = {
 
 
 def row_to_alert(row) -> AlertOut:
+    display_title, explanation = alert_text(row["classtype"])
+    role = row["device_role"] if row["device_mac"] else None
     return AlertOut(
         id=str(row["alert_id"]),
         kind="threat",
@@ -953,17 +975,23 @@ def row_to_alert(row) -> AlertOut:
         destination_ip=row["dst_ip"],
         src_port=row["src_port"],
         dst_port=row["dst_port"],
+        display_title=display_title,
+        # A stored explanation (none written today) wins over the classtype text.
+        explanation=row["explanation"] or explanation,
+        classtype=row["classtype"],
+        category=row["category"],
+        device_role=role if role in ("source", "target") else None,
     )
 
 
 def _query_alerts(conn, where: str, args: tuple, limit: int, offset: int = 0):
     # Stable order (last_event_time, then the monotonic alert_id) so paging with
     # LIMIT/OFFSET is deterministic even when timestamps tie.
-    sql = (
-        _ALERT_SELECT + "WHERE a.alert_type = 'Threat' AND " + where
-        + " ORDER BY a.last_event_time DESC, a.alert_id DESC LIMIT ? OFFSET ?"
-    )
     try:
+        sql = (
+            _alert_select(conn) + "WHERE a.alert_type = 'Threat' AND " + where
+            + " ORDER BY a.last_event_time DESC, a.alert_id DESC LIMIT ? OFFSET ?"
+        )
         return conn.execute(sql, (*args, limit, offset)).fetchall()
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc).lower():

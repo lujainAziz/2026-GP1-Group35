@@ -73,13 +73,43 @@ void main() {
     });
 
     test('copyWith preserves the Sprint-2 fields', () {
-      final a = SecurityAlert.fromApi(_apiAlert());
+      final a = SecurityAlert.fromApi(_apiAlert(over: {'display_title': 'Malware activity', 'device_role': 'target'}));
       final b = a.copyWith(state: AlertState.reviewed);
       expect(b.state, AlertState.reviewed);
       expect(b.occurrenceCount, 4);
       expect(b.ruleId, '2025001');
       expect(b.srcPort, 1234);
       expect(b.firstTime, a.firstTime);
+      expect(b.title, 'Malware activity');
+      expect(b.ruleName, 'ET MALWARE X');
+      expect(b.deviceRole, 'target');
+    });
+
+    test('plain title, rule name, explanation and role line from the API', () {
+      final a = SecurityAlert.fromApi(_apiAlert(over: {
+        'display_title': 'Malware activity',
+        'explanation': 'Traffic from or to this device matches a known pattern of malicious software.',
+        'classtype': 'trojan-activity',
+        'device_role': 'source',
+      }));
+      expect(a.title, 'Malware activity');      // shown in the alert list
+      expect(a.ruleName, 'ET MALWARE X');       // original Suricata rule name
+      expect(a.ruleId, '2025001');              // still parsed (hidden in the UI)
+      expect(a.explanation, startsWith('Traffic from or to this device'));
+      expect(a.roleLine, 'This device started the activity.');
+      final t = SecurityAlert.fromApi(_apiAlert(over: {'device_role': 'target'}));
+      expect(t.roleLine, 'This device was the target.');
+    });
+
+    test('older appliance (no display_title) and unknown role fall back', () {
+      final a = SecurityAlert.fromApi(_apiAlert(over: {'device_role': 'sideways'}));
+      expect(a.title, 'ET MALWARE X');          // rule name, as before
+      expect(a.ruleName, 'ET MALWARE X');
+      expect(a.deviceRole, isNull);
+      expect(a.roleLine, isNull);
+      final none = SecurityAlert.fromApi(_apiAlert(over: {'title': null}));
+      expect(none.title, 'Security alert');
+      expect(none.ruleName, isNull);
     });
   });
 
@@ -94,7 +124,8 @@ void main() {
       // Everything else stays hidden until its own sprint:
       expect(FeatureRelease.alertsHome, isFalse); // Home count + recent summary (PBI-24)
       expect(FeatureRelease.alertDisplay, isFalse); // 7-inch display count
-      expect(FeatureRelease.alertExplanations, isFalse); // "What happened" block
+      // Threat Alert explanations RELEASED in Sprint 2 (Dr. Luluah, Option 2).
+      expect(FeatureRelease.alertExplanations, isTrue); // "What happened" block
       expect(FeatureRelease.risk, isFalse); // network risk
     });
   });
