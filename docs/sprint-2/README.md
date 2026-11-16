@@ -302,7 +302,7 @@ appliance session is headless). See `evidence/ui/README.md` and the per-criterio
 
 ### Threat Alert titles and explanations (2026-11-14)
 
-Dr. Luluah's decision (Option 2): Threat Alert explanations ship in Sprint 2.
+Sprint 2 decision (2026-11-11): Option 2. Threat Alert explanations ship in Sprint 2.
 - **Plain title per classtype** in the alert list (e.g. "Malware activity", "Network scan").
 - The **original Suricata rule name** is kept and shown in the alert details ("Rule" row); the
   **rule ID stays hidden** (kept in the database and service).

@@ -124,7 +124,7 @@ void main() {
       // Everything else stays hidden until its own sprint:
       expect(FeatureRelease.alertsHome, isFalse); // Home count + recent summary (PBI-24)
       expect(FeatureRelease.alertDisplay, isFalse); // 7-inch display count
-      // Threat Alert explanations RELEASED in Sprint 2 (Dr. Luluah, Option 2).
+      // Threat Alert explanations RELEASED in Sprint 2 (Option 2).
       expect(FeatureRelease.alertExplanations, isTrue); // "What happened" block
       expect(FeatureRelease.risk, isFalse); // network risk
     });

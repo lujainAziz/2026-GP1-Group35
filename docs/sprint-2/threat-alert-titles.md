@@ -1,6 +1,6 @@
 # Threat Alert titles and explanations: DRAFT for team review
 
-Source: Dr. Luluah's decision (2026-11-11), Option 2. The title in the alert list is a short plain-language name based on the rule classification (classtype). The original Suricata rule name stays visible in the alert details. Titles must be clear and must accurately reflect the detected threat.
+Source: Sprint 2 decision (2026-11-11): Option 2. The title in the alert list is a short plain-language name based on the rule classification (classtype). The original Suricata rule name stays visible in the alert details. Titles must be clear and must accurately reflect the detected threat.
 
 Classtypes below are the 39 that appear in the enabled rules on the device (counted 2026-11-14), ordered by number of enabled rules.
 
@@ -64,4 +64,4 @@ The explanation is written so it reads correctly with either line.
 1. Language: English only, same as the app interface.
 2. Rules with no classtype, including the four test rules (ASSAS TEST Critical/High/Medium/Low), use the fallback title "Security alert". Their original rule name stays in the details, and their severity is unchanged.
 3. policy-violation keeps its Critical severity (priority 1). Its title is "Unsafe activity" (not "not an attack", so the title does not contradict the Critical badge).
-4. Each title and explanation is reviewed by at least one more team member before release (Dr. Luluah: titles must not understate or overstate the risk).
+4. Each title and explanation is reviewed by at least one more team member before release (titles must not understate or overstate the risk).
