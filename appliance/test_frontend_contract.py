@@ -229,7 +229,12 @@ class AlertContractTests(unittest.TestCase):
         self.assertEqual(a['destination_ip'], '8.8.8.8')
         self.assertEqual(a['src_port'], 1234)
         self.assertEqual(a['dst_port'], 53)
-        self.assertIsNone(a['explanation'])
+        # No classtype stored on this row -> fallback title/explanation, no role.
+        self.assertEqual(a['display_title'], 'Security alert')
+        self.assertTrue(a['explanation'])
+        self.assertIsNone(a['classtype'])
+        self.assertIsNone(a['category'])
+        self.assertIsNone(a['device_role'])
         self.assertIsNone(a['anomaly_score'])
         # single-alert + per-device endpoints
         one = self.phone.get('/alerts/' + a['id'])

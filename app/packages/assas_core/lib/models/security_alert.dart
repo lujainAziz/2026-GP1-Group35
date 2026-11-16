@@ -12,7 +12,8 @@ class SecurityAlert {
   final String id;
   final AlertKind kind;
 
-  /// Short name, e.g. "Port scan detected" or "Unusual activity".
+  /// Short name, e.g. "Port scan detected" or "Unusual activity". For threat
+  /// alerts from the API this is the plain-language title (display_title).
   final String title;
   final String? deviceMac;
   final String deviceName;
@@ -32,6 +33,13 @@ class SecurityAlert {
 
   /// Threat alerts (PBI-14): matched rule, ports, and dedup fields.
   final String? ruleId;
+
+  /// The original Suricata rule name (API `title`), shown in the details.
+  final String? ruleName;
+
+  /// Which side of the stored traffic the linked device was: 'source' or
+  /// 'target'; null when unlinked or not known (no role line is shown).
+  final String? deviceRole;
   final int? srcPort;
   final int? dstPort;
 
@@ -56,6 +64,8 @@ class SecurityAlert {
     this.sourceIp,
     this.destinationIp,
     this.ruleId,
+    this.ruleName,
+    this.deviceRole,
     this.srcPort,
     this.dstPort,
     this.occurrenceCount = 1,
@@ -68,6 +78,13 @@ class SecurityAlert {
   /// Device name for display: opaque machine identifiers collapse to
   /// 'Unknown device' (the raw name stays in [deviceName] / the API).
   String get displayDeviceName => sanitizeDeviceName(deviceName);
+
+  /// The device role line under the explanation, or null when not known.
+  String? get roleLine => switch (deviceRole) {
+        'source' => 'This device started the activity.',
+        'target' => 'This device was the target.',
+        _ => null,
+      };
 
   String get kindLabel => kind == AlertKind.threat ? 'Threat Alert' : 'Anomaly Alert';
 
@@ -118,6 +135,8 @@ class SecurityAlert {
         sourceIp: sourceIp,
         destinationIp: destinationIp,
         ruleId: ruleId,
+        ruleName: ruleName,
+        deviceRole: deviceRole,
         srcPort: srcPort,
         dstPort: dstPort,
         occurrenceCount: occurrenceCount,
@@ -131,13 +150,21 @@ class SecurityAlert {
   //   "device_mac": "5b:8c:...", "device_name": "Work laptop",
   //   "time": "2026-10-08T21:15:00", "severity": "low|medium|high|critical",
   //   "state": "new|reviewed|resolved", "explanation": "...", "note": "...",
-  //   "source_ip": "...", "destination_ip": "..."
+  //   "source_ip": "...", "destination_ip": "...",
+  //   "display_title": "Network scan", "device_role": "source|target|null"
   // }
+  // Threat alerts: `title` is the Suricata rule name and `display_title` the
+  // plain-language title; an older appliance without display_title shows the
+  // rule name as before.
   factory SecurityAlert.fromApi(Map<String, dynamic> j) {
+    final ruleName = j['title']?.toString();
+    final role = j['device_role']?.toString();
     return SecurityAlert(
       id: j['id'].toString(),
       kind: j['kind']?.toString() == 'anomaly' ? AlertKind.anomaly : AlertKind.threat,
-      title: (j['title'] ?? 'Security alert').toString(),
+      title: (j['display_title'] ?? ruleName ?? 'Security alert').toString(),
+      ruleName: ruleName,
+      deviceRole: role == 'source' || role == 'target' ? role : null,
       deviceMac: j['device_mac']?.toString(),
       deviceName: (j['device_name'] ?? 'Unknown device').toString(),
       time: DateTime.tryParse(j['time']?.toString() ?? '') ?? DateTime.now(),

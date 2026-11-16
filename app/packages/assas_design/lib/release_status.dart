@@ -28,9 +28,9 @@ abstract final class FeatureRelease {
   //  - the 7-inch display's alert count.
   static bool get alertsHome => false;
   static bool get alertDisplay => false;
-  // Plain-language explanations are a later sprint; hidden here (explanation is
-  // NULL for Sprint 2 threat alerts).
-  static bool get alertExplanations => false;
+  // Plain-language explanations per classtype (Sprint 2 decision, Option 2):
+  // the "What happened" block with the explanation and device role line.
+  static bool get alertExplanations => true;
 }
 
 class SoonTag extends StatelessWidget {

@@ -30,12 +30,16 @@ class _Repo extends DemoRepository {
   final List<SecurityAlert> _list = [
     SecurityAlert.fromApi({
       'id':'1','kind':'threat','title':'ET FILE_SHARING Commonly Abused File Sharing Domain in TLS SNI',
+      'display_title':'Notable activity (usually harmless)','classtype':'misc-activity','device_role':'source',
+      'explanation':'Activity that is not normally harmful but is worth noting. Usually no action is needed unless it repeats often.',
       'device_mac':_mac,'device_name':'Living-Room-TV','time':'2026-11-04T10:04:00',
       'severity':'medium','state':'new','source_ip':'192.168.100.238','destination_ip':_ipv6,
       'src_port':443,'dst_port':51000,'rule_id':'2046657','occurrence_count':40,
       'first_event_time':'2026-11-04T09:00:00','last_event_time':'2026-11-04T10:04:00'}),
     SecurityAlert.fromApi({
       'id':'2','kind':'threat','title':'SURICATA STREAM excessive retransmissions',
+      'display_title':'Unusual communication pattern','classtype':'protocol-command-decode','device_role':'target',
+      'explanation':'Devices communicated in an unusual way. Often harmless, but can be part of an attack.',
       'device_mac':_mac,'device_name':'Living-Room-TV','time':'2026-11-04T09:40:00',
       'severity':'medium','state':'new','source_ip':_ipv6,'destination_ip':'192.168.100.238',
       'rule_id':'2210054','occurrence_count':4,

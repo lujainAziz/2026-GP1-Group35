@@ -81,7 +81,7 @@ def test_parse_alert_event_with_and_without_addresses():
     full = alerts.parse_alert_event(json.loads(
         eve_alert(sig="ET SCAN", sid=42, sev=1, src="10.0.0.5", dst="8.8.8.8", sp=1234, dp=53)))
     assert full == {
-        "title": "ET SCAN", "rule_id": 42, "severity": "Critical",
+        "title": "ET SCAN", "category": None, "rule_id": 42, "severity": "Critical",
         "event_time": "2026-11-02T10:00:00",
         "src_ip": "10.0.0.5", "dst_ip": "8.8.8.8", "src_port": 1234, "dst_port": 53,
         "ether_src": None, "ether_dst": None,
@@ -924,3 +924,158 @@ def test_gateway_cache_retries_failures_and_refreshes(tmp_path, monkeypatch):
     # a success is reused within the refresh TTL (no third resolution call)
     alerts.gateway_macs_now(conn, now=t0 + alerts.GATEWAY_RETRY_SECONDS + 10)
     assert calls["n"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Classtype + device role (Threat Alert titles, Sprint 2)
+# --------------------------------------------------------------------------- #
+CLASSIFICATION_SAMPLE = """\
+# comment line
+config classification: not-suspicious,Not Suspicious Traffic,3
+config classification: trojan-activity,A Network Trojan was detected, 1
+config classification: network-scan,Detection of a Network Scan,3
+  config classification:web-application-attack , Web Application Attack , 1
+config classification: twin-a,Same Text,2
+config classification: twin-b,Same Text,2
+config classification: comma-desc,Desc, with a comma,2
+config classification: broken-line-without-priority
+"""
+
+
+@pytest.fixture
+def classification(tmp_path, monkeypatch):
+    path = tmp_path / "classification.config"
+    path.write_text(CLASSIFICATION_SAMPLE)
+    monkeypatch.setattr(alerts, "CLASSIFICATION_PATH", str(path))
+    monkeypatch.setitem(alerts._classification_cache, "path", None)
+    monkeypatch.setattr(alerts, "_classification_warned", set())
+    return path
+
+
+def test_parse_classification_config():
+    m = alerts.parse_classification_config(CLASSIFICATION_SAMPLE)
+    assert m["A Network Trojan was detected"] == "trojan-activity"   # space before priority
+    assert m["Web Application Attack"] == "web-application-attack"   # odd spacing
+    assert m["Desc, with a comma"] == "comma-desc"
+    assert m["Same Text"] is None                                    # ambiguous
+    assert "broken-line-without-priority" not in m.values()
+    assert len(m) == 6
+
+
+def test_classtype_for_known_unknown_ambiguous_missing(classification, caplog):
+    assert alerts.classtype_for("Detection of a Network Scan") == "network-scan"
+    assert alerts.classtype_for(None) is None                # rule with no classtype
+    assert alerts.classtype_for("Not In The File") is None
+    assert alerts.classtype_for("Same Text") is None
+    classification.unlink()
+    with caplog.at_level("WARNING", logger="assas.alerts"):
+        assert alerts.classtype_for("Detection of a Network Scan") is None
+        assert alerts.classtype_for("Detection of a Network Scan") is None
+    assert sum("unavailable" in r.getMessage() for r in caplog.records) == 1  # warned once
+
+
+def test_classification_file_reloaded_when_changed(classification):
+    assert alerts.classtype_for("Brand New Text") is None
+    classification.write_text("config classification: fresh,Brand New Text,2\n")
+    st = classification.stat()
+    os.utime(classification, (st.st_atime, st.st_mtime + 10))
+    assert alerts.classtype_for("Brand New Text") == "fresh"
+
+
+def test_parse_alert_event_keeps_category():
+    o = json.loads(eve_alert(sid=5))
+    o["alert"]["category"] = " A Network Trojan was detected "
+    assert alerts.parse_alert_event(o)["category"] == "A Network Trojan was detected"
+    o["alert"]["category"] = ""
+    assert alerts.parse_alert_event(o)["category"] is None
+
+
+def test_link_device_with_role(tmp_path):
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('aa:aa','10.0.0.5')")
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('bb:bb','10.0.0.6')")
+    conn.commit()
+    role = alerts.link_device_with_role
+    assert role(conn, "10.0.0.5", "8.8.8.8") == ("aa:aa", "source")
+    assert role(conn, "8.8.8.8", "10.0.0.5") == ("aa:aa", "target")
+    assert role(conn, "10.0.0.6", "10.0.0.5") == ("bb:bb", "source")   # both -> source
+    assert role(conn, "9.9.9.9", "1.1.1.1") == (None, None)
+
+
+def test_ingest_stores_classtype_category_and_role(tmp_path, classification):
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('aa:aa','10.0.0.5')")
+    conn.commit()
+
+    def evt(sid, src, dst, category=None, ts="2026-11-02T10:00:00+0300"):
+        o = json.loads(eve_alert(sid=sid, src=src, dst=dst, ts=ts))
+        if category:
+            o["alert"]["category"] = category
+        return alerts.parse_alert_event(o)
+
+    with conn:
+        alerts.ingest_alert(conn, evt(1, "10.0.0.5", "8.8.8.8", "A Network Trojan was detected"), 300)
+        alerts.ingest_alert(conn, evt(2, "8.8.8.8", "10.0.0.5", "Detection of a Network Scan"), 300)
+        alerts.ingest_alert(conn, evt(1000001, "10.0.0.5", "10.0.0.1"), 300)  # test rule: no classtype
+        alerts.ingest_alert(conn, evt(4, "9.9.9.9", "1.1.1.1", "Not In The File"), 300)
+        # Same rule + device within the window, now with the device as target:
+        # merges; classtype/role stay as first stored.
+        alerts.ingest_alert(conn, evt(1, "8.8.8.8", "10.0.0.5", "A Network Trojan was detected",
+                                      ts="2026-11-02T10:01:00+0300"), 300)
+    rows = conn.execute(
+        "SELECT rule_id, device_mac, category, classtype, device_role, occurrence_count "
+        "FROM alerts ORDER BY alert_id").fetchall()
+    assert rows == [
+        (1, "aa:aa", "A Network Trojan was detected", "trojan-activity", "source", 2),
+        (2, "aa:aa", "Detection of a Network Scan", "network-scan", "target", 1),
+        (1000001, "aa:aa", None, None, "source", 1),
+        (4, None, "Not In The File", None, None, 1),
+    ]
+
+
+def test_mac_linked_alert_has_no_role(tmp_path, monkeypatch, classification):
+    conn = _mac_conn(tmp_path)
+    monkeypatch.setitem(alerts._gateway_cache, "macs", {"fc:1b:d1:30:cb:6c"})
+    monkeypatch.setitem(alerts._gateway_cache, "known", True)
+    monkeypatch.setitem(alerts._gateway_cache, "ts", 9e18)
+    o = json.loads(eve_alert(sig="SURICATA IPv6 truncated packet", sid=2200013, sev=3))
+    o["ether"] = {"src_mac": "e6:42:65:03:0d:8f", "dest_mac": "fc:1b:d1:30:cb:6c"}
+    with conn:
+        alerts.ingest_alert(conn, alerts.parse_alert_event(o), 300)
+    row = conn.execute("SELECT device_mac, device_role FROM alerts").fetchone()
+    assert row == ("e6:42:65:03:0d:8f", None)
+
+
+def test_relink_sets_device_role(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        conn.execute(
+            "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+            "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
+            "VALUES (NULL,'Threat','ET X',1,?,'8.8.8.8','10.0.0.5','Medium','New',1,?)",
+            ("2026-11-05T10:00:00", "2026-11-05T10:00:00"))
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('aa:aa','10.0.0.5')")
+    conn.commit()
+    assert alerts.relink_recent(conn, window_hours=24, now_iso="2026-11-05T12:00:00") == 1
+    assert conn.execute("SELECT device_mac, device_role FROM alerts").fetchone() == ("aa:aa", "target")
+
+
+def test_ensure_schema_migrates_old_table_and_keeps_rows(tmp_path):
+    conn = sqlite3.connect(tmp_path / "old.db")
+    old_ddl = alerts.ALERTS_DDL.replace(
+        "last_event_time  TEXT NOT NULL,\n    category         TEXT,\n"
+        "    classtype        TEXT,\n    device_role      TEXT\n",
+        "last_event_time  TEXT NOT NULL\n")
+    assert "classtype" not in old_ddl
+    with conn:
+        conn.execute(old_ddl)
+        conn.execute(
+            "INSERT INTO alerts (title, event_time, severity, last_event_time) "
+            "VALUES ('ET OLD', '2026-11-01T10:00:00', 'Low', '2026-11-01T10:00:00')")
+    alerts.ensure_schema(conn)
+    alerts.ensure_schema(conn)  # idempotent
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(alerts)")}
+    assert {"category", "classtype", "device_role"} <= cols
+    assert conn.execute(
+        "SELECT title, category, classtype, device_role FROM alerts").fetchall() == [
+        ("ET OLD", None, None, None)]
