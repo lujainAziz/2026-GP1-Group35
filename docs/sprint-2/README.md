@@ -208,7 +208,9 @@ records them as security alerts in SQLite. Tests: `appliance/test_alerts.py` (51
   dst_ip, src_port, dst_port, severity, state, explanation, model_version, anomaly_score,
   threshold`) **plus** additive `occurrence_count`, `last_event_time`. This sprint: `alert_type`
   constant `"Threat"`, `state` constant `"New"`; `explanation`/`model_version`/`anomaly_score`/
-  `threshold` stay NULL. Indexes on `last_event_time`, `(device_mac,last_event_time)`,
+  `threshold` stay NULL (the plain-language explanation is looked up per classtype by the API, see
+  *Threat Alert titles and explanations* below). Additive `category`, `classtype`, `device_role`
+  (2026-11-14). Indexes on `last_event_time`, `(device_mac,last_event_time)`,
   `(rule_id,device_mac)`.
 - `alert_ingest_state` — `(st_dev, st_ino)` PK + `offset, size_at_eof, consumed, path` — the read
   checkpoint, written in the **same transaction** as the alert upserts.
@@ -251,8 +253,9 @@ Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="t
 `state="new"`, `severity ∈ {critical,high,medium,low}`; plus `id`, `title`, `device_mac`,
 `device_name` (user_name→hostname→model→"Unknown device"), `time` (= `last_event_time`),
 `first_event_time`, `last_event_time`, `occurrence_count`, `rule_id`, `source_ip`/`destination_ip`,
-`src_port`/`dst_port`; `explanation` and the anomaly fields are `null`. A contract test asserts the
-exact strings so casing can't drift.
+`src_port`/`dst_port`; `display_title`, `explanation`, `classtype`, `category` and `device_role`
+(see *Threat Alert titles and explanations* below); the anomaly fields are `null`. A contract test
+asserts the exact strings so casing can't drift.
 
 ### Commits (Security Alert Service)
 - `810c3ab` feat(api): alert viewing endpoints with the exact app contract.
@@ -278,7 +281,7 @@ an unresolved alert raises its device's attention level, priority and severity a
 | Surface | This sprint | How |
 |---|---|---|
 | Alert list | shown | unresolved counter (New + Reviewed) in the header; All / Open / Resolved views; rows show title, severity, device, last event time and state; newest first. |
-| Alert details | shown | title, time, device (with navigation), state badge and **Review / Resolve** actions (New→Reviewed, New→Resolved, Reviewed→Resolved; Resolved is final). Details: alert type, severity, **Last seen** (= last event time), source/destination address. First-seen time, rule identifier and ports are kept in the database and service but not shown; the plain-language explanation is a later sprint. |
+| Alert details | shown | title, time, device (with navigation), state badge and **Review / Resolve** actions (New→Reviewed, New→Resolved, Reviewed→Resolved; Resolved is final). Details: plain-language explanation with the device role line, alert type, original rule name, severity, **Last seen** (= last event time), source/destination address. First-seen time, rule identifier and ports are kept in the database and service but not shown. See *Threat Alert titles and explanations* below. |
 | A device's own alerts | shown | shown in the device details screen. |
 | Home summary of open alerts | hidden | later sprint; shows "SOON". |
 | 7-inch display alert count | hidden | later sprint; shows "SOON". |
@@ -296,6 +299,30 @@ appliance session is headless). See `evidence/ui/README.md` and the per-criterio
 ### Commits
 - `87d819e` feat(app): security alert screens in mobile (list, details, per-device alerts).
 - `68cc749` feat: restore security alert state management (states, transitions, counter).
+
+### Threat Alert titles and explanations (2026-11-14)
+
+Dr. Luluah's decision (Option 2): Threat Alert explanations ship in Sprint 2.
+- **Plain title per classtype** in the alert list (e.g. "Malware activity", "Network scan").
+- The **original Suricata rule name** is kept and shown in the alert details ("Rule" row); the
+  **rule ID stays hidden** (kept in the database and service).
+- **Explanation per classtype** in the details ("What happened"): what it means and what the user
+  can do.
+- **Device role line** from the stored source/destination: "This device started the activity." or
+  "This device was the target."; no line for unlinked or MAC-attributed alerts.
+- **Fallback "Security alert"** (and a generic explanation) for rules with no classtype, including
+  the four ASSAS TEST rules, or a classtype not in the table; severity is unchanged.
+- The wording lives in `docs/sprint-2/threat-alert-titles.md` (team-reviewed) and
+  `appliance/alert_text.py`; `appliance/test_alert_text.py` keeps the two in sync row for row.
+- How: the ingester stores eve's `category` and maps it to the short classtype through
+  `/etc/suricata/classification.config`, and stores the device role when it links the alert; the
+  service adds `display_title` and `explanation` when the alert is read. Existing alerts keep
+  NULL in the new columns and show the fallback.
+
+**Verified on the device (2026-11-14):** the Norton scan alerts got classtype `bad-unknown` /
+`policy-violation` and device role `source`, linked to the laptop; the ASSAS TEST Low alert got
+"Security alert"; the web app shows the plain titles, the explanation, the role line and the Rule
+row in the details.
 
 ## Evaluation
 Two evaluations, by function:
