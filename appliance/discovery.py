@@ -472,6 +472,17 @@ def _split_dns_labels(name):
     return labels
 
 
+def _is_opaque_identifier(value):
+    """True for an opaque hex or UUID-style name, hyphens removed, with or
+    without ".local" (e.g. 7b19f703-93a5-4369-af88-f8d5c77abf61, the random
+    name browsers publish over mDNS for WebRTC). Not a device's own hostname.
+    """
+    low = (value or "").strip().lower()
+    if low.endswith(".local"):
+        low = low[:-6]
+    return re.fullmatch(r"[0-9a-f]{16,}", low.replace("-", "")) is not None
+
+
 def _usable_mdns_name(value):
     """Accept only a literal, human-readable mDNS-derived name, else None.
 
@@ -491,7 +502,7 @@ def _usable_mdns_name(value):
         return None                       # reverse-DNS
     if not re.search(r"[A-Za-z]", value):
         return None                       # numeric / IP-like (no letters)
-    if re.fullmatch(r"[0-9a-f]{16,}", low):
+    if _is_opaque_identifier(value):
         return None                       # opaque hex/UUID identifier
     if is_generic_friendly_name(value):
         return None
@@ -2444,6 +2455,8 @@ def hostname_quality(value):
     low = value.lower()
     if "assas access point" in low:
         return 200
+    if _is_opaque_identifier(value):
+        return 1                      # any real name (e.g. DHCP option 12) replaces it
     score = 60
     if _looks_specific_model_code(value):
         score += 30

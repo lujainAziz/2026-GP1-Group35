@@ -2628,3 +2628,80 @@ class AddressEvidenceHardeningTests(unittest.TestCase):
         finally:
             discovery.ra_networks.clear()
             discovery.ra_networks.extend(saved)
+
+
+class OpaqueHostnameTests(unittest.TestCase):
+    """UUID-style names (e.g. the random WebRTC mDNS name a browser publishes)
+    are not a device's hostname: rejected from mDNS and ranked below any real
+    name, so a later DHCP option 12 name replaces one already stored."""
+
+    UUID = "7b19f703-93a5-4369-af88-f8d5c77abf61"
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        import ipaddress
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        self._orig_nets = list(discovery.monitored_networks)
+        discovery.monitored_networks[:] = [ipaddress.ip_network("192.168.100.0/24")]
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.monitored_networks[:] = self._orig_nets
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _hostname(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute("SELECT hostname FROM devices WHERE mac=?", (mac,)).fetchone()
+        conn.close()
+        return r[0]
+
+    def test_uuid_mdns_name_rejected(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname=self.UUID + ".local", type="A",
+                                 rdata="192.168.100.40"))
+        self.assertIsNone(discovery.extract_mdns_hostname(pkt))
+        self.assertEqual(discovery.mdns_name_candidate(pkt, None), (None, None))
+        for name in (self.UUID, self.UUID + ".local", self.UUID.upper()):
+            self.assertIsNone(discovery._usable_mdns_name(name), name)
+
+    def test_uuid_ranks_below_dhcp_name(self):
+        self.assertLess(discovery.hostname_quality(self.UUID),
+                        discovery.hostname_quality("Maraheb_PC"))
+        self.assertLess(discovery.hostname_quality("a7f3e9c1b2d84f60a7f3e9c1b2d84f60"),
+                        discovery.hostname_quality("Maraheb_PC"))
+
+    def test_dhcp_option_12_replaces_stored_uuid(self):
+        mac = "a8:42:a1:01:02:03"
+        discovery.update_device(mac, ip="192.168.100.40", hostname=self.UUID,
+                                seen_on_span=True, seen_in_discovery=False)
+        self.assertEqual(self._hostname(mac), self.UUID)
+        discovery.handle(Ether(bytes(
+            Ether(src=mac, dst="ff:ff:ff:ff:ff:ff") /
+            IP(src="192.168.100.40", dst="255.255.255.255") /
+            UDP(sport=68, dport=67) / BOOTP(chaddr=b"\x00" * 16) /
+            DHCP(options=[("hostname", b"Maraheb_PC"),
+                          ("vendor_class_id", b"MSFT 5.0"), "end"])
+        )))
+        self.assertEqual(self._hostname(mac), "Maraheb_PC")
+
+    def test_normal_names_keep_their_previous_score(self):
+        # Scores measured on the code before this change.
+        expected = {"Marahebs-Ipad": 60, "TL-SG105E": 90,
+                    "LG_Smart_Laundry2_open": 90, "iPhone": 60, "Maraheb_PC": 60}
+        for name, score in expected.items():
+            self.assertEqual(discovery.hostname_quality(name), score, name)
+            self.assertEqual(discovery._usable_mdns_name(name), name, name)
+
+    def test_short_hex_names_unchanged(self):
+        # Below the 16-hex-digit limit: still accepted, same score as before.
+        for name, score in (("deadbeef", 60), ("0123456789abcde", 90),
+                            ("cafe-babe-1234", 90)):
+            self.assertEqual(discovery._usable_mdns_name(name), name, name)
+            self.assertEqual(discovery.hostname_quality(name), score, name)
