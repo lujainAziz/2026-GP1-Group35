@@ -420,6 +420,42 @@ alerts. The names and reasons are in `appliance/suricata/disable.conf`.
   enabled-SID diff equals exactly the 8 SIDs; nothing was added.
 - `suricata -T` passed; the service was restarted and all services are active.
 
+### Rule-scope tuning, round 4 (applied 2026-11-17)
+
+Team decision on 2026-11-17: disable 5 more rules that only produce trivial
+alerts. The names and reasons are in `appliance/suricata/disable.conf`.
+
+- Scope: 5 SIDs:
+  - 2231000 (SURICATA QUIC failed decrypt): a protocol decode issue, not a
+    threat; seen on 3 days and 3 devices.
+  - 2231001 (SURICATA QUIC error on data): same family; 15 occurrences.
+  - 2051767 (ET INFO DNS query to Cloudflare Developer Domain, workers.dev):
+    matches any query to a widely used legitimate platform.
+  - 2051768 (ET INFO workers.dev in TLS SNI) and 2057745 (ET INFO DNS query to
+    Cloudflare Pages Developer Domain, pages.dev): same family.
+- Under observation for one more day before the freeze: 2007994 (ET HUNTING
+  Suspicious Empty User-Agent) and 2027870 (ET INFO DNS query to .world TLD).
+- Kept enabled: the executable-download rules 2018959, 2016538, 2014519 and
+  2014819. They detect a device downloading a Windows executable over
+  unencrypted HTTP, a common second-stage step in malware infections, and
+  fired on only two days in a week. Limitation: they cannot tell a safe file from a
+  malicious one.
+- Kept enabled: the internal-scan rules (see
+  `evidence/internal-scan-detection.md`). packed-exe rules and 2100498
+  (detection self-test) also stay enabled.
+- Applied on 2026-11-17 at 19:07 with
+  `suricata-update --offline -c /etc/suricata/update.yaml` after backups of
+  `/etc/suricata/disable.conf` and the rules file (stored outside the
+  repository).
+- The five rule names in the rules file matched the SIDs.
+- Enabled rules **53,203 → 53,198 (−5)**, same counting method as round 2. The
+  enabled-SID diff equals exactly the 5 SIDs; nothing was added.
+- `suricata-update` ran its own `suricata -T`, and
+  `suricata -T -c /etc/suricata/assas.yaml` passed ("Configuration provided
+  was successfully loaded"); `assas-suricata` was restarted and
+  `assas-suricata`, `assas-alerts`, `assas-api` and `assas-discovery` are
+  active.
+
 ### Severity test rules (applied 2026-11-10)
 
 Purpose: verify that the full pipeline handles all four severity levels
