@@ -35,7 +35,7 @@ class _DisplayCanvas extends StatelessWidget {
           child: FittedBox(fit: BoxFit.contain, child: SizedBox(
             width: 1024, height: 600,
             child: MediaQuery(data: MediaQuery.of(context).copyWith(size: const Size(1024, 600)),
-              child: DisplayBackground(child: child)),
+              child: TickerMode(enabled: false, child: DisplayBackground(child: child))),
           )),
         )),
       );
