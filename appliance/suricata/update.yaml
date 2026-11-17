@@ -6,9 +6,9 @@
 # directory or *.rules wildcard there would load them twice.
 #
 # /etc/suricata/disable.conf must still be applied. Verify after
-# `suricata-update --offline`: the enabled-rule count must be exactly 53,203
-# (53,199 + 4) and the enabled-SID diff exactly 1000001-1000004. If the count
-# is higher, disable.conf was not applied: restore the backups.
+# `suricata-update --offline`: the enabled-rule count must be exactly 53,198
+# (after round 4, 2026-11-17). If the count is higher, disable.conf was not
+# applied: restore the backups.
 
 # Explicit, so the disabled SIDs from all tuning rounds stay applied.
 disable-conf: /etc/suricata/disable.conf
