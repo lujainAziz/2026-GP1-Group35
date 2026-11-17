@@ -420,7 +420,7 @@ alerts. The names and reasons are in `appliance/suricata/disable.conf`.
   enabled-SID diff equals exactly the 8 SIDs; nothing was added.
 - `suricata -T` passed; the service was restarted and all services are active.
 
-### Rule-scope tuning, round 4 (team decision 2026-11-17)
+### Rule-scope tuning, round 4 (applied 2026-11-17)
 
 Team decision on 2026-11-17: disable 5 more rules that only produce trivial
 alerts. The names and reasons are in `appliance/suricata/disable.conf`.
@@ -443,11 +443,18 @@ alerts. The names and reasons are in `appliance/suricata/disable.conf`.
 - Kept enabled: the internal-scan rules (see
   `evidence/internal-scan-detection.md`). packed-exe rules and 2100498
   (detection self-test) also stay enabled.
-- Apply with `suricata-update --offline` after backups of
+- Applied on 2026-11-17 at 19:07 with
+  `suricata-update --offline -c /etc/suricata/update.yaml` after backups of
   `/etc/suricata/disable.conf` and the rules file (stored outside the
   repository).
-- Expected enabled rules **53,203 → 53,198 (−5)**, same counting method as
-  round 2. The enabled-SID diff must equal exactly the 5 SIDs; nothing added.
+- The five rule names in the rules file matched the SIDs.
+- Enabled rules **53,203 → 53,198 (−5)**, same counting method as round 2. The
+  enabled-SID diff equals exactly the 5 SIDs; nothing was added.
+- `suricata-update` ran its own `suricata -T`, and
+  `suricata -T -c /etc/suricata/assas.yaml` passed ("Configuration provided
+  was successfully loaded"); `assas-suricata` was restarted and
+  `assas-suricata`, `assas-alerts`, `assas-api` and `assas-discovery` are
+  active.
 
 ### Severity test rules (applied 2026-11-10)
 
