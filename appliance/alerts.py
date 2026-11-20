@@ -43,6 +43,8 @@ import time
 from contextlib import closing
 from datetime import datetime, timedelta
 
+import addr_scope
+
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 EVE_PATH = os.getenv("ASSAS_EVE_PATH", "/var/log/suricata/eve.json")
 # The file Suricata loads (assas.yaml `classification-file`).
@@ -392,7 +394,9 @@ def link_device_with_role(conn, src_ip, dst_ip, event_time=None):
     The caller still stores both IPs on the alert, so the other IP is retained.
 
     Two sources are consulted per address:
-      - the devices last_* columns (latest address of each family), and
+      - the devices last_* columns (latest address of each family), for
+        LAN-scoped addresses only (addr_scope: private IPv4, CGNAT,
+        link-local, IPv6 ULA), and
       - the device_addresses evidence table (full set, written by discovery
         from ARP/DHCP/NDP/guarded traffic). Evidence counts only when the
         alert's event time falls inside
@@ -451,7 +455,12 @@ def link_device_with_role(conn, src_ip, dst_ip, event_time=None):
             if "no such table" not in str(exc).lower():
                 raise
             evidence_covers_addr = False
-        if not evidence_covers_addr:
+        # The column fallback is for LAN-scoped addresses only (addr_scope).
+        # Any other address (public IPv4, global IPv6) links ONLY through
+        # time-windowed evidence: an internet server's address, seen behind the
+        # router's MAC, once ended up in the router's columns and linked
+        # alerts to the router.
+        if not evidence_covers_addr and addr_scope.is_lan_scoped(ip):
             for form in _addr_forms(ip):
                 macs.update(
                     r[0] for r in conn.execute(
@@ -754,6 +763,115 @@ def relink_recent(conn, window_hours=None, now_iso=None):
     if linked:
         log.info("relinked %d recent alert(s) after new address evidence", linked)
     return linked
+
+
+# Same table discovery uses for its one-time steps (name, applied time).
+MIGRATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS migrations ("
+    " name TEXT PRIMARY KEY,"
+    " applied_at TEXT NOT NULL"
+    ")"
+)
+RELINK_OFFLINK_LINKS = "2026-11-relink-offlink-alert-links"
+
+
+def _evidence_norm(ip):
+    """The form device_addresses stores: IPv4 dotted, IPv6 exploded lowercase."""
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return None
+    return str(addr) if addr.version == 4 else addr.exploded.lower()
+
+
+def relink_offlink_links(conn):
+    """One-time repair (marker in `migrations`): re-link alerts that the old
+    column fallback linked through an internet address (typically to the
+    router, whose columns held internet servers' addresses).
+
+    An alert is a suspect only when its current link cannot be justified:
+      - role 'source' / 'target': that side's address is not LAN-scoped and
+        the linked device has no address evidence for it;
+      - no role (alerts from before roles were stored) but with addresses:
+        neither side is evidence for the device, nor a LAN-scoped address in
+        its columns.
+    Suspects get link_device_with_role() again (which no longer uses the
+    column fallback for such addresses): the right device and role, or
+    unlinked. ONLY device_mac and device_role change; state, counts, times and
+    read markers are untouched. Alerts linked by MAC (no addresses) and every
+    justified link are left alone. All alerts are covered, not a recent
+    window. One transaction; returns the number of alerts changed, or None
+    when it already ran.
+    """
+    conn.execute(MIGRATIONS_DDL)
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("SELECT 1 FROM migrations WHERE name=?",
+                        (RELINK_OFFLINK_LINKS,)).fetchone():
+            conn.rollback()
+            return None
+        try:
+            evidence = {(m, a) for m, a in conn.execute(
+                "SELECT mac, addr FROM device_addresses").fetchall()}
+        except sqlite3.OperationalError:
+            evidence = set()
+
+        def has_evidence(mac, ip):
+            return (mac, _evidence_norm(ip)) in evidence
+
+        def lan_in_columns(mac, ip):
+            if not addr_scope.is_lan_scoped(ip):
+                return False
+            for form in _addr_forms(ip):
+                if conn.execute(
+                    "SELECT 1 FROM devices WHERE mac=? AND "
+                    "? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip)", (mac, form),
+                ).fetchone():
+                    return True
+            return False
+
+        try:
+            rows = conn.execute(
+                "SELECT alert_id, device_mac, device_role, src_ip, dst_ip, event_time "
+                "FROM alerts WHERE alert_type='Threat' AND device_mac IS NOT NULL "
+                "AND (src_ip IS NOT NULL OR dst_ip IS NOT NULL)"
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc).lower():
+                raise
+            rows = []
+        changed = 0
+        for alert_id, mac, role, src, dst, event_time in rows:
+            if role in ("source", "target"):
+                side = src if role == "source" else dst
+                suspect = bool(side) and not addr_scope.is_lan_scoped(side) \
+                    and not has_evidence(mac, side)
+            else:
+                suspect = not any(
+                    ip and (has_evidence(mac, ip) or lan_in_columns(mac, ip))
+                    for ip in (src, dst)
+                )
+            if not suspect:
+                continue
+            new_mac, new_role = link_device_with_role(conn, src, dst, event_time)
+            if (new_mac, new_role) != (mac, role):
+                conn.execute(
+                    "UPDATE alerts SET device_mac=?, device_role=? WHERE alert_id=?",
+                    (new_mac, new_role, alert_id),
+                )
+                changed += 1
+        conn.execute(
+            "INSERT INTO migrations (name, applied_at) VALUES (?, ?)",
+            (RELINK_OFFLINK_LINKS, datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    log.info("one-time relink: %d alert(s) linked through an internet address were "
+             "re-linked or unlinked", changed)
+    return changed
 
 
 def _parse_iso(s):
@@ -1138,6 +1256,7 @@ def main():
     )
     with closing(_open_db()) as conn:
         ensure_schema(conn)
+        relink_offlink_links(conn)  # one-time; a no-op once its marker exists
         while running["on"]:
             try:
                 run_once(conn, EVE_PATH, DEDUP_WINDOW_SECONDS)

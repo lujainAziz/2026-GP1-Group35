@@ -9,7 +9,9 @@ columns marked below. WAL journal mode allows concurrent reads while the daemons
 
 Verified against the live appliance database on 2026-11-20 (commit `40e1580`).
 The Release 1 alert changes (`alerts.priority`, the severity labels, the removed
-`Reviewed` state, the `alert_reads` table) are documented from the code; they are not yet verified on the
+`Reviewed` state, the `alert_reads` table) and the off-link address fix (the
+`migrations` table, the address-column rules, the one-time cleanups) are
+documented from the code; they are not yet verified on the
 live appliance database.
 
 | Table | Written by | Purpose |
@@ -25,6 +27,7 @@ live appliance database.
 | `alerts` | alert ingester (+ API for `state`) | One row per Threat Alert from Suricata. |
 | `alert_ingest_state` | alert ingester | Read position in each Suricata `eve.json` file. |
 | `alert_reads` | API | Per-phone "read" marker for alerts (not an alert state). |
+| `migrations` | discovery daemon / alert ingester | One row per one-time data repair that has run. |
 
 `sqlite_sequence` also exists; it is SQLite's internal counter for the
 `AUTOINCREMENT` keys of `paired_sessions` and `alerts` and is not used by Assas code.
@@ -46,9 +49,9 @@ Indexes besides the primary keys:
 | Column | Type | Meaning |
 |---|---|---|
 | `mac` | TEXT (PK) | Device MAC address, lowercase colon form. |
-| `ip` | TEXT | Most recently seen address (IPv4 or IPv6). Kept for compatibility; the API prefers the three columns below. |
-| `last_ipv4` | TEXT | Most recently seen IPv4 address. |
-| `last_ipv6_global` | TEXT | Most recently seen global IPv6 address. |
+| `ip` | TEXT | Most recently seen address (IPv4 or IPv6) on the monitored network. Kept for compatibility; the API prefers the three columns below. |
+| `last_ipv4` | TEXT | Most recently seen IPv4 address on the monitored network. |
+| `last_ipv6_global` | TEXT | Most recently seen global IPv6 address on the monitored network. |
 | `last_ipv6_ll` | TEXT | Most recently seen link-local IPv6 address (`fe80::`). |
 | `vendor` | TEXT | Vendor name (OUI lookup or inferred). |
 | `vendor_source` | TEXT | How `vendor` was derived; `inferred: ...` for guesses (e.g. on randomized MACs). |
@@ -100,6 +103,21 @@ Indexes besides the primary keys:
   keeps the state it had when it was last online (no usable `last_seen`: now).
 - **IP shown by the API**: `last_ipv4`, then `last_ipv6_global`, then
   `last_ipv6_ll` as a last resort.
+- **Only addresses on the monitored network** are stored in `ip` and the
+  `last_*` columns: the same check as `device_addresses` (inside the discovery
+  interface's subnets, or a prefix learned from Router Advertisements;
+  link-local always). Internet servers' addresses arrive behind the router's
+  MAC and are never stored as the router's address. While no subnet is known
+  (e.g. before the discovery interface has an address) no address is stored;
+  discovery re-reads its own addresses and subnets every 5 minutes
+  (`ASSAS_NETWORK_CONTEXT_REFRESH_SECONDS`, default 300).
+- **One-time cleanup** (`migrations` name
+  `2026-11-clear-offlink-device-addresses`, discovery at startup): an `ip` /
+  `last_ipv4` / `last_ipv6_global` value written before that check is cleared
+  when it is not a LAN-scoped address (private IPv4, `100.64.0.0/10`,
+  link-local, IPv6 ULA) and the device has no `device_addresses` row for it.
+  Private addresses from a previous network and evidence-backed global IPv6
+  addresses are kept. One transaction.
 
 ## Table: `flows`
 
@@ -270,8 +288,10 @@ column, it reads that column as `NULL`.
 - **Device linking**: each of `src_ip` / `dst_ip` is matched to a device.
   `device_addresses` decides for any address it has rows for, using only rows
   whose [`first_seen` − 2 h, `last_seen` + 24 h] window contains the event time
-  (`ASSAS_ADDR_PRE_SLACK_HOURS`, `ASSAS_ADDR_GRACE_HOURS`); addresses with no
-  rows fall back to the `devices` address columns. An address links only when
+  (`ASSAS_ADDR_PRE_SLACK_HOURS`, `ASSAS_ADDR_GRACE_HOURS`). An address with no
+  rows falls back to the `devices` address columns only when it is LAN-scoped
+  (private IPv4, `100.64.0.0/10`, link-local, IPv6 ULA); a public IPv4 or global
+  IPv6 address links only through `device_addresses`. An address links only when
   exactly one device owns it; the appliance's own address, the gateway,
   multicast, broadcast and unspecified addresses never link. One side matches:
   that device, role `source` or `target`. Both match: the source device, role
@@ -281,6 +301,14 @@ column, it reads that column as `NULL`.
 - **Relink**: unlinked alerts whose `last_event_time` is within the last
   24 hours (`ASSAS_ALERT_RELINK_HOURS`) are retried when new address evidence
   arrives. Only `device_mac` and `device_role` are set.
+- **One-time relink** (`migrations` name `2026-11-relink-offlink-alert-links`,
+  alert ingester at startup): alerts that the older column fallback linked
+  through an internet address (typically to the router) are linked again with
+  the rule above: to the right device and role, or unlinked. An alert is
+  changed only when its link cannot be justified (the linked side is not
+  LAN-scoped and has no `device_addresses` row for that device; for alerts
+  stored before `device_role`, neither side supports the device). All alerts
+  are covered; only `device_mac` and `device_role` change. One transaction.
 
 ## Table: `alert_reads`
 
@@ -310,6 +338,18 @@ Primary key: (`session_id`, `alert_id`).
   so it runs once. `POST /pair` creates the table before adding the new phone, so
   a phone paired later gets no rows: the unresolved alerts that exist when it
   pairs start unread for it.
+
+## Table: `migrations`
+
+One row per one-time data repair that has run. A repair runs in one
+transaction together with the insert of its row, and never runs again once
+the row exists. Created by the discovery daemon or the alert ingester,
+whichever runs a repair first.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `name` | TEXT (PK) | Repair name, e.g. `2026-11-clear-offlink-device-addresses` (discovery) or `2026-11-relink-offlink-alert-links` (alert ingester). |
+| `applied_at` | TEXT, NOT NULL | When it ran. |
 
 ## Table: `alert_ingest_state`
 

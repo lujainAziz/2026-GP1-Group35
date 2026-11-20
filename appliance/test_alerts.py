@@ -4,6 +4,7 @@ Offline and deterministic: eve events are synthesised as JSON lines (no Suricata
 binary needed), which also lets us control file identity/rotation/offsets to test
 resume safety, multi-rotation recovery, and the reaper precisely.
 """
+import ipaddress
 import json
 import os
 import sqlite3
@@ -226,12 +227,18 @@ def test_link_device_ownership_conflict_stays_unlinked(tmp_path):
 def test_link_device_normalizes_column_address_forms(tmp_path):
     # eve.json writes IPv6 zero-padded exploded; the inventory column holds the
     # kernel's compressed form. The same address must match regardless of form.
+    # (A ULA address: the column fallback only serves LAN-scoped addresses.)
     conn = make_conn(tmp_path)
     conn.execute(
-        "INSERT INTO devices(mac,last_ipv6_global) VALUES('cc:cc','2001:16a2:dea6:2200:6854:6bc7:cf3:1d4c')")
+        "INSERT INTO devices(mac,last_ipv6_global) VALUES('cc:cc','fd00:dea6:2200::6bc7:cf3:1d4c')")
+    conn.execute(
+        "INSERT INTO devices(mac,last_ipv6_global) VALUES('dd:dd','2001:db8:1::6bc7:cf3:1d4c')")
     conn.commit()
-    exploded = "2001:16a2:dea6:2200:6854:6bc7:0cf3:1d4c"
-    assert alerts.link_device(conn, "2606:4700::1", exploded, "2026-11-05T10:00:00") == "cc:cc"
+    exploded = "fd00:dea6:2200:0000:0000:6bc7:0cf3:1d4c"
+    assert alerts.link_device(conn, "2001:db8:ffff::1", exploded, "2026-11-05T10:00:00") == "cc:cc"
+    # A global IPv6 is never linked from the columns alone (needs evidence).
+    assert alerts.link_device(conn, "2001:db8:ffff::1", "2001:db8:1:0:0:6bc7:cf3:1d4c",
+                              "2026-11-05T10:00:00") is None
 
 
 def test_relink_recent_repairs_discovery_lag_without_touching_counts(tmp_path):
@@ -1158,3 +1165,133 @@ def test_ingest_stores_priority_and_new_severity(tmp_path):
     assert conn.execute(
         "SELECT rule_id, priority, severity FROM alerts ORDER BY rule_id").fetchall() == [
         (1000001, 1, "High"), (1000002, 2, "Medium"), (1000003, 3, "Low")]
+
+
+# --------------------------------------------------------------------------- #
+# Internet addresses never link an alert through the devices columns (bug: an
+# alert from an internet server to a laptop was linked to the router, whose
+# columns held internet servers' addresses). Documentation placeholders only:
+# 203.0.113.0/24, 198.51.100.0/24 and 2001:db8:ffff::/48 are internet servers;
+# 192.168.1.0/24 and 2001:db8:1::/64 are the LAN.
+# --------------------------------------------------------------------------- #
+ROUTER, LAPTOP = "02:00:00:00:00:01", "02:00:00:00:00:20"
+SERVER_V4, SERVER_V6 = "203.0.113.10", "2001:db8:ffff::1"
+LAPTOP_V4, LAPTOP_V6 = "192.168.1.20", "2001:db8:1::20"
+EVENT = "2026-11-10T10:00:00"
+
+
+def _router_and_laptop(tmp_path):
+    """The live state: the router's columns hold internet servers' addresses;
+    the laptop has ARP / NDP evidence for its own addresses."""
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO devices(mac, ip, last_ipv4, last_ipv6_global) VALUES (?,?,?,?)",
+                 (ROUTER, SERVER_V4, SERVER_V4, SERVER_V6))
+    conn.execute("INSERT INTO devices(mac, ip, last_ipv4, last_ipv6_global) VALUES (?,?,?,?)",
+                 (LAPTOP, LAPTOP_V4, LAPTOP_V4, LAPTOP_V6))
+    add_addr_table(conn, [
+        (LAPTOP, LAPTOP_V4, "ipv4", "arp", "2026-11-01T10:00:00", "2026-11-20T10:00:00"),
+        (LAPTOP, ipaddress.ip_address(LAPTOP_V6).exploded, "ipv6", "ndp",
+         "2026-11-01T10:00:00", "2026-11-20T10:00:00"),
+    ])
+    return conn
+
+
+def test_internet_source_links_the_lan_target_not_the_router(tmp_path):
+    conn = _router_and_laptop(tmp_path)
+    assert alerts.link_device_with_role(conn, SERVER_V4, LAPTOP_V4, EVENT) == (LAPTOP, "target")
+    assert alerts.link_device_with_role(conn, SERVER_V6, LAPTOP_V6, EVENT) == (LAPTOP, "target")
+    # Both sides internet: unlinked, never the router.
+    assert alerts.link_device_with_role(conn, SERVER_V4, "198.51.100.7", EVENT) == (None, None)
+
+
+def test_column_fallback_still_serves_lan_addresses_without_evidence(tmp_path):
+    conn = make_conn(tmp_path)  # older discovery: no evidence table at all
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES (?,?)", (LAPTOP, LAPTOP_V4))
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES (?,?)", (ROUTER, SERVER_V4))
+    conn.commit()
+    assert alerts.link_device_with_role(conn, LAPTOP_V4, SERVER_V4, EVENT) == (LAPTOP, "source")
+    assert alerts.link_device_with_role(conn, SERVER_V4, None, EVENT) == (None, None)
+
+
+def _insert(conn, mac, role, src, dst, count=5, state="New"):
+    cur = conn.execute(
+        "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, src_ip, "
+        "dst_ip, severity, state, occurrence_count, last_event_time, device_role) "
+        "VALUES (?, 'Threat', 'ET X', 1, ?, ?, ?, 'Medium', ?, ?, ?, ?)",
+        (mac, EVENT, src, dst, state, count, EVENT, role))
+    return cur.lastrowid
+
+
+def _alert(conn, alert_id):
+    return conn.execute(
+        "SELECT device_mac, device_role, state, occurrence_count, event_time, "
+        "last_event_time FROM alerts WHERE alert_id=?", (alert_id,)).fetchone()
+
+
+def test_relink_repairs_internet_links_once_and_touches_nothing_else(tmp_path):
+    conn = _router_and_laptop(tmp_path)
+    with conn:
+        wrong = _insert(conn, ROUTER, "source", SERVER_V4, LAPTOP_V4)          # the bug
+        wrong_v6 = _insert(conn, ROUTER, "source", SERVER_V6, LAPTOP_V6)
+        no_owner = _insert(conn, ROUTER, "source", SERVER_V4, "198.51.100.7")  # -> unlinked
+        legacy = _insert(conn, ROUTER, None, SERVER_V4, LAPTOP_V4)             # before roles
+        lan_ok = _insert(conn, LAPTOP, "source", LAPTOP_V4, SERVER_V4)         # justified
+        evidence_ok = _insert(conn, LAPTOP, "target", SERVER_V6, LAPTOP_V6)    # global + evidence
+        by_mac = _insert(conn, LAPTOP, None, None, None)                       # MAC-linked
+        resolved = _insert(conn, ROUTER, "source", SERVER_V4, LAPTOP_V4, state="Resolved")
+        # A phone's read marker (API-owned table) must not be touched.
+        conn.execute("CREATE TABLE alert_reads (session_id INTEGER, alert_id INTEGER, "
+                     "read_count INTEGER, read_at TEXT)")
+        conn.execute("INSERT INTO alert_reads VALUES (1, ?, 5, ?)", (wrong, EVENT))
+    before = {i: _alert(conn, i) for i in (lan_ok, evidence_ok, by_mac)}
+
+    assert alerts.relink_offlink_links(conn) == 5
+    assert _alert(conn, wrong)[:2] == (LAPTOP, "target")
+    assert _alert(conn, wrong_v6)[:2] == (LAPTOP, "target")
+    assert _alert(conn, no_owner)[:2] == (None, None)
+    assert _alert(conn, legacy)[:2] == (LAPTOP, "target")
+    assert _alert(conn, resolved)[:2] == (LAPTOP, "target")
+    # Only device_mac / device_role changed.
+    assert _alert(conn, wrong)[2:] == ("New", 5, EVENT, EVENT)
+    assert _alert(conn, resolved)[2] == "Resolved"
+    assert conn.execute("SELECT session_id, alert_id, read_count FROM alert_reads").fetchall() == [
+        (1, wrong, 5)]
+    # Justified links and MAC-linked alerts are left alone.
+    assert {i: _alert(conn, i) for i in before} == before
+
+    # Runs once: a later run changes nothing, even if a bad link reappears.
+    with conn:
+        conn.execute("UPDATE alerts SET device_mac=?, device_role='source' WHERE alert_id=?",
+                     (ROUTER, wrong))
+    assert alerts.relink_offlink_links(conn) is None
+    assert _alert(conn, wrong)[:2] == (ROUTER, "source")
+    assert conn.execute("SELECT COUNT(*) FROM migrations WHERE name=?",
+                        (alerts.RELINK_OFFLINK_LINKS,)).fetchone()[0] == 1
+
+
+def test_relink_rolls_back_as_a_whole(tmp_path):
+    conn = _router_and_laptop(tmp_path)
+    with conn:
+        wrong = _insert(conn, ROUTER, "source", SERVER_V4, LAPTOP_V4)
+    real_execute = conn.execute
+
+    class FailingConn:
+        def __getattr__(self, name):
+            return getattr(conn, name)
+
+        def execute(self, sql, *args):
+            if sql.startswith("INSERT INTO migrations"):
+                raise sqlite3.OperationalError("disk I/O error")
+            return real_execute(sql, *args)
+
+    with pytest.raises(sqlite3.OperationalError):
+        alerts.relink_offlink_links(FailingConn())
+    assert _alert(conn, wrong)[:2] == (ROUTER, "source")  # nothing half-done
+    assert alerts.relink_offlink_links(conn) == 1          # and it can run again
+    assert _alert(conn, wrong)[:2] == (LAPTOP, "target")
+
+
+def test_relink_on_a_fresh_database_just_records_its_marker(tmp_path):
+    conn = make_conn(tmp_path)
+    assert alerts.relink_offlink_links(conn) == 0
+    assert alerts.relink_offlink_links(conn) is None
