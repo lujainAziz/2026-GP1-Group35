@@ -94,7 +94,9 @@ void main() {
     expect(find.text('NETWORK RISK'), findsNothing);
     expect(find.text('Network Alert Level arrives in Sprint 5'), findsOneWidget);
     expect(find.text('SOON · SPRINT 5'), findsOneWidget);
-    expect(find.text('SOON · SPRINT 2'), findsOneWidget);
+    // Unresolved alerts are live (Sprint 2 feature): the demo has 2 New alerts.
+    expect(find.text('SOON · SPRINT 2'), findsNothing);
+    expect(find.text('2'), findsOneWidget);
     expect(find.text('High'), findsNothing);
     expect(find.text('ONLINE'), findsWidgets);
     expect(find.textContaining('New phone paired:'), findsNothing);

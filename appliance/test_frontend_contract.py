@@ -268,6 +268,17 @@ class AlertContractTests(unittest.TestCase):
         # the literal path is matched here, not parsed as an int id
         self.assertEqual(r.json()['open'], 2)
 
+    def test_open_count_answers_the_appliance_without_pairing(self):
+        # The 7-inch display runs on the Pi and calls the API from 127.0.0.1
+        # with no token; it reads its "Unresolved alerts" card from here.
+        self._insert_alert(state='Resolved', sid=3002)
+        self.assertNotIn('Authorization', self.local.headers)
+        r = self.local.get('/alerts/open_count')
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json(), {'open': 1})  # setUp's New alert only
+        # A phone on the network still needs pairing.
+        self.assertEqual(self.phone.get('/alerts/open_count').status_code, 401)
+
     def test_open_count_not_capped_by_page_limit(self):
         for i in range(250):
             self._insert_alert(state='New', sid=4000 + i, when='2026-11-02T08:00:00')

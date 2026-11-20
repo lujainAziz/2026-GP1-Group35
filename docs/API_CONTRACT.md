@@ -408,6 +408,12 @@ The number of unresolved (`new`) alerts in the whole database, not just one page
 ```json
 {"open": 12}
 ```
+The phone's Alerts screen shows this number. The 7-inch display shows it on its
+"Unresolved alerts" card: the display runs on the appliance and calls the API from
+`127.0.0.1`, so it needs no token (see Authentication). It polls every 5 seconds.
+If a poll fails it keeps the last count, dimmed and marked "Last known". Before
+the first count arrives, or on an appliance without this endpoint (`404`), it
+shows "—". A count of 0 reads "No unresolved alerts".
 
 ### GET /alerts/{alert_id}
 One alert. `404` if unknown.

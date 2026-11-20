@@ -304,7 +304,7 @@ detection, and the rule name (the rule ID stays hidden).*
 | Alert details | shown | title, time, device (with navigation), state badge and **Review / Resolve** actions (New→Reviewed, New→Resolved, Reviewed→Resolved; Resolved is final). Details: plain-language explanation with the device role line, alert type, original rule name, severity, **Last seen** (= last event time), source/destination address. First-seen time, rule identifier and ports are kept in the database and service but not shown. See *Threat Alert titles and explanations* below. |
 | A device's own alerts | shown | shown in the device details screen. |
 | Home summary of open alerts | hidden | later sprint; shows "SOON". |
-| 7-inch display alert count | hidden | later sprint; shows "SOON". |
+| 7-inch display alert count | hidden | later sprint; shows "SOON". *(Release 1: shown — the count of unresolved alerts from `GET /alerts/open_count`.)* |
 
 The alert model carries the recurrence count, first/last event times, ports and rule identifier,
 read additively from the service response.
