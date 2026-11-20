@@ -56,7 +56,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await _loadFonts();
     final state = AppState(_Repo([
-      _mk('crit', Severity.critical, 0), // oldest
+      _mk('med', Severity.medium, 0), // oldest
       _mk('low', Severity.low, 30),
       _mk('high', Severity.high, 60), // newest
     ]));
@@ -75,7 +75,7 @@ void main() {
 
     // Newest first by default; the control sits inside the header row and is
     // neutral-coloured.
-    expect(_order(tester), ['high', 'low', 'crit']);
+    expect(_order(tester), ['high', 'low', 'med']);
     expect(
       find.descendant(
         of: find.widgetWithText(SectionHeader, 'Alerts for this device'),
@@ -98,7 +98,7 @@ void main() {
     // Now Most severe: text switches and turns the active purple (Ui.acc).
     expect(find.text('Most severe'), findsOneWidget);
     expect(tester.widget<Text>(find.text('Most severe')).style?.color, Ui.acc);
-    expect(_order(tester), ['crit', 'high', 'low']);
+    expect(_order(tester), ['high', 'med', 'low']);
     expect(tester.getSize(stack).width, widthNewest); // same size both ways
     await tester.pumpWidget(const SizedBox());
   });

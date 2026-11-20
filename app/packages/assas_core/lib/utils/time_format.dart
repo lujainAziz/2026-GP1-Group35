@@ -36,6 +36,17 @@ class TimeFormat {
     return 'on ${t.day} ${_months[t.month - 1]} at ${clock(t)}';
   }
 
+  /// Alert detection line: "Today, 10:42 PM" / "Yesterday, 9:15 PM" / "3 Oct, 9:15 PM".
+  static String alertDetected(DateTime t, {DateTime? now}) {
+    final n = now ?? DateTime.now();
+    final today = DateTime(n.year, n.month, n.day);
+    final day = DateTime(t.year, t.month, t.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) return 'Today, ${clock(t)}';
+    if (diff == 1) return 'Yesterday, ${clock(t)}';
+    return '${t.day} ${_months[t.month - 1]}, ${clock(t)}';
+  }
+
   /// Device last seen: "Just now", "5 min ago", "3 h ago", "3 Oct".
   static String lastSeen(DateTime? t, {DateTime? now}) {
     if (t == null) return 'Unknown';

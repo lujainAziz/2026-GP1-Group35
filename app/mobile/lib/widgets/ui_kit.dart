@@ -390,7 +390,7 @@ class KickerRow extends StatelessWidget {
   }
 }
 
-/// Round status pill (New / Reviewed / Resolved).
+/// Round status pill (New / Resolved).
 class StatePill extends StatelessWidget {
   const StatePill(this.alert, {super.key, this.padding});
 

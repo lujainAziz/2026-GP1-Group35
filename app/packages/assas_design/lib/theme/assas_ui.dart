@@ -131,13 +131,12 @@ class Ui {
   /// CSS `color-mix(in oklch, a pct%, transparent)`.
   static Color fade(Color a, double pct) => a.withValues(alpha: a.a * pct);
 
-  /// Severity / risk label -> color (Critical, High, Medium/Moderate, Low).
+  /// Severity / alert-level label -> color (High, Medium/Moderate, Low).
   static Color severity(String label) {
     final l = label.toLowerCase();
-    if (l.contains('critical')) return crit;
-    if (l.contains('high')) return high;
-    if (l.contains('medium') || l.contains('moderate')) return med;
-    return low;
+    if (l.contains('high')) return crit; // red / orange / amber (Release 1 scale)
+    if (l.contains('medium') || l.contains('moderate')) return high;
+    return med;
   }
 }
 

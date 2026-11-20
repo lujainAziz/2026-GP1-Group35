@@ -5,7 +5,7 @@ enum AlertSort {
   /// Most recent event first — the default order.
   newest,
 
-  /// Most severe first (Critical, High, Medium, Low); within the same severity,
+  /// Most severe first (High, Medium, Low); within the same severity,
   /// newest first — a severity sort never loses the time ordering for ties.
   severity,
 }
@@ -18,7 +18,7 @@ extension AlertSortLabel on AlertSort {
 }
 
 extension AlertSeverityRank on Severity {
-  /// Higher = more severe. low=0 … critical=3 (matches the enum order).
+  /// Higher = more severe. low=0 … high=2 (matches the enum order).
   int get rank => index;
 }
 

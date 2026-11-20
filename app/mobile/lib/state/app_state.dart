@@ -21,7 +21,7 @@ class AppState extends ChangeNotifier {
   ConnectionStatus connection = ConnectionStatus.checking;
   bool loadedOnce = false;
 
-  /// Open-alerts total (New + Reviewed) as a DB aggregate for the Alerts hero —
+  /// Open-alerts total (New) as a DB aggregate for the Alerts hero —
   /// not the length of the loaded page. null = not available yet.
   int? openAlertCount;
 

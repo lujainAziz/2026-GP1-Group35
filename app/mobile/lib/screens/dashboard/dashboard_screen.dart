@@ -14,7 +14,7 @@ import '../../widgets/ui_kit.dart';
 import '../alerts/alert_details_screen.dart';
 import '../devices/device_details_screen.dart';
 
-/// Dashboard (PBI-21): risk level, online / total devices, unresolved alerts,
+/// Dashboard (PBI-21): network alert level, online / total devices, unresolved alerts,
 /// unrecognized devices, recent alerts.
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({
@@ -219,7 +219,7 @@ class DashboardScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('NETWORK RISK', style: UiText.kicker.copyWith(color: Ui.mute)),
+          Text('NETWORK ALERT LEVEL', style: UiText.kicker.copyWith(color: Ui.mute)),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -245,9 +245,9 @@ class DashboardScreen extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
                     !Released.risk
-                        ? 'Network risk arrives in Sprint 4'
+                        ? 'Network Alert Level arrives in Sprint 5'
                         : risk == null
-                            ? 'Risk level is not available yet'
+                            ? 'Alert level is not available yet'
                             : note,
                     textAlign: TextAlign.right,
                     style: UiText.secondary.copyWith(height: 1.35, color: Ui.mute),

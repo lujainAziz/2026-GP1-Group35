@@ -20,8 +20,8 @@ extension ConnectionStatusLabel on ConnectionStatus {
       };
 }
 
-/// Network risk level (Sprint 4). The exact levels are decided by the risk-level
-/// research, so the label is kept as text coming from the backend.
+/// Network Alert Level (Sprint 5): the highest severity among unresolved
+/// alerts. The label is kept as text coming from the backend.
 class RiskInfo {
   final String level;
   const RiskInfo(this.level);

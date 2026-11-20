@@ -15,7 +15,7 @@ import 'package:assas_design/widgets/assas_eye.dart';
 import 'package:assas_design/release_status.dart';
 
 /// Glanceable status for the 7-inch screen (1024 x 600):
-/// network risk level, devices online, unresolved alerts, system status,
+/// network alert level, devices online, unresolved alerts, system status,
 /// and the rotating pairing QR code.
 class StatusScreen extends StatefulWidget {
   const StatusScreen({super.key, this.repo});
@@ -213,14 +213,14 @@ class _StatusScreenState extends State<StatusScreen> {
       Expanded(flex: 10, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(padding: const EdgeInsets.fromLTRB(18, 0, 0, 20),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('NETWORK RISK', style: UiText.kicker.copyWith(color: Ui.mute)),
+            Text('NETWORK ALERT LEVEL', style: UiText.kicker.copyWith(color: Ui.mute)),
             const SizedBox(height: 10),
             FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
               child: Text(FeatureRelease.risk ? (_risk?.level ?? '—') : 'Soon', style: UiText.riskWord.copyWith(color: riskColor))),
             const SizedBox(height: 8),
-            Text(!FeatureRelease.risk ? 'Network risk arrives in Sprint 4' : _risk == null ? 'Risk level is not available yet' : 'Current network risk assessment',
+            Text(!FeatureRelease.risk ? 'Network Alert Level arrives in Sprint 5' : _risk == null ? 'Alert level is not available yet' : 'Highest severity among open alerts',
               style: UiText.secondary.copyWith(color: Ui.mute)),
-            if (!FeatureRelease.risk) ...[const SizedBox(height: 10), const SoonTag(4)],
+            if (!FeatureRelease.risk) ...[const SizedBox(height: 10), const SoonTag(5)],
           ])),
         Expanded(child: Container(padding: const EdgeInsets.all(18), decoration: surfCard(UiRadius.onlineCard),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [

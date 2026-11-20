@@ -208,7 +208,7 @@ void main() {
   // active, 3-digit counts (like All 281 / Open 280 / Resolved 1).
   Future<void> alertsHeaderShot(WidgetTester tester, String name, {required bool active}) async {
     SharedPreferences.setMockInitialValues(
-        active ? {'ui.alertSeverities': ['low', 'medium', 'high', 'critical']} : {});
+        active ? {'ui.alertSeverities': ['low', 'medium', 'high']} : {});
     for (final f in ['BricolageGrotesque', 'JetBrainsMono']) {
       final l = FontLoader(f == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
       l.addFont(rootBundle.load('assets/fonts/$f.ttf'));
@@ -238,9 +238,8 @@ void main() {
   testWidgets('alerts-filter-active-large', (t) => alertsHeaderShot(t, 'alerts-filter-active-large', active: true), skip: !gen);
 }
 
-/// 288 alerts: 287 open (mostly Low, a couple High) + 1 resolved Critical, so
-/// the tabs read All 288 / Open 287 / Resolved 1. The active filter (High +
-/// Critical) renders only a few cards, keeping the shot light.
+/// 288 alerts: 287 open (mostly Low, a couple High) + 1 resolved High, so
+/// the tabs read All 288 / Open 287 / Resolved 1.
 class _AlertsBulkRepo extends DemoRepository {
   final List<SecurityAlert> _list = [
     for (var i = 0; i < 285; i++)
@@ -252,7 +251,7 @@ class _AlertsBulkRepo extends DemoRepository {
           time: DateTime(2026, 11, 7, 11).add(Duration(seconds: i)),
           severity: Severity.high, state: AlertState.newAlert),
     SecurityAlert(id: 'done', kind: AlertKind.threat, title: 'sig done', deviceName: 'dev',
-        time: DateTime(2026, 11, 7, 9), severity: Severity.critical, state: AlertState.resolved),
+        time: DateTime(2026, 11, 7, 9), severity: Severity.high, state: AlertState.resolved),
   ];
   @override
   Future<List<SecurityAlert>?> getAlerts({int? limit}) async =>

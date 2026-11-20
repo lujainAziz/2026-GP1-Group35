@@ -6,14 +6,14 @@ abstract final class FeatureRelease {
   // Sprint 2 (PBI-13/14): Threat Alerts in the mobile app — the Alerts tab,
   // the alert-details screen, and alerts inside device details.
   static bool get alerts => true;
-  static bool get risk => false; // Sprint 4
+  static bool get risk => false; // Network Alert Level, Sprint 5
   static bool get baseline => false; // Sprint 3
-  // PBI-22 (alert state management) is RELEASED in Sprint 2 (team decision to
-  // restore it). Surfaces: the single newest-first alerts list with All/Open/
-  // Resolved tabs, the New/Reviewed/Resolved badges, the Review/Resolve actions
-  // (New->Reviewed, New->Resolved, Reviewed->Resolved; Resolved terminal), and
-  // the live unresolved counter (New+Reviewed) in the hero. State is persisted
-  // by the backend and a matching event after Resolved starts a new alert.
+  // PBI-22 (alert state management) is RELEASED. Surfaces: the single
+  // newest-first alerts list with All/Open/Resolved tabs, the New/Resolved
+  // badges, the Resolve action (New->Resolved; Resolved terminal; Release 1
+  // removed Reviewed), and the live unresolved (New) counter in the hero. State
+  // is persisted by the backend and a matching event after Resolved starts a
+  // new alert.
   static bool get alertManagement => true;
 
   // PBI-09/PBI-10 (approved for Sprint 2): unresolved alerts feed the device

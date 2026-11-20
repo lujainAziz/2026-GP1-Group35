@@ -28,7 +28,7 @@ abstract class AssasRepository {
   Future<ConnectionStatus> checkHealth();
   Future<LiveActivity?> getActivity() async => null;
 
-  /// null = not available yet (Sprint 4). Never shown as a fake value.
+  /// null = not available yet (Sprint 5). Never shown as a fake value.
   Future<RiskInfo?> getRiskLevel();
 
   // ---------- Devices (Sprint 1) ----------
@@ -46,7 +46,7 @@ abstract class AssasRepository {
   Future<List<SecurityAlert>?> getAlerts({int? limit});
   Future<void> setAlertState(String id, AlertState state);
 
-  /// Total OPEN alerts (New + Reviewed) as a DB aggregate — not the length of a
+  /// Total OPEN (New) alerts as a DB aggregate — not the length of a
   /// loaded page. null = not available yet.
   Future<int?> getOpenAlertCount();
 

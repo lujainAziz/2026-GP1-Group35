@@ -34,14 +34,12 @@ extension on _AlertTab {
 }
 
 String _severityLabel(Severity s) => switch (s) {
-      Severity.critical => 'Critical',
       Severity.high => 'High',
       Severity.medium => 'Medium',
       Severity.low => 'Low',
     };
 
 BadgeColors _severityColors(Severity s) => switch (s) {
-      Severity.critical => BadgeColors.critical,
       Severity.high => BadgeColors.high,
       Severity.medium => BadgeColors.medium,
       Severity.low => BadgeColors.low,
@@ -127,12 +125,12 @@ class _AlertListScreenState extends State<AlertListScreen> {
       _shown.isEmpty ? Ui.acc : _severityColors(_selectedBySeverity.first).foreground;
 
   // Fixed content width for the filter pill = the LONGEST possible state
-  // ("4 filters" — all four severities — with the dot), measured at the current
+  // ("3 filters" — all three severities — with the dot), measured at the current
   // font scale so the pill never resizes between "Filter" and any count. No
   // ghost widget, so no duplicate text.
   double _pillContentWidth(BuildContext context) {
     final tp = TextPainter(
-      text: TextSpan(text: '4 filters', style: UiText.sans(11.5, 700)),
+      text: TextSpan(text: '3 filters', style: UiText.sans(11.5, 700)),
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
@@ -370,7 +368,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
 
   // ---------- Filter control (in the tabs row) ----------
   // Same shape, colours and font as the devices-list filter button: shows
-  // "Filter" when inactive and the summary ("Critical" / "2 filters") with a
+  // "Filter" when inactive and the summary ("1 filter" / "2 filters") with a
   // severity-coloured dot when active.
   Widget _pillRow(String text, {required bool dot}) => Row(
         mainAxisSize: MainAxisSize.min,
@@ -451,7 +449,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
                     // All = show every severity (clears the restriction).
                     _severityAllRow(alerts.length),
                     const SizedBox(height: 4),
-                    for (final s in const [Severity.critical, Severity.high, Severity.medium, Severity.low]) ...[
+                    for (final s in const [Severity.high, Severity.medium, Severity.low]) ...[
                       _severityChip(s, countFor(s)),
                       const SizedBox(height: 4),
                     ],

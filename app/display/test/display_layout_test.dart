@@ -90,7 +90,10 @@ void main() {
     for (var i = 0; i < 6; i++) { await tester.pump(const Duration(milliseconds: 250)); }
     expect(find.text('Pair your phone'), findsOneWidget);
     expect(find.text('Soon'), findsOneWidget);
-    expect(find.text('SOON · SPRINT 4'), findsOneWidget);
+    expect(find.text('NETWORK ALERT LEVEL'), findsOneWidget);
+    expect(find.text('NETWORK RISK'), findsNothing);
+    expect(find.text('Network Alert Level arrives in Sprint 5'), findsOneWidget);
+    expect(find.text('SOON · SPRINT 5'), findsOneWidget);
     expect(find.text('SOON · SPRINT 2'), findsOneWidget);
     expect(find.text('High'), findsNothing);
     expect(find.text('ONLINE'), findsWidgets);

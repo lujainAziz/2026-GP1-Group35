@@ -12,7 +12,8 @@ import '../../widgets/ui_overlays.dart';
 import '../devices/device_details_screen.dart';
 
 /// Alert details: severity, state, plain-language explanation (PBI-18),
-/// affected device, and review / resolve actions (PBI-19).
+/// affected device and first detection, repeated-detection details, and the
+/// resolve action (PBI-19; Release 1: New -> Resolved only).
 /// No raw SHAP values, model scores, or feature names are shown.
 class AlertDetailsScreen extends StatefulWidget {
   const AlertDetailsScreen({super.key, required this.state, required this.alertId});
@@ -45,13 +46,13 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
     }
   }
 
-  Future<void> _setState(AlertState s) async {
+  Future<void> _resolve() async {
     setState(() => _saving = true);
     try {
-      await widget.state.setAlertState(widget.alertId, s);
+      await widget.state.setAlertState(widget.alertId, AlertState.resolved);
       await _fetch(); // reflect the new state even if it is off the loaded page
       if (!mounted) return;
-      showToast(context, s == AlertState.resolved ? 'Marked as resolved' : 'Marked as reviewed');
+      showToast(context, 'Marked as resolved');
     } catch (e) {
       if (widget.state.handleFailure(e) || !mounted) return;
       showToast(context, 'Could not update the alert. Try again.');
@@ -106,13 +107,8 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                       children: [
                         Text(a.title, textAlign: TextAlign.center, style: UiText.alertTitle),
                         const SizedBox(height: 10),
+                        // "{device} · {first detection time}" (Release 1).
                         _deviceLink(context, a),
-                        const SizedBox(height: 4),
-                        Text(
-                          TimeFormat.alertTimePhrase(a.time).toUpperCase(),
-                          textAlign: TextAlign.center,
-                          style: UiText.mono(10, 500, em: .08, color: Ui.mute),
-                        ),
                       ],
                     ),
                   ),
@@ -130,30 +126,33 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                     'Signal details',
                     padding: EdgeInsets.fromLTRB(22, 24, 22, 8),
                   ),
-                  // Device shown once via the tappable pill above the time, so it
-                  // is not repeated here. Occurrences, first/last seen, rule id and
-                  // ports are intentionally hidden from this screen (they remain in
-                  // the database and API); the original rule name and the
-                  // source/destination IP are shown.
+                  // Device shown once via the tappable pill under the title, so
+                  // it is not repeated here. Repeated detections of the same rule
+                  // on the same device (5-minute sliding window) are one alert:
+                  // its count and first/last detection times are shown. The
+                  // original rule name and rule ID are always kept here; ports stay
+                  // hidden (they remain in the database and API).
                   SpecList(
                     railColor: c,
                     copyable: const {'Source IP', 'Destination IP'},
                     onCopy: (_) => showToast(context, 'Copied'),
                     rows: [
                       ('Alert type', a.kindLabel, Ui.ink),
-                      if (a.kind == AlertKind.threat && a.ruleName != null && a.ruleName != a.title)
+                      if (a.kind == AlertKind.threat && a.ruleName != null)
                         ('Rule', a.ruleName!, Ui.ink),
+                      if (a.kind == AlertKind.threat && a.ruleId != null)
+                        ('Rule ID', a.ruleId!, Ui.ink),
                       ('Severity', a.severityLabel, c),
-                      // Last seen = the actual last event time (dedup bumps it).
-                      // First seen stays hidden per the field-hiding decision.
-                      ('Last seen', TimeFormat.alertTime(a.lastTime ?? a.time), Ui.ink),
+                      ('Detections', '${a.occurrenceCount}', Ui.ink),
+                      ('First detected', TimeFormat.alertTime(a.firstDetected), Ui.ink),
+                      ('Last detected', TimeFormat.alertTime(a.lastTime ?? a.time), Ui.ink),
                       if (a.kind == AlertKind.threat && a.sourceIp != null)
                         ('Source IP', a.sourceIp!, Ui.ink),
                       if (a.kind == AlertKind.threat && a.destinationIp != null)
                         ('Destination IP', a.destinationIp!, Ui.ink),
                     ],
                   ),
-                  // Review / Resolve arrive with alert management (Sprint 5, PBI-19).
+                  // Resolve arrives with alert management (PBI-19).
                   if (!Released.alertManagement)
                     const Padding(
                       padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
@@ -162,27 +161,10 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                   else
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: PillButton(
-                            label: 'Review',
-                            filled: false,
-                            opacity: a.state == AlertState.newAlert ? 1 : .35,
-                            onTap: _saving || a.state != AlertState.newAlert
-                                ? null
-                                : () => _setState(AlertState.reviewed),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: PillButton(
-                            label: 'Resolve',
-                            opacity: open ? 1 : .35,
-                            onTap: _saving || !open ? null : () => _setState(AlertState.resolved),
-                          ),
-                        ),
-                      ],
+                    child: PillButton(
+                      label: 'Resolve',
+                      opacity: open ? 1 : .35,
+                      onTap: _saving || !open ? null : _resolve,
                     ),
                   ),
                   if (!open && Released.alertManagement)
@@ -221,14 +203,16 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
     );
   }
 
-  /// Device name pill; opens the device when it is known.
+  /// "{device} · {first detection time}" pill; opens the device when it is
+  /// known. Unlinked alerts read "Unknown device · {time}".
   Widget _deviceLink(BuildContext context, SecurityAlert a) {
     final mac = a.deviceMac;
     final device = mac == null ? null : widget.state.deviceByMac(mac);
     final known = device != null;
     // Prefer the inventory's display name (already machine-id-aware); otherwise
     // sanitize the alert's own name so opaque identifiers show "Unknown device".
-    final name = device?.displayName ?? a.displayDeviceName;
+    final name = mac == null ? 'Unknown device' : device?.displayName ?? a.displayDeviceName;
+    final line = '$name · ${TimeFormat.alertDetected(a.firstDetected)}';
     return Pressable(
       onTap: known
           ? () => Navigator.of(context).push(
@@ -248,7 +232,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
           children: [
             Flexible(
               child: Text(
-                name,
+                line,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: UiText.secondary,

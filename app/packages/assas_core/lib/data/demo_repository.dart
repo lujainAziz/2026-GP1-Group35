@@ -75,7 +75,7 @@ class DemoRepository implements AssasRepository {
         id: 'demo-2', kind: AlertKind.threat, title: 'Port scan detected',
         deviceMac: '5b:8c:da:4d:34:5a', deviceName: 'Work laptop',
         time: today.add(const Duration(hours: 21, minutes: 15)),
-        severity: Severity.medium, state: AlertState.reviewed,
+        severity: Severity.medium, state: AlertState.newAlert,
         explanation:
             'Another device tried to connect to many different ports on your work laptop in a short time. This is often how attackers look for open services.',
         sourceIp: '192.168.1.57', destinationIp: '192.168.1.12',
@@ -84,7 +84,7 @@ class DemoRepository implements AssasRepository {
         id: 'demo-3', kind: AlertKind.threat, title: 'Malware server contacted',
         deviceMac: '50:c7:bf:12:9a:33', deviceName: 'Smart plug',
         time: yesterday.add(const Duration(hours: 18, minutes: 5)),
-        severity: Severity.critical, state: AlertState.resolved,
+        severity: Severity.high, state: AlertState.resolved,
         explanation:
             'Your smart plug connected to an internet address that is known to be used by malware.',
         sourceIp: '192.168.1.66', destinationIp: '185.220.101.4',
@@ -177,7 +177,7 @@ class DemoRepository implements AssasRepository {
   @override
   Future<int?> getOpenAlertCount() async {
     await _delay();
-    return _alerts.where((a) => a.isUnresolved).length; // New + Reviewed
+    return _alerts.where((a) => a.isUnresolved).length; // New
   }
 
   @override

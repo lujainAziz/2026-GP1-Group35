@@ -1,8 +1,9 @@
 // Sprint 2 UI review: the alert-details and device-details screens must stay
 // readable — no overflow/clipping — at the smallest, default, and largest
 // supported font sizes, with long device names and full IPv6 addresses.
-// Also checks the opaque-hostname -> "Unknown device" display rule and that
-// the hidden alert fields (occurrences, first/last, rule id, ports) are absent.
+// Also checks the opaque-hostname -> "Unknown device" display rule, the
+// repeated-detection rows (count, first/last detected, rule ID) and that the
+// ports stay hidden.
 import 'package:assas_core/assas_core.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/alerts/alert_list_screen.dart';
@@ -115,7 +116,7 @@ void main() {
     await _pumpAll(tester, () => AlertListScreen(state: s));
   });
 
-  testWidgets('Alert details: no overflow; hidden fields absent; device name once', (tester) async {
+  testWidgets('Alert details: no overflow; detection rows shown; ports hidden; device line once', (tester) async {
     await _loadFonts();
     final s = await _state(tester);
     await _pumpAll(tester, () => AlertDetailsScreen(state: s, alertId: '1'));
@@ -124,22 +125,26 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: MobileTheme.light,
         home: DesignScale(zoom: 1, child: AlertDetailsScreen(state: s, alertId: '1'))));
     await tester.pump(const Duration(milliseconds: 60));
-    // SpecList uppercases labels; hidden fields must be absent in any case.
-    // (LAST SEEN is intentionally shown again = last_event_time; FIRST SEEN stays hidden.)
-    for (final f in ['OCCURRENCES', 'FIRST SEEN', 'RULE ID', 'DEVICE']) {
-      expect(find.text(f), findsNothing, reason: '$f should be hidden');
+    // SpecList uppercases labels. Repeated detections: count + first/last.
+    for (final f in ['DETECTIONS', 'FIRST DETECTED', 'LAST DETECTED', 'RULE ID']) {
+      expect(find.text(f), findsOneWidget, reason: '$f should be shown');
     }
-    expect(find.text('LAST SEEN'), findsOneWidget, reason: 'Last seen (last_event_time) is shown');
+    for (final f in ['OCCURRENCES', 'FIRST SEEN', 'LAST SEEN', 'DEVICE']) {
+      expect(find.text(f), findsNothing, reason: '$f should not be shown');
+    }
+    expect(find.text('40'), findsOneWidget); // occurrence_count
+    // "{device} · {first detection time}" under the title (first = 09:00).
+    expect(find.textContaining('· 4 Nov, 9:00 AM'), findsOneWidget);
     // ports hidden: value shows IP only, never ip:port
     expect(find.textContaining(':51000'), findsNothing);
     expect(find.textContaining(':443'), findsNothing);
     expect(find.text('SOURCE IP'), findsOneWidget);
     expect(find.text('DESTINATION IP'), findsOneWidget);
-    // Plain title as heading; original rule name in the details (rule id hidden).
+    // Plain title as heading; original rule name and rule ID in the details.
     expect(find.text('Unsafe activity'), findsOneWidget);
     expect(find.text('RULE'), findsOneWidget);
     expect(find.text(_longTitle), findsOneWidget);
-    expect(find.textContaining('2046657'), findsNothing);
+    expect(find.text('2046657'), findsOneWidget);
     // Explanation + device role line.
     expect(find.text(_longExplanation), findsOneWidget);
     expect(find.text('This device started the activity.'), findsOneWidget);

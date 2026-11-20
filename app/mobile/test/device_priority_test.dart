@@ -32,7 +32,7 @@ void main() {
           signal(severity.name, online: online, severity: severity),
       ]..sort(DeviceSignal.compare);
       expect(devices.map((s) => s.device.mac),
-          ['critical', 'high', 'medium', 'low', 'unrecognized', 'unmonitored', 'clear']);
+          ['high', 'medium', 'low', 'unrecognized', 'unmonitored', 'clear']);
     }
   });
 
