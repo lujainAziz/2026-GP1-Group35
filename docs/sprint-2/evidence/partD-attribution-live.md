@@ -8,13 +8,13 @@ read-only queries against the production database and API.
 `device_addresses`: 17 rows — 14 IPv4 (`source=arp`), 2 link-local and 1 global
 IPv6 (`source=span`, locality-guarded). The recorded global IPv6 is the
 **privacy address behind the previously-unlinked alert cluster**
-(`2001:16a2:c83e:5700:78f5:8a3d:cbf4:b5fe` → `e6:42:65:03:0d:8f`).
+(`2001:0db8:c83e:5700:78f5:8a3d:cbf4:b5fe` → `02:5a:01:00:0e:8f`).
 Gateway-MAC rows with `source=ndp`: **0** (Proxy-NDP exclusion holding).
 
 ## Discovery-lag repair (relink of recent unlinked alerts)
 The four IPv6 alerts from the 01:27–01:30 cluster (ids 1298, 1300, 1301, 1304),
 stored unlinked before the feature existed, are now **linked to
-`e6:42:65:03:0d:8f`**: the late evidence (first_seen 02:47) covers their event
+`02:5a:01:00:0e:8f`**: the late evidence (first_seen 02:47) covers their event
 times via the pre-slack bound (01:27 ≥ 02:47 − 2 h). Integrity preserved —
 id 1304 after relink: `occurrence_count = 1`, `state = New` (only `device_mac`
 was written).
@@ -31,7 +31,7 @@ was written).
   and device) instead of splitting per external server.
 
 ## Display-name unification (API)
-A linked alert of `e6:42:65:03:0d:8f` is served with
+A linked alert of `02:5a:01:00:0e:8f` is served with
 `device_name = "emulator (sdk_gphone64_x86_64)"` (inventory model; the opaque
 UUID hostname is skipped) — matching the device-details screen.
 

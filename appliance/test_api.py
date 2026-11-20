@@ -64,13 +64,13 @@ class _SeededDBTest(unittest.TestCase):
 class DeviceDetailClassificationTests(_SeededDBTest):
     def test_detail_includes_classification_needles(self):
         self.insert(
-            mac="72:a3:36:be:90:06", ip="192.168.1.5", device_type="Mobile (Apple)",
+            mac="02:5a:05:00:12:06", ip="192.168.1.5", device_type="Mobile (Apple)",
             model="iPhone", class_source="mDNS model (mapped identifier)", class_score=80,
             model_source="mDNS model (mapped identifier)", model_score=80,
             vendor_class="TL-SG105E", status="online", discovered_current=1,
             last_seen="2026-09-20T10:57:37",
         )
-        d = api.get_device("72:a3:36:be:90:06", self.conn)
+        d = api.get_device("02:5a:05:00:12:06", self.conn)
         c = d.classification
         self.assertIsNotNone(c)
         self.assertEqual(c.device_type, "Mobile (Apple)")
@@ -85,10 +85,10 @@ class DeviceDetailClassificationTests(_SeededDBTest):
 
     def test_vendor_on_randomized_mac_is_inferred(self):
         self.insert(
-            mac="72:a3:36:be:90:06", vendor="Apple Inc.", vendor_source=None,
+            mac="02:5a:05:00:12:06", vendor="Apple Inc.", vendor_source=None,
             status="online", last_seen="2026-09-20T10:57:37",
         )
-        d = api.get_device("72:a3:36:be:90:06", self.conn)
+        d = api.get_device("02:5a:05:00:12:06", self.conn)
         self.assertEqual(d.classification.vendor_source, "inferred: private MAC")
 
 
@@ -349,24 +349,24 @@ class EffectiveVendorSourceTests(unittest.TestCase):
         # An OUI never produces a vendor for a locally-administered MAC, so
         # the API must surface it as inferred rather than as certain fact.
         self.assertEqual(
-            api._effective_vendor_source("72:a3:36:be:90:06", "Apple Inc.", None),
+            api._effective_vendor_source("02:5a:05:00:12:06", "Apple Inc.", None),
             "inferred: private MAC",
         )
 
     def test_real_mac_null_source_unchanged(self):
         # Genuine OUI vendor on a real MAC must stay non-inferred.
         self.assertIsNone(
-            api._effective_vendor_source("28:39:5e:d7:44:0c", "Samsung Electronics", None)
+            api._effective_vendor_source("28:39:5e:00:0a:0c", "Samsung Electronics", None)
         )
 
     def test_explicit_inferred_source_preserved(self):
         self.assertEqual(
-            api._effective_vendor_source("72:a3:36:be:90:06", "Apple Inc.", "inferred: model"),
+            api._effective_vendor_source("02:5a:05:00:12:06", "Apple Inc.", "inferred: model"),
             "inferred: model",
         )
 
     def test_no_vendor_stays_none(self):
-        self.assertIsNone(api._effective_vendor_source("72:a3:36:be:90:06", None, None))
+        self.assertIsNone(api._effective_vendor_source("02:5a:05:00:12:06", None, None))
 
     def test_locally_administered_bit(self):
         self.assertTrue(api._is_locally_administered_mac("02:11:22:33:44:55"))
@@ -1534,7 +1534,7 @@ class AlertEndpointTests(_SeededDBTest):
             device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET A", rule_id=1,
             event_time="2026-11-02T10:00:00", severity="High", state="New",
             occurrence_count=1, last_event_time="2026-11-02T10:00:00",
-            src_ip="10.0.0.5", dst_ip="8.8.8.8", src_port=5, dst_port=53)
+            src_ip="10.0.0.5", dst_ip="198.51.100.8", src_port=5, dst_port=53)
         self._add_alert(
             device_mac=None, alert_type="Threat", title="ET B", rule_id=2,
             event_time="2026-11-02T11:00:00", severity="Medium", state="New",

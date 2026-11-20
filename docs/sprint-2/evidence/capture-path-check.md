@@ -15,10 +15,10 @@ event and carried the MACs:
 
 ```
 sid=2200013 SURICATA IPv6 truncated packet
-   ether = {"src_mac": "e6:42:65:03:0d:8f", "dest_mac": "fc:1b:d1:30:cb:6c"}
+   ether = {"src_mac": "02:5a:01:00:0e:8f", "dest_mac": "fc:1b:d1:00:08:6c"}
    src_ip present: False
 sid=2200013 SURICATA IPv6 truncated packet
-   ether = {"src_mac": "fc:1b:d1:30:cb:6c", "dest_mac": "e6:42:65:03:0d:8f"}
+   ether = {"src_mac": "fc:1b:d1:00:08:6c", "dest_mac": "02:5a:01:00:0e:8f"}
    src_ip present: False
 ```
 
@@ -64,21 +64,21 @@ causes remain, indistinguishable without the sender's identity:
 
 First production sid-2200013 event after the restart (03:41:38 +03):
 ```
-ether = {"src_mac": "b8:fb:b3:cb:b3:56", "dest_mac": "33:33:00:00:00:00"}   (no IP fields)
+ether = {"src_mac": "b8:fb:b3:00:06:56", "dest_mac": "33:33:00:00:00:00"}   (no IP fields)
 ```
 - **Exclusions applied:** the destination (IPv6 multicast `33:33:…`) was not a
   candidate; the live resolver excludes the gateway MACs
-  `fc:1b:d1:30:cb:6c` (IPv4 default route) **and `c0:e0:18:ec:5d:69` — the
+  `fc:1b:d1:00:08:6c` (IPv4 default route) **and `c0:e0:18:00:0d:69` — the
   IPv6 default route's next-hop (`fe80::1`), a different MAC that the previous
   inventory-IPv4-only logic would have missed** — plus the appliance's three
   interface MACs.
 - **Selection:** the source MAC is a known inventory device →
-  `b8:fb:b3:cb:b3:56` (TP-Link TL-WR802N 4.0).
+  `b8:fb:b3:00:06:56` (TP-Link TL-WR802N 4.0).
 - **SQLite / counters:** new device-keyed row `id=1322, occurrence_count=1`
   (exactly one event since the restart — no inflation); the historical
   NULL-keyed row `id=1297` is untouched (`occ=79`, last event 03:39:32, before
   the deployment).
-- **API:** `device_mac=b8:fb:b3:cb:b3:56`,
+- **API:** `device_mac=b8:fb:b3:00:06:56`,
   `device_name="TP-Link TL-WR802N 4.0"`, `state=new`.
 - **Pending:** the owner's in-app navigation test from this alert to the
   device's details.
@@ -105,7 +105,7 @@ set -euo pipefail
 OUT="/home/assas/sprint2-backups/trunc-sample-$(date -u +%Y%m%dT%H%M%SZ).pcap"
 rc=0
 sudo timeout 300 tcpdump -i eth1 -s 0 -c 20 -w "$OUT" \
-  'ether proto 0x86dd and ether src b8:fb:b3:cb:b3:56' || rc=$?
+  'ether proto 0x86dd and ether src b8:fb:b3:00:06:56' || rc=$?
 if [ "$rc" -eq 124 ]; then
   echo "WINDOW_ELAPSED: 5-minute cap reached; captured whatever arrived"
 elif [ "$rc" -ne 0 ]; then

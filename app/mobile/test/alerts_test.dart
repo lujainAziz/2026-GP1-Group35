@@ -27,7 +27,7 @@ Map<String, dynamic> _apiAlert({Map<String, dynamic> over = const {}}) => {
       'occurrence_count': 4,
       'rule_id': '2025001',
       'source_ip': '10.0.0.5',
-      'destination_ip': '8.8.8.8',
+      'destination_ip': '198.51.100.8',
       'src_port': 1234,
       'dst_port': 53,
       'explanation': null,
@@ -50,7 +50,7 @@ void main() {
       expect(a.occurrenceCount, 4);
       expect(a.ruleId, '2025001');
       expect(a.sourceIp, '10.0.0.5');
-      expect(a.destinationIp, '8.8.8.8');
+      expect(a.destinationIp, '198.51.100.8');
       expect(a.srcPort, 1234);
       expect(a.dstPort, 53);
       expect(a.explanation, isNull);

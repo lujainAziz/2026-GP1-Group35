@@ -24,12 +24,12 @@ class DemoRepository implements AssasRepository {
 
     _devices = [
       Device(
-        mac: '7c:9e:bd:4a:21:0f', ip: '192.168.1.23', hostname: 'Living room TV',
+        mac: '7c:9e:bd:00:04:0f', ip: '192.168.1.23', hostname: 'Living room TV',
         vendor: 'Samsung', deviceType: 'Smart TV',
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
       Device(
-        mac: '7c:6b:cb:5a:21:5d', ip: '192.168.1.41', hostname: 'Front door camera',
+        mac: '7c:6b:cb:00:01:5d', ip: '192.168.1.41', hostname: 'Front door camera',
         vendor: 'Hikvision', deviceType: 'Camera',
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
@@ -44,18 +44,18 @@ class DemoRepository implements AssasRepository {
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
       Device(
-        mac: '50:c7:bf:12:9a:33', ip: '192.168.1.66', hostname: 'Smart plug',
+        mac: '50:c7:bf:00:03:33', ip: '192.168.1.66', hostname: 'Smart plug',
         vendor: 'TP-Link', deviceType: 'Smart plug',
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
       Device(
-        mac: 'a4:83:e7:2c:10:b8', ip: '192.168.1.30', hostname: "Nona's iPhone",
+        mac: 'a4:83:e7:00:05:b8', ip: '192.168.1.30', hostname: "Nona's iPhone",
         vendor: 'Apple', deviceType: 'Mobile',
         presence: Presence.offline, trusted: true,
         lastSeen: now.subtract(const Duration(hours: 3)),
       ),
       Device(
-        mac: '3c:2a:f4:77:05:e1', ip: '192.168.1.50', hostname: 'Office printer',
+        mac: '3c:2a:f4:00:02:e1', ip: '192.168.1.50', hostname: 'Office printer',
         vendor: 'HP', deviceType: 'Printer',
         presence: Presence.offline, trusted: true,
         lastSeen: now.subtract(const Duration(days: 1)),
@@ -65,7 +65,7 @@ class DemoRepository implements AssasRepository {
     _alerts = [
       SecurityAlert(
         id: 'demo-1', kind: AlertKind.anomaly, title: 'Unusual activity',
-        deviceMac: '7c:6b:cb:5a:21:5d', deviceName: 'Front door camera',
+        deviceMac: '7c:6b:cb:00:01:5d', deviceName: 'Front door camera',
         time: today.add(const Duration(hours: 22, minutes: 42)),
         severity: Severity.high, state: AlertState.newAlert, read: false,
         explanation:
@@ -82,16 +82,16 @@ class DemoRepository implements AssasRepository {
       ),
       SecurityAlert(
         id: 'demo-3', kind: AlertKind.threat, title: 'Malware server contacted',
-        deviceMac: '50:c7:bf:12:9a:33', deviceName: 'Smart plug',
+        deviceMac: '50:c7:bf:00:03:33', deviceName: 'Smart plug',
         time: yesterday.add(const Duration(hours: 18, minutes: 5)),
         severity: Severity.high, state: AlertState.resolved, read: true,
         explanation:
             'Your smart plug connected to an internet address that is known to be used by malware.',
-        sourceIp: '192.168.1.66', destinationIp: '185.220.101.4',
+        sourceIp: '192.168.1.66', destinationIp: '203.0.113.4',
       ),
       SecurityAlert(
         id: 'demo-4', kind: AlertKind.anomaly, title: 'Unusual activity',
-        deviceMac: '7c:9e:bd:4a:21:0f', deviceName: 'Living room TV',
+        deviceMac: '7c:9e:bd:00:04:0f', deviceName: 'Living room TV',
         time: yesterday.add(const Duration(hours: 16, minutes: 30)),
         severity: Severity.low, state: AlertState.resolved, read: true,
         explanation:

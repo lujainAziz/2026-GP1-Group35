@@ -80,7 +80,7 @@ class AddrScopeTests(unittest.TestCase):
         # Documentation ranges stand in for the internet: never LAN-scoped
         # (Python's is_private would wrongly call them private).
         for ip in (SERVER_V4, "198.51.100.7", "192.0.2.1", SERVER_V6, "2001:db8:1::20",
-                   "8.8.8.8", None, "", "not-an-ip"):
+                   "198.51.100.8", None, "", "not-an-ip"):
             self.assertFalse(addr_scope.is_lan_scoped(ip), ip)
 
 

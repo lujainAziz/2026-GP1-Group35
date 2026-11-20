@@ -57,8 +57,8 @@ Classified read-only:
 and nothing is linked arbitrarily.
 
 **Root cause of the 200:** they are **all IPv6** (0 IPv4). 189 of 200 carry a home
-address in the prefix `2001:16a2:dea6:2200::/64` (e.g.
-`dst=2001:16a2:dea6:2200:79ee:14d2:e191:965e`) talking to an external host
+address in the prefix `2001:db8:dea6:2200::/64` (e.g.
+`dst=2001:0db8:dea6:2200:79ee:14d2:e191:965e`) talking to an external host
 (Facebook/Cloudflare/Google IPv6). That home address is a **temporary/privacy
 SLAAC address** that is **not** the single global IPv6 the inventory stored for
 the device (inventory has e.g. `...:2200:6854:...` for a device in the same /64).

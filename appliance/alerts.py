@@ -369,7 +369,7 @@ def classtype_for(category, path=None):
 def _addr_forms(ip):
     """Textual forms an address may be stored under.
 
-    Suricata writes IPv6 zero-padded exploded ('2001:16a2:...:0cf3:...'), while
+    Suricata writes IPv6 zero-padded exploded ('2001:db8:...:0cf3:...'), while
     the inventory's last_* columns hold the kernel's compressed form
     ('...:cf3:...'). Both forms are matched so format differences never break a
     link. Returns a list with the original string as a fallback.

@@ -157,13 +157,13 @@ class DiscoverySafetyTests(unittest.TestCase):
     def test_upnp_redirect_cannot_leave_the_device(self):
         handler = d._LocalMetadataRedirectHandler()
         request = d.urllib.request.Request(f'http://{self.ip}/device.xml')
-        for url in ('http://8.8.8.8/device.xml', 'http://192.168.1.99/device.xml'):
+        for url in ('http://198.51.100.8/device.xml', 'http://192.168.1.99/device.xml'):
             self.assertIsNone(handler.redirect_request(request, None, 302, 'Found', {}, url))
         allowed = handler.redirect_request(request, None, 302, 'Found', {}, f'http://{self.ip}/new.xml')
         self.assertEqual(allowed.full_url, f'http://{self.ip}/new.xml')
 
     def test_unknown_syn_and_rate_limit_still_refresh_inventory(self):
-        packet=self.frame(IP(src=self.ip,dst='1.1.1.1')/TCP(flags='S'))
+        packet=self.frame(IP(src=self.ip,dst='198.51.100.11')/TCP(flags='S'))
         with patch.object(d,'fingerprint_tcp_syn',return_value=(None,None)) as fingerprint:
             d.handle(packet)
             self.assertIsNotNone(self.row())
@@ -174,7 +174,7 @@ class DiscoverySafetyTests(unittest.TestCase):
             self.assertEqual(fingerprint.call_count,1)
 
     def test_foreign_syn_ack_not_attributed_to_router(self):
-        d.handle(self.frame(IP(src='8.8.8.8',dst=self.ip)/TCP(sport=9100,flags='SA')))
+        d.handle(self.frame(IP(src='198.51.100.8',dst=self.ip)/TCP(sport=9100,flags='SA')))
         self.assertIsNone(self.row())
 
     def test_ipv6_address_is_recorded(self):

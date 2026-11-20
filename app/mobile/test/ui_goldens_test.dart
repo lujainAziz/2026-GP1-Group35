@@ -19,8 +19,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _mac = 'e6:42:65:03:0d:8f';
-const _ipv6 = '2001:16a2:dea6:2200:79ee:14d2:e191:965e';
+const _mac = '02:5a:01:00:0e:8f';
+const _ipv6 = '2001:0db8:dea6:2200:79ee:14d2:e191:965e';
 
 class _Repo extends DemoRepository {
   final Device _dev = const Device(
@@ -276,7 +276,7 @@ class _ScaleRepo extends DemoRepository {
   final Device _dev = const Device(
     mac: _mac,
     ip: '192.168.100.238',
-    ipv6: ['2001:16a2:c83e:5700:78f5:8a3d:cbf4:b5fe'],
+    ipv6: ['2001:0db8:c83e:5700:78f5:8a3d:cbf4:b5fe'],
     hostname: '0badc396-c1f4-40db-ba83-c0702b11ae58', // opaque -> model shown
     model: 'emulator (sdk_gphone64_x86_64)',
     vendor: 'Google', deviceType: 'Computer',

@@ -19,8 +19,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _mac = 'e6:42:65:03:0d:8f';
-const _ipv6 = '2001:16a2:dea6:2200:79ee:14d2:e191:965e';
+const _mac = '02:5a:01:00:0e:8f';
+const _ipv6 = '2001:0db8:dea6:2200:79ee:14d2:e191:965e';
 const _opaqueHost = 'a7f3e9c1b2d84f60a7f3e9c1b2d84f60'; // 32 hex -> machine id
 const _longTitle =
     'ET FILE_SHARING Commonly Abused File Sharing Domain (wasabisys .com) in TLS SNI';
