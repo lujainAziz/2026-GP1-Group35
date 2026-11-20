@@ -67,7 +67,7 @@ class DemoRepository implements AssasRepository {
         id: 'demo-1', kind: AlertKind.anomaly, title: 'Unusual activity',
         deviceMac: '7c:6b:cb:5a:21:5d', deviceName: 'Front door camera',
         time: today.add(const Duration(hours: 22, minutes: 42)),
-        severity: Severity.high, state: AlertState.newAlert,
+        severity: Severity.high, state: AlertState.newAlert, read: false,
         explanation:
             'Your front door camera sent much more data than it normally does in a single connection, and the connection lasted longer than usual.',
       ),
@@ -75,16 +75,16 @@ class DemoRepository implements AssasRepository {
         id: 'demo-2', kind: AlertKind.threat, title: 'Port scan detected',
         deviceMac: '5b:8c:da:4d:34:5a', deviceName: 'Work laptop',
         time: today.add(const Duration(hours: 21, minutes: 15)),
-        severity: Severity.medium, state: AlertState.newAlert,
+        severity: Severity.medium, state: AlertState.newAlert, read: true,
         explanation:
-            'Another device tried to connect to many different ports on your work laptop in a short time. This is often how attackers look for open services.',
+            'Another device tried to connect to many different ports on your work laptop in a short time. This is often how attackers look for services they can reach.',
         sourceIp: '192.168.1.57', destinationIp: '192.168.1.12',
       ),
       SecurityAlert(
         id: 'demo-3', kind: AlertKind.threat, title: 'Malware server contacted',
         deviceMac: '50:c7:bf:12:9a:33', deviceName: 'Smart plug',
         time: yesterday.add(const Duration(hours: 18, minutes: 5)),
-        severity: Severity.high, state: AlertState.resolved,
+        severity: Severity.high, state: AlertState.resolved, read: true,
         explanation:
             'Your smart plug connected to an internet address that is known to be used by malware.',
         sourceIp: '192.168.1.66', destinationIp: '185.220.101.4',
@@ -93,7 +93,7 @@ class DemoRepository implements AssasRepository {
         id: 'demo-4', kind: AlertKind.anomaly, title: 'Unusual activity',
         deviceMac: '7c:9e:bd:4a:21:0f', deviceName: 'Living room TV',
         time: yesterday.add(const Duration(hours: 16, minutes: 30)),
-        severity: Severity.low, state: AlertState.resolved,
+        severity: Severity.low, state: AlertState.resolved, read: true,
         explanation:
             'Your living room TV connected at a time when it is usually not active.',
       ),
@@ -170,9 +170,36 @@ class DemoRepository implements AssasRepository {
   Future<void> setAlertState(String id, AlertState state) async {
     await _delay();
     _alerts = [
-      for (final a in _alerts) a.id == id ? a.copyWith(state: state) : a,
+      for (final a in _alerts)
+        a.id == id
+            // Resolved alerts count as read.
+            ? a.copyWith(state: state, read: state == AlertState.resolved ? true : null)
+            : a,
     ];
   }
+
+  @override
+  Future<SecurityAlert?> markAlertRead(String id) async {
+    await _delay();
+    SecurityAlert? out;
+    _alerts = [
+      for (final a in _alerts)
+        if (a.id == id) out = a.copyWith(read: true) else a,
+    ];
+    return out;
+  }
+
+  // Derived from getAlerts() so a subclass serving its own alert list (tests)
+  // gets a matching Unread tab and badge.
+  @override
+  Future<List<SecurityAlert>?> getUnreadAlerts({int? limit}) async {
+    final list = (await getAlerts())?.where((a) => a.isUnread && a.isUnresolved).toList();
+    return list != null && limit != null && list.length > limit ? list.sublist(0, limit) : list;
+  }
+
+  @override
+  Future<int?> getUnreadAlertCount() async =>
+      (await getAlerts())?.where((a) => a.isUnread && a.isUnresolved).length;
 
   @override
   Future<int?> getOpenAlertCount() async {

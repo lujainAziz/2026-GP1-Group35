@@ -875,7 +875,31 @@ class TimelineAlertCard extends StatelessWidget {
                 children: [
                   AlertMetaRow(alert),
                   SizedBox(height: compact ? 3 : 4),
-                  Text(alert.title, style: compact ? UiText.recentTitle.copyWith(letterSpacing: 0) : UiText.alertCardTitle),
+                  // Unread on this phone: a dot and a bold title.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (alert.isUnread) ...[
+                        Padding(
+                          padding: EdgeInsets.only(top: compact ? 7 : 8),
+                          child: Container(
+                            key: const ValueKey('unreadDot'),
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(color: Ui.acc, shape: BoxShape.circle),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                      ],
+                      Expanded(
+                        child: Text(
+                          alert.title,
+                          style: (compact ? UiText.recentTitle.copyWith(letterSpacing: 0) : UiText.alertCardTitle)
+                              .copyWith(fontWeight: alert.isUnread ? FontWeight.w800 : FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
                   SizedBox(height: compact ? 3 : 4),
                   if (compact && Released.alertManagement)
                     Text(alert.stateLabel, style: UiText.pill.copyWith(color: stateColor(alert)))

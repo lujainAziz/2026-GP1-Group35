@@ -164,8 +164,11 @@ void main() {
       expect(FeatureRelease.alertSeverityBadges, isTrue); // PBI-09/10: signals + priority
       // 7-inch display "Unresolved alerts" card (Sprint 2 feature, Release 1).
       expect(FeatureRelease.alertDisplay, isTrue);
+      // Home "Unresolved alerts" card (Release 1); the Home recent summary
+      // (PBI-24) stays hidden.
+      expect(FeatureRelease.alertsHome, isTrue);
+      expect(FeatureRelease.alertsHomeRecent, isFalse);
       // Everything else stays hidden until its own sprint:
-      expect(FeatureRelease.alertsHome, isFalse); // Home count + recent summary (PBI-24)
       // Threat Alert explanations RELEASED in Sprint 2 (Option 2).
       expect(FeatureRelease.alertExplanations, isTrue); // "What happened" block
       expect(FeatureRelease.risk, isFalse); // Network Alert Level (Sprint 5)

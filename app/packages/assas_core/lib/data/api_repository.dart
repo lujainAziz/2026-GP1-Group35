@@ -190,6 +190,32 @@ class ApiRepository implements AssasRepository {
   }
 
   @override
+  Future<SecurityAlert?> markAlertRead(String id) async {
+    final r = await _api.post('/alerts/${Uri.encodeComponent(id)}/read');
+    // 404: unknown alert or an appliance without read markers; 409: no phone
+    // session (a request from the appliance itself).
+    if (r.statusCode == 404 || r.statusCode == 409) return null;
+    ApiClient.ensureOk(r, 'mark alert read');
+    return SecurityAlert.fromApi(ApiClient.decodeObject(r));
+  }
+
+  @override
+  Future<List<SecurityAlert>?> getUnreadAlerts({int? limit}) async {
+    final list = await _pageAlerts('/alerts?filter=unread', nullIf404: true, maxItems: limit);
+    // An appliance without read markers ignores the filter and has read = null:
+    // keep only alerts it says are unread (and unresolved).
+    return list?.where((a) => a.isUnread && a.isUnresolved).toList();
+  }
+
+  @override
+  Future<int?> getUnreadAlertCount() async {
+    final r = await _api.get('/alerts/unread_count');
+    if (r.statusCode == 404 || r.statusCode == 409) return null;
+    ApiClient.ensureOk(r, '/alerts/unread_count');
+    return (ApiClient.decodeObject(r)['unread'] as num?)?.toInt();
+  }
+
+  @override
   Future<int?> getOpenAlertCount() async {
     final r = await _api.get('/alerts/open_count');
     if (r.statusCode == 404) return null; // not built yet

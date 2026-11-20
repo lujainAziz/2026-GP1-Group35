@@ -208,12 +208,12 @@ class DashboardScreen extends StatelessWidget {
 
   Widget _risk() {
     final risk = Released.risk ? state.risk : null;
-    final open = Released.alertsHome ? state.unresolvedCount : null;
-    final note = open == null
+    final unresolved = Released.alertsHome ? state.unresolvedAlertCount : null;
+    final note = unresolved == null
         ? 'Alerts are not available yet'
-        : open > 0
-            ? '$open alert${open > 1 ? 's' : ''} still open on your network'
-            : 'Nothing needs you right now';
+        : unresolved > 0
+            ? '$unresolved alert${unresolved > 1 ? 's' : ''} unresolved on your network'
+            : 'No unresolved alerts';
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 18, 22, 0),
       child: Column(
@@ -262,7 +262,6 @@ class DashboardScreen extends StatelessWidget {
   }
 
   Widget _stats(List<DeviceSignal> signals) {
-    final open = Released.alertsHome ? state.unresolvedCount : null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 26, 16, 0),
       child: IntrinsicHeight(
@@ -336,8 +335,8 @@ class DashboardScreen extends StatelessWidget {
               child: Column(
                 // Stretch so both cards share one width; Expanded makes the two
                 // cards + the gap span the full column height, which (in the
-                // IntrinsicHeight row) equals the Online card — Open alerts
-                // aligns to Online's top and Unrecognized to its bottom.
+                // IntrinsicHeight row) equals the Online card — Unresolved
+                // alerts aligns to Online's top and Unrecognized to its bottom.
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Expanded(
@@ -347,8 +346,8 @@ class DashboardScreen extends StatelessWidget {
                         radius: UiRadius.card,
                         color: Ui.mix(Ui.high, .16, Ui.surf),
                         child: Released.alertsHome
-                            ? _statInner('Open\nalerts', open?.toString() ?? '–', Ui.high)
-                            : _soonInner('Open\nalerts', 2),
+                            ? _unresolvedInner()
+                            : _soonInner('Unresolved\nalerts', 2),
                       ),
                     ),
                   ),
@@ -374,13 +373,13 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  /// Shared layout for the two stacked stat cards (Open alerts + Unrecognized):
+  /// Shared layout for the two stacked stat cards (Unresolved alerts + Unrecognized):
   /// identical padding, label on the left and value on the right, across the
   /// full card width. The card width is fixed (the column stretches both cards
   /// to the same width); Wrap keeps the label and value on one line at normal
   /// text sizes and, when the enlarged font no longer fits them together, flows
   /// the value onto the next line so the card grows in HEIGHT (width unchanged).
-  Widget _statCard(String label, Widget value) {
+  Widget _statCard(String label, Widget value, {String? note}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       // Centre the label/value row vertically now the card fills the column
@@ -399,8 +398,40 @@ class DashboardScreen extends StatelessWidget {
               value,
             ],
           ),
+          if (note != null) ...[
+            const SizedBox(height: 4),
+            Text(note, key: const ValueKey('unresolvedNote'),
+                style: UiText.mono(10, 600, em: .06, color: Ui.mute)),
+          ],
         ],
       ),
+    );
+  }
+
+  /// "Unresolved alerts" card: the DB count of New alerts (GET /alerts/open_count).
+  /// 0 is muted with "No unresolved alerts" (never "All clear": the card must
+  /// not suggest the network is safe). After a failed refresh the last known
+  /// count stays, dimmed, with "Last known"; with no count yet it shows "—".
+  Widget _unresolvedInner() {
+    final n = state.unresolvedAlertCount;
+    final lastKnown = n != null && state.alertsError;
+    final note = n == null
+        ? null
+        : lastKnown
+            ? 'Last known'
+            : n == 0
+                ? 'No unresolved alerts'
+                : null;
+    final color = n == null || n == 0
+        ? Ui.mute
+        : lastKnown
+            ? Ui.fade(Ui.high, .45)
+            : Ui.high;
+    return _statCard(
+      'Unresolved\nalerts',
+      Text(n == null ? '—' : '$n', key: const ValueKey('unresolvedCount'),
+          style: UiText.sans(18, 800, em: -.02, color: color)),
+      note: note,
     );
   }
 
@@ -416,13 +447,13 @@ class DashboardScreen extends StatelessWidget {
       _statCard(label, Text(value, style: UiText.sans(18, 800, em: -.02, color: color)));
 
   Widget _recent(BuildContext context) {
-    if (!Released.alertsHome) {
+    if (!Released.alertsHomeRecent) {
       // Alerts are live in the Alerts tab; only the Home summary here is still
       // deferred (PBI-24), so no "arrives in Sprint 2" / SOON · SPRINT 2 badge.
       return const EmptyDashed(
         title: 'See the Alerts tab',
         hint: 'A summary of recent alerts on the home screen is coming later. '
-            'Open the Alerts tab for the full list.',
+            'Go to the Alerts tab for the full list.',
       );
     }
     final alerts = state.alerts;

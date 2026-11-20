@@ -68,7 +68,7 @@ class DeviceSignal {
   String get icon => UiIcons.forDevice(device);
 
   String get verdict => hasAlert
-      ? '${sevUpper(alertSev!)} ALERT OPEN'
+      ? 'UNRESOLVED ${sevUpper(alertSev!)} ALERT'
       : unrec
           ? 'NOT RECOGNIZED YET'
           : !online

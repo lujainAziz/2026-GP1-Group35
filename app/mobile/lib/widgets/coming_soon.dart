@@ -10,6 +10,7 @@ class Released {
   static bool get baseline => FeatureRelease.baseline;
   static bool get alertManagement => FeatureRelease.alertManagement;
   static bool get alertsHome => FeatureRelease.alertsHome;
+  static bool get alertsHomeRecent => FeatureRelease.alertsHomeRecent;
   static bool get alertSeverityBadges => FeatureRelease.alertSeverityBadges;
   static bool get alertExplanations => FeatureRelease.alertExplanations;
   static List<SecurityAlert>? alertsOf(AppState s) => alerts ? s.alerts : null;

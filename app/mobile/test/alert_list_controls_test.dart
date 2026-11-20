@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// Unresolved alerts start unread on this phone; resolved ones are read.
 SecurityAlert _mk(String id, Severity sev, int sec,
         {AlertState state = AlertState.newAlert}) =>
     SecurityAlert(
@@ -21,6 +22,7 @@ SecurityAlert _mk(String id, Severity sev, int sec,
       time: DateTime(2026, 11, 7, 10).add(Duration(seconds: sec)),
       severity: sev,
       state: state,
+      read: state == AlertState.resolved,
     );
 
 /// Serves a fixed alert set; getAlerts respects the page limit (newest first).
@@ -287,8 +289,8 @@ void main() {
       expect(find.text('3 filters'), findsOneWidget, reason: reason);
       expect(tester.takeException(), isNull, reason: reason);
 
-      // All 288 / Open 287 / Resolved 1 all whole, with the button on one row.
-      for (final t in ['All', 'Open', 'Resolved', '288', '287']) {
+      // All 288 / Unread 287 (badge) / Resolved 1 all whole, button on one row.
+      for (final t in ['All', 'Unread', 'Resolved', '288', '287']) {
         expect(find.text(t).first, findsOneWidget, reason: '$reason: $t');
       }
       final resolved = tester.getRect(find.text('Resolved').first);
@@ -302,7 +304,7 @@ void main() {
     }
   });
 
-  testWidgets('375px, normal text: All 267 / Open 266 / Resolved 1 fit beside Filter',
+  testWidgets('375px, normal text: All 267 / Unread 266 / Resolved 1 fit beside Filter',
       (tester) async {
     // Web at 375 wide goes through DesignScale; the unstacked tabs row is at its
     // tightest here with three-digit counts.
@@ -331,7 +333,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.takeException(), isNull);
 
-    for (final t in ['All', 'Open', 'Resolved', '267', '266']) {
+    for (final t in ['All', 'Unread', 'Resolved', '267', '266']) {
       expect(find.text(t).first, findsOneWidget, reason: t);
     }
     // "Resolved" is whole: on-screen and left of the Filter button, not clipped.

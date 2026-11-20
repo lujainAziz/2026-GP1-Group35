@@ -38,11 +38,11 @@ void main() {
     expect(s.alerts!.length, 2000);
     expect(s.alertsHaveMore, isTrue);
     // The hero count is the true total, independent of the loaded page.
-    expect(s.openAlertCount, 2500);
+    expect(s.unresolvedAlertCount, 2500);
 
     await s.loadMoreAlerts();
     expect(s.alerts!.length, 2500);   // older alerts now loaded
     expect(s.alertsHaveMore, isFalse); // nothing left beyond the cap
-    expect(s.openAlertCount, 2500);
+    expect(s.unresolvedAlertCount, 2500);
   });
 }

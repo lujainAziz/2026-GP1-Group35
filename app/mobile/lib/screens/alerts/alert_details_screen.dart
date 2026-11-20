@@ -35,6 +35,12 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
   void initState() {
     super.initState();
     if (widget.state.alertById(widget.alertId) == null) _fetch();
+    // Opening the details marks the alert read on this phone (no button, no
+    // state change). After the first frame: it notifies listeners, which must
+    // not happen while the route is building.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.state.markAlertRead(widget.alertId);
+    });
   }
 
   Future<void> _fetch() async {

@@ -58,6 +58,19 @@ abstract class AssasRepository {
   /// null = not found / not available.
   Future<SecurityAlert?> getAlertById(String id);
 
+  /// Mark one alert read for this phone (opening its details does this). Not a
+  /// state change. Returns the updated alert; null = not available (unknown
+  /// alert, or an appliance without read markers).
+  Future<SecurityAlert?> markAlertRead(String id);
+
+  /// This phone's unread alerts that are still unresolved (the Unread tab),
+  /// newest first, up to [limit]. null = not available.
+  Future<List<SecurityAlert>?> getUnreadAlerts({int? limit});
+
+  /// Count of this phone's unread, unresolved alerts as a DB aggregate (the
+  /// Unread tab badge). null = not available.
+  Future<int?> getUnreadAlertCount();
+
   // ---------- Pairing (Sprint 1) ----------
   /// Phone: sends the code (and the phone's name), returns the session token.
   /// Throws [PairingException] if the code is invalid or expired.

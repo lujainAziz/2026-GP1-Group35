@@ -52,6 +52,11 @@ class SecurityAlert {
   final DateTime? firstTime;
   final DateTime? lastTime;
 
+  /// Whether THIS phone has read the alert (opened its details). A per-phone
+  /// marker kept by the appliance, not a state. Resolved alerts are read.
+  /// null = not known (an appliance without read markers, or demo data).
+  final bool? read;
+
   const SecurityAlert({
     required this.id,
     required this.kind,
@@ -73,9 +78,13 @@ class SecurityAlert {
     this.occurrenceCount = 1,
     this.firstTime,
     this.lastTime,
+    this.read,
   });
 
   bool get isUnresolved => state != AlertState.resolved;
+
+  /// Not opened yet on this phone: shows the unread dot and a bold title.
+  bool get isUnread => read == false;
 
   /// First detection of this (possibly repeated) alert; [time] when unknown.
   DateTime get firstDetected => firstTime ?? time;
@@ -122,7 +131,7 @@ class SecurityAlert {
           ? 'This activity is unusual for this device. It is not a confirmed attack, but it may need your attention.'
           : null);
 
-  SecurityAlert copyWith({AlertState? state}) => SecurityAlert(
+  SecurityAlert copyWith({AlertState? state, bool? read}) => SecurityAlert(
         id: id,
         kind: kind,
         title: title,
@@ -143,6 +152,7 @@ class SecurityAlert {
         occurrenceCount: occurrenceCount,
         firstTime: firstTime,
         lastTime: lastTime,
+        read: read ?? this.read,
       );
 
   // ---------- From the real API (PROPOSED contract, endpoint not built yet) ----------
@@ -152,7 +162,8 @@ class SecurityAlert {
   //   "time": "2026-10-08T21:15:00", "severity": "low|medium|high",
   //   "state": "new|resolved", "explanation": "...", "note": "...",
   //   "source_ip": "...", "destination_ip": "...",
-  //   "display_title": "Network scan", "device_role": "source|target|null"
+  //   "display_title": "Network scan", "device_role": "source|target|null",
+  //   "read": true|false|null   (this phone; null = no read markers)
   // }
   // Threat alerts: `title` is the Suricata rule name and `display_title` the
   // plain-language title; an older appliance without display_title shows the
@@ -181,6 +192,7 @@ class SecurityAlert {
       occurrenceCount: (j['occurrence_count'] as num?)?.toInt() ?? 1,
       firstTime: DateTime.tryParse(j['first_event_time']?.toString() ?? ''),
       lastTime: DateTime.tryParse(j['last_event_time']?.toString() ?? ''),
+      read: j['read'] is bool ? j['read'] as bool : null,
     );
   }
 

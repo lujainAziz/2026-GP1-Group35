@@ -11,24 +11,26 @@ import '../../widgets/ui_kit.dart';
 import '../../widgets/ui_memory.dart';
 import 'alert_details_screen.dart';
 
-enum _AlertTab { all, open, resolved }
+// Release 1: All / Unread / Resolved. "Unread" = not opened on this phone and
+// still unresolved; read is a per-phone marker, not a state.
+enum _AlertTab { all, unread, resolved }
 
 extension on _AlertTab {
   String get label => switch (this) {
         _AlertTab.all => 'All',
-        _AlertTab.open => 'Open',
+        _AlertTab.unread => 'Unread',
         _AlertTab.resolved => 'Resolved',
       };
 
   Color get color => switch (this) {
         _AlertTab.all => Ui.acc,
-        _AlertTab.open => Ui.high,
+        _AlertTab.unread => Ui.high,
         _AlertTab.resolved => Ui.low,
       };
 
   bool matches(SecurityAlert a) => switch (this) {
         _AlertTab.all => true,
-        _AlertTab.open => a.isUnresolved,
+        _AlertTab.unread => a.isUnread && a.isUnresolved,
         _AlertTab.resolved => !a.isUnresolved,
       };
 }
@@ -159,7 +161,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
                     // Tabs (left) + Filter (right) pinned at the top, always one
                     // row: the big title scrolls up while this row stays. When
                     // the system font makes the row tight, each tab stacks its
-                    // count UNDER its name (narrower) so All/Open/Resolved and
+                    // count UNDER its name (narrower) so All/Unread/Resolved and
                     // the Filter stay on the same line; the pinned height grows
                     // to match so the first alert is never covered.
                     if (Released.alerts && Released.alertManagement)
@@ -190,9 +192,9 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   Widget _hero() {
-    // Original design: a big OPEN count on the left, "open alerts" on the right.
+    // Original design: a big count on the left, "unresolved alerts" on the right.
     final live = Released.alerts && Released.alertManagement;
-    final count = live ? state.openAlertCount : null;
+    final count = live ? state.unresolvedAlertCount : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -218,7 +220,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerRight,
-                  child: Text('open alerts', style: UiText.heroSuffix.copyWith(color: Ui.mute)),
+                  child: Text('unresolved alerts', style: UiText.heroSuffix.copyWith(color: Ui.mute)),
                 ),
               ),
             ],
@@ -267,7 +269,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
             border: Border(bottom: BorderSide(color: Ui.line)),
           ),
           // Inset to the page text margin so the row lines up with the big title
-          // and the Filter's right edge meets the end of "open alerts" above it.
+          // and the Filter's right edge meets the end of "unresolved alerts" above it.
           padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 4, UiSpace.pageText, 6),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -287,7 +289,14 @@ class _AlertListScreenState extends State<AlertListScreen> {
                       children: [
                         for (final tab in _AlertTab.values) ...[
                           if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
-                          _tabItem(tab, list.where(tab.matches).length, stacked),
+                          _tabItem(
+                            tab,
+                            // Unread: this phone's DB count (the badge), not the page.
+                            tab == _AlertTab.unread
+                                ? state.unreadCount ?? list.where(tab.matches).length
+                                : list.where(tab.matches).length,
+                            stacked,
+                          ),
                         ],
                       ],
                     ),
@@ -316,8 +325,19 @@ class _AlertListScreenState extends State<AlertListScreen> {
       style: nameStyle,
       child: Text(tab.label),
     );
-    final countText = Text('$count',
-        style: UiText.mono(stacked ? 10.5 : 11, 600).copyWith(color: on ? tab.color : Ui.mute));
+    final Widget countText = tab == _AlertTab.unread && count > 0
+        // Unread: a small filled count badge.
+        ? Container(
+            key: const ValueKey('unreadBadge'),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              color: Ui.high,
+              borderRadius: BorderRadius.circular(UiRadius.pill),
+            ),
+            child: Text('$count', style: UiText.mono(stacked ? 10 : 10.5, 700).copyWith(color: Ui.bg)),
+          )
+        : Text('$count',
+            style: UiText.mono(stacked ? 10.5 : 11, 600).copyWith(color: on ? tab.color : Ui.mute));
     return Pressable(
       onTap: () => _setTab(tab),
       child: Stack(
@@ -546,9 +566,13 @@ class _AlertListScreenState extends State<AlertListScreen> {
         'Threat and anomaly alerts will appear here once detection is running.',
       );
     }
-    // Without alert management there are no Open / Resolved tabs: show all.
+    // Without alert management there are no Unread / Resolved tabs: show all.
     final tab = Released.alertManagement ? _tab : _AlertTab.all;
-    Iterable<SecurityAlert> base = alerts.where(tab.matches);
+    // Unread comes from the appliance (this phone's unread, unresolved alerts),
+    // so it is not limited to the loaded page; otherwise filter the loaded list.
+    final unread = tab == _AlertTab.unread ? state.unreadAlerts : null;
+    Iterable<SecurityAlert> base = unread ?? alerts.where(tab.matches);
+    final haveMore = unread != null ? state.unreadHaveMore : state.alertsHaveMore;
     base = alertsWithSeverity(base, _shown);
     // Newest first (the sort control now lives only in device details).
     final list = sortedAlerts(base, AlertSort.newest);
@@ -561,7 +585,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
           // The current page may have nothing matching while OLDER alerts do:
           // keep the load-older affordance so the filter/sort reaches the whole
           // list, not just the loaded page.
-          if (state.alertsHaveMore) _loadOlder(),
+          if (haveMore) _loadOlder(),
         ],
       );
     }
@@ -586,7 +610,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
                 ),
               ),
             ],
-            if (state.alertsHaveMore) _loadOlder(),
+            if (haveMore) _loadOlder(),
           ],
         ),
       ],
@@ -605,7 +629,8 @@ class _AlertListScreenState extends State<AlertListScreen> {
     }
     return switch (tab) {
       _AlertTab.resolved => ('No resolved alerts yet', 'Alerts you resolve will be kept here for context.'),
-      _AlertTab.open => ('All clear.', 'No open alerts right now.'),
+      // Never "All clear": an empty Unread tab says nothing about safety.
+      _AlertTab.unread => ('No unread alerts', 'Alerts you have not opened yet appear here.'),
       _AlertTab.all => ('No alerts yet', 'Alerts will appear here once detection flags something.'),
     };
   }

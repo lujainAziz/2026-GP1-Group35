@@ -23,9 +23,12 @@ abstract final class FeatureRelease {
   // are attributed to no device.
   static bool get alertSeverityBadges => true;
 
-  // Still deferred (NOT part of the PBI-22/PBI-09/10 scope): the phone Home
-  // (dashboard) open-alerts count + recent-alerts summary (PBI-24).
-  static bool get alertsHome => false;
+  // Phone Home (dashboard) "Unresolved alerts" card (Release 1): the DB count
+  // from GET /alerts/open_count, "No unresolved alerts" at 0, "Last known" /
+  // "—" on failure (same as the display).
+  static bool get alertsHome => true;
+  // Still deferred: the Home recent-alerts summary (PBI-24).
+  static bool get alertsHomeRecent => false;
   // The 7-inch display's "Unresolved alerts" card (Sprint 2 feature, released in
   // Release 1): the DB count of New alerts from GET /alerts/open_count, read as a
   // local caller (no pairing needed on the appliance itself).
