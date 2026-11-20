@@ -64,7 +64,7 @@ def count(conn, where="1", args=()):
 # Pure helpers
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("prio,label", [
-    (1, "Critical"), (2, "High"), (3, "Medium"),
+    (1, "High"), (2, "Medium"), (3, "Low"),
     (4, "Low"), (5, "Low"), (0, "Low"), (None, "Low"), ("x", "Low"),
 ])
 def test_severity_label(prio, label):
@@ -81,15 +81,16 @@ def test_parse_alert_event_with_and_without_addresses():
     full = alerts.parse_alert_event(json.loads(
         eve_alert(sig="ET SCAN", sid=42, sev=1, src="10.0.0.5", dst="8.8.8.8", sp=1234, dp=53)))
     assert full == {
-        "title": "ET SCAN", "category": None, "rule_id": 42, "severity": "Critical",
-        "event_time": "2026-11-02T10:00:00",
+        "title": "ET SCAN", "category": None, "rule_id": 42, "severity": "High",
+        "priority": 1, "event_time": "2026-11-02T10:00:00",
         "src_ip": "10.0.0.5", "dst_ip": "8.8.8.8", "src_port": 1234, "dst_port": 53,
         "ether_src": None, "ether_dst": None,
     }
     # decoder-event alert: no addresses/ports
     decoder = alerts.parse_alert_event(json.loads(eve_alert(sig="SURICATA IPv6", sid=2200013, sev=3)))
     assert decoder["src_ip"] is None and decoder["dst_ip"] is None
-    assert decoder["src_port"] is None and decoder["severity"] == "Medium"
+    assert decoder["src_port"] is None and decoder["severity"] == "Low"
+    assert decoder["priority"] == 3
     # non-alert events are ignored
     assert alerts.parse_alert_event({"event_type": "stats"}) is None
 
@@ -246,7 +247,7 @@ def test_relink_recent_repairs_discovery_lag_without_touching_counts(tmp_path):
         conn.execute(
             "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
             "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
-            "VALUES (NULL,'Threat','ET X',1,?, '2606:4700::1', ?, 'Medium','Reviewed',3,?)",
+            "VALUES (NULL,'Threat','ET X',1,?, '2606:4700::1', ?, 'Medium','Resolved',3,?)",
             ("2026-11-01T10:00:00", addr, "2026-11-01T10:00:00"))
     # Evidence arrives AFTER the alerts were stored (discovery lag).
     add_addr_table(conn, [
@@ -260,7 +261,7 @@ def test_relink_recent_repairs_discovery_lag_without_touching_counts(tmp_path):
     # recent alert linked; occurrence/state/event_time untouched
     assert rows[0] == ("dd:dd", 7, "New", "2026-11-05T10:00:00")
     # old alert outside the bounded window: never rewritten
-    assert rows[1][0] is None and rows[1][1] == 3 and rows[1][2] == "Reviewed"
+    assert rows[1][0] is None and rows[1][1] == 3 and rows[1][2] == "Resolved"
     # idempotent: second pass changes nothing
     assert alerts.relink_recent(conn, window_hours=24, now_iso="2026-11-05T12:00:00") == 0
 
@@ -1064,9 +1065,10 @@ def test_ensure_schema_migrates_old_table_and_keeps_rows(tmp_path):
     conn = sqlite3.connect(tmp_path / "old.db")
     old_ddl = alerts.ALERTS_DDL.replace(
         "last_event_time  TEXT NOT NULL,\n    category         TEXT,\n"
-        "    classtype        TEXT,\n    device_role      TEXT\n",
+        "    classtype        TEXT,\n    device_role      TEXT,\n"
+        "    priority         INTEGER\n",
         "last_event_time  TEXT NOT NULL\n")
-    assert "classtype" not in old_ddl
+    assert "classtype" not in old_ddl and "priority" not in old_ddl
     with conn:
         conn.execute(old_ddl)
         conn.execute(
@@ -1075,7 +1077,84 @@ def test_ensure_schema_migrates_old_table_and_keeps_rows(tmp_path):
     alerts.ensure_schema(conn)
     alerts.ensure_schema(conn)  # idempotent
     cols = {r[1] for r in conn.execute("PRAGMA table_info(alerts)")}
-    assert {"category", "classtype", "device_role"} <= cols
+    assert {"category", "classtype", "device_role", "priority"} <= cols
     assert conn.execute(
-        "SELECT title, category, classtype, device_role FROM alerts").fetchall() == [
-        ("ET OLD", None, None, None)]
+        "SELECT title, category, classtype, device_role, priority FROM alerts").fetchall() == [
+        ("ET OLD", None, None, None, None)]
+
+
+def _pre_release1_db(path, rows):
+    """An alerts table from before Release 1 (no priority column) with rows of
+    (title, severity, state)."""
+    conn = sqlite3.connect(path)
+    old_ddl = alerts.ALERTS_DDL.replace(",\n    priority         INTEGER\n", "\n")
+    assert "priority" not in old_ddl
+    with conn:
+        conn.execute(old_ddl)
+        conn.executemany(
+            "INSERT INTO alerts (title, event_time, severity, state, last_event_time) "
+            "VALUES (?, '2026-11-01T10:00:00', ?, ?, '2026-11-01T10:00:00')", rows)
+    return conn
+
+
+def test_release1_conversion_maps_old_labels_and_reviewed_once(tmp_path):
+    conn = _pre_release1_db(tmp_path / "old.db", [
+        ("A", "Critical", "New"), ("B", "High", "Reviewed"),
+        ("C", "Medium", "Resolved"), ("D", "Low", "New"), ("E", "Bogus", "New"),
+    ])
+    alerts.ensure_schema(conn)
+    expected = [
+        ("A", 1, "High", "New"), ("B", 2, "Medium", "New"),
+        ("C", 3, "Low", "Resolved"), ("D", None, "Low", "New"), ("E", None, "Low", "New"),
+    ]
+    q = "SELECT title, priority, severity, state FROM alerts ORDER BY title"
+    assert conn.execute(q).fetchall() == expected
+    # Runs once: a second start must not shift High -> Medium again.
+    assert alerts.migrate_release1(conn) is False
+    alerts.ensure_schema(conn)
+    assert conn.execute(q).fetchall() == expected
+
+
+def test_fresh_table_is_never_converted(tmp_path):
+    conn = sqlite3.connect(tmp_path / "new.db")
+    alerts.ensure_schema(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO alerts (title, event_time, severity, last_event_time, priority) "
+            "VALUES ('ET NEW', '2026-11-20T10:00:00', 'High', '2026-11-20T10:00:00', 1)")
+    alerts.ensure_schema(conn)
+    assert conn.execute("SELECT severity, priority FROM alerts").fetchall() == [("High", 1)]
+
+
+def test_release1_conversion_rolls_back_as_a_whole(tmp_path, monkeypatch):
+    conn = _pre_release1_db(tmp_path / "old.db", [("A", "Critical", "Reviewed")])
+    real_execute = conn.execute
+
+    class FailingConn:
+        def __getattr__(self, name):
+            return getattr(conn, name)
+
+        def execute(self, sql, *args):
+            if sql.startswith("UPDATE alerts SET state"):
+                raise sqlite3.OperationalError("disk I/O error")
+            return real_execute(sql, *args)
+
+    with pytest.raises(sqlite3.OperationalError):
+        alerts.migrate_release1(FailingConn())
+    # Nothing half-done: no column, old label and state intact, so it can rerun.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(alerts)")}
+    assert "priority" not in cols
+    assert conn.execute("SELECT severity, state FROM alerts").fetchall() == [("Critical", "Reviewed")]
+    assert alerts.migrate_release1(conn) is True
+    assert conn.execute("SELECT severity, state FROM alerts").fetchall() == [("High", "New")]
+
+
+def test_ingest_stores_priority_and_new_severity(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        for sid, sev in ((1000001, 1), (1000002, 2), (1000003, 3)):
+            a = alerts.parse_alert_event(json.loads(eve_alert(sid=sid, sev=sev, src="9.9.9.9", dst="1.1.1.1")))
+            alerts.ingest_alert(conn, a, 300)
+    assert conn.execute(
+        "SELECT rule_id, priority, severity FROM alerts ORDER BY rule_id").fetchall() == [
+        (1000001, 1, "High"), (1000002, 2, "Medium"), (1000003, 3, "Low")]

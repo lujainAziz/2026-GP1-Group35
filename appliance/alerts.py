@@ -8,7 +8,8 @@ Design notes:
 - Only `event_type == "alert"` events are ingested. Decoder-event alerts may have
   no addresses/ports; those fields are then NULL and the alert links to no device.
 - Severity from the matched rule priority (eve `alert.severity`):
-  1 -> Critical, 2 -> High, 3 -> Medium, >=4 -> Low.
+  1 -> High, 2 -> Medium, 3 or more (or missing) -> Low. The raw priority is
+  stored too (`priority`).
 - Device linking matches src/dst against the device inventory; both match ->
   source device (the other IP is still stored); neither -> device_mac NULL.
   The matched side is stored as device_role ('source' / 'target'); it is NULL
@@ -71,7 +72,7 @@ REAP_GRACE_SECONDS = float(os.getenv("ASSAS_ALERT_REAP_GRACE", "10"))
 
 log = logging.getLogger("assas.alerts")
 
-_SEVERITY = {1: "Critical", 2: "High", 3: "Medium"}
+_SEVERITY = {1: "High", 2: "Medium"}
 
 ALERTS_DDL = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -95,7 +96,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     last_event_time  TEXT NOT NULL,
     category         TEXT,
     classtype        TEXT,
-    device_role      TEXT
+    device_role      TEXT,
+    priority         INTEGER
 )
 """
 
@@ -135,6 +137,48 @@ def ensure_schema(conn):
         for ddl in INDEX_DDL:
             conn.execute(ddl)
     ensure_alert_columns(conn)
+    migrate_release1(conn)
+
+
+def migrate_release1(conn):
+    """One-time Release 1 conversion of existing alerts (ingester only).
+
+    Adds the `priority` column and, in the SAME transaction, converts the old
+    severity labels and the retired Reviewed state. The old label gives the
+    priority exactly (Critical=1, High=2, Medium=3, Low=4+/missing -> NULL), so
+    Critical->High, High->Medium, Medium->Low, Low->Low; Reviewed -> New. The
+    severity rewrite is not idempotent, so the column's existence is the
+    "already converted" marker: a table that has it (including a fresh one) is
+    never touched. Returns True when the conversion ran.
+    """
+    def has_priority():
+        return "priority" in {r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+
+    if has_priority():
+        return False
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if has_priority():  # converted by another process since the check above
+            conn.rollback()
+            return False
+        conn.execute("ALTER TABLE alerts ADD COLUMN priority INTEGER")
+        conn.execute(
+            "UPDATE alerts SET priority = CASE LOWER(severity) "
+            "WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 END"
+        )
+        conn.execute(
+            "UPDATE alerts SET severity = CASE LOWER(severity) "
+            "WHEN 'critical' THEN 'High' WHEN 'high' THEN 'Medium' ELSE 'Low' END"
+        )
+        reviewed = conn.execute(
+            "UPDATE alerts SET state = 'New' WHERE LOWER(state) = 'reviewed'"
+        ).rowcount
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    log.info("Release 1 alert conversion done: severities remapped, %d Reviewed -> New", reviewed)
+    return True
 
 
 def ensure_alert_columns(conn):
@@ -161,7 +205,7 @@ def ensure_alert_columns(conn):
 # Pure helpers (unit-tested directly)
 # --------------------------------------------------------------------------- #
 def severity_label(priority):
-    """Map a Suricata rule priority to a severity label (>=4 or unknown -> Low)."""
+    """Map a Suricata rule priority to a severity label (3 or more, or unknown -> Low)."""
     try:
         p = int(priority)
     except (TypeError, ValueError):
@@ -232,6 +276,7 @@ def parse_alert_event(obj):
         "category": cat.strip() if isinstance(cat, str) and cat.strip() else None,
         "rule_id": _as_int(a.get("signature_id")),
         "severity": severity_label(a.get("severity")),
+        "priority": _as_int(a.get("severity")),
         "event_time": local_naive_iso(obj.get("timestamp")),
         "src_ip": obj.get("src_ip") if isinstance(obj.get("src_ip"), str) else None,
         "dst_ip": obj.get("dest_ip") if isinstance(obj.get("dest_ip"), str) else None,
@@ -729,7 +774,7 @@ def upsert_alert(conn, a, device_mac, window_seconds, device_role=None):
     # is closed and the event starts a fresh, independent alert (new id, state
     # 'New') — even if an OLDER matching alert is still open and inside the
     # window (we must not re-attach to it). Only a newest match that is open
-    # (New/Reviewed) and within the window absorbs the recurrence.
+    # (New) and within the window absorbs the recurrence.
     if device_mac is not None:
         row = conn.execute(
             "SELECT alert_id, event_time, last_event_time, state FROM alerts "
@@ -764,14 +809,15 @@ def upsert_alert(conn, a, device_mac, window_seconds, device_role=None):
     conn.execute(
         "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
         "src_ip, dst_ip, src_port, dst_port, severity, state, occurrence_count, "
-        "last_event_time, category, classtype, device_role) "
-        "VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', 1, ?, ?, ?, ?)",
+        "last_event_time, category, classtype, device_role, priority) "
+        "VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', 1, ?, ?, ?, ?, ?)",
         (
             device_mac, a["title"], a["rule_id"], event_time,
             a["src_ip"], a["dst_ip"], a["src_port"], a["dst_port"],
             a["severity"], event_time,
             a.get("category"), a.get("classtype"),
             device_role if device_mac is not None else None,
+            a.get("priority"),
         ),
     )
     return "inserted"

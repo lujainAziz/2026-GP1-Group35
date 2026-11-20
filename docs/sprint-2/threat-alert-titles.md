@@ -58,7 +58,7 @@ The explanation is written so it reads correctly with either line.
 | 37 | non-standard-protocol | 2 | Non-standard communication | A device communicated in a way that is not standard. |
 | 38 | unusual-client-port-connection | 1 | Connection on an unusual port | A device connected using an unusual port, which some malware does to avoid detection. |
 | 39 | system-call-detect | 1 | Suspicious system command | Traffic contains a system command often used in attacks. |
-| - | (no classtype, or a classtype not listed above; includes the four ASSAS TEST rules) | - | Security alert | Assas detected traffic that matched a security rule. See the rule name below for details. |
+| - | (no classtype, or a classtype not listed above; includes the four ASSAS TEST rules) | - | Network activity detected | Assas detected network traffic that matched a security rule ({rule}). The original rule details are shown below. |
 
 ## Team decisions (2026-11-14)
 1. Language: English only, same as the app interface.

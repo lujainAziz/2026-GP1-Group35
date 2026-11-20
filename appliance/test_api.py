@@ -1537,13 +1537,13 @@ class AlertEndpointTests(_SeededDBTest):
             src_ip="10.0.0.5", dst_ip="8.8.8.8", src_port=5, dst_port=53)
         self._add_alert(
             device_mac=None, alert_type="Threat", title="ET B", rule_id=2,
-            event_time="2026-11-02T11:00:00", severity="Critical", state="New",
+            event_time="2026-11-02T11:00:00", severity="Medium", state="New",
             occurrence_count=3, last_event_time="2026-11-02T11:30:00",
             src_ip="203.0.113.1", dst_ip="198.51.100.1")
         out = api.list_alerts(conn=self.conn, limit=200)
         self.assertEqual([a.title for a in out], ["ET B", "ET A"])  # newest last_event_time first
         b, a = out
-        self.assertEqual((b.kind, b.state, b.severity), ("threat", "new", "critical"))
+        self.assertEqual((b.kind, b.state, b.severity), ("threat", "new", "medium"))
         self.assertEqual(a.severity, "high")
         self.assertIsNone(b.device_mac)
         self.assertEqual(b.device_name, "Unknown device")
@@ -1551,9 +1551,13 @@ class AlertEndpointTests(_SeededDBTest):
         self.assertEqual((b.source_ip, b.destination_ip), ("203.0.113.1", "198.51.100.1"))
         self.assertEqual(a.device_name, "cam-1")  # hostname (no user_name)
         self.assertEqual(a.first_event_time, "2026-11-02T10:00:00")
-        # No classtype stored -> fallback text; rule name stays in title.
-        self.assertEqual(a.display_title, "Security alert")
-        self.assertEqual(a.explanation, alert_text.FALLBACK_TEXT[1])
+        # No classtype stored -> fallback text naming the original rule; the
+        # rule name also stays in title.
+        self.assertEqual(a.display_title, "Network activity detected")
+        self.assertEqual(
+            a.explanation,
+            'Assas detected network traffic that matched a security rule '
+            '("ET A", rule ID 1). The original rule details are shown below.')
         self.assertIsNone(a.device_role)
         self.assertIsNone(a.anomaly_score)
 
@@ -1570,7 +1574,7 @@ class AlertEndpointTests(_SeededDBTest):
             device_role="source")
         self._add_alert(
             device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET WEB X",
-            rule_id=7, event_time="2026-11-02T11:00:00", severity="Critical",
+            rule_id=7, event_time="2026-11-02T11:00:00", severity="High",
             state="New", occurrence_count=1, last_event_time="2026-11-02T11:00:00",
             src_ip="203.0.113.9", dst_ip="192.168.8.50",
             classtype="web-application-attack", device_role="target")
@@ -1594,15 +1598,26 @@ class AlertEndpointTests(_SeededDBTest):
     def test_unknown_classtype_and_unlinked_role_fall_back(self):
         self._schema()
         self._add_alert(
-            device_mac=None, alert_type="Threat", title="ASSAS TEST Critical",
-            rule_id=1000001, event_time="2026-11-02T10:00:00", severity="Critical",
+            device_mac=None, alert_type="Threat", title="ASSAS TEST High",
+            rule_id=1000001, event_time="2026-11-02T10:00:00", severity="High",
             state="New", occurrence_count=1, last_event_time="2026-11-02T10:00:00",
             classtype="tcp-connection", device_role="source")
         (a,) = api.list_alerts(conn=self.conn, limit=200)
-        self.assertEqual(a.title, "ASSAS TEST Critical")
-        self.assertEqual(a.severity, "critical")  # severity unchanged
-        self.assertEqual((a.display_title, a.explanation), alert_text.FALLBACK_TEXT)
+        self.assertEqual(a.title, "ASSAS TEST High")
+        self.assertEqual(a.severity, "high")
+        self.assertEqual(a.display_title, "Network activity detected")
+        self.assertIn('("ASSAS TEST High", rule ID 1000001)', a.explanation)
         self.assertIsNone(a.device_role)  # no device -> no role line
+
+    def test_legacy_critical_and_reviewed_read_as_high_and_new(self):
+        # Safety net for rows the one-time conversion has not reached.
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ET OLD", rule_id=9,
+            event_time="2026-11-02T10:00:00", severity="Critical", state="Reviewed",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual((a.severity, a.state), ("high", "new"))
 
     def test_table_without_new_columns_still_reads(self):
         # An alerts table the ingester has not migrated yet (pre-classtype).
@@ -1621,7 +1636,7 @@ class AlertEndpointTests(_SeededDBTest):
             occurrence_count=1, last_event_time="2026-11-02T10:00:00")
         (a,) = api.list_alerts(conn=self.conn, limit=200)
         self.assertEqual(a.title, "ET OLD")
-        self.assertEqual(a.display_title, "Security alert")
+        self.assertEqual(a.display_title, "Network activity detected")
         self.assertIsNone(a.classtype)
         self.assertIsNone(a.device_role)
 

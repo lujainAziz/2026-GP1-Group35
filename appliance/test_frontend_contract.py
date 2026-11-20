@@ -188,7 +188,7 @@ class AlertContractTests(unittest.TestCase):
                 "src_ip, dst_ip, src_port, dst_port, severity, state, occurrence_count, "
                 "last_event_time) VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', ?, ?)",
                 ('aa:bb:cc:dd:ee:ff', 'ET MALWARE X', 2025001, '2026-11-02T10:00:00',
-                 '10.0.0.5', '8.8.8.8', 1234, 53, 'Critical', 4, '2026-11-02T10:04:00'))
+                 '10.0.0.5', '8.8.8.8', 1234, 53, 'High', 4, '2026-11-02T10:04:00'))
         self.patch = patch.object(api, 'DB_PATH', self.db)
         self.patch.start()
         self.local = TestClient(api.app, client=('127.0.0.1', 1234))
@@ -216,7 +216,7 @@ class AlertContractTests(unittest.TestCase):
         # Exact strings SecurityAlert.fromApi depends on (casing locked).
         self.assertEqual(a['kind'], 'threat')
         self.assertEqual(a['state'], 'new')
-        self.assertEqual(a['severity'], 'critical')
+        self.assertEqual(a['severity'], 'high')
         self.assertEqual(a['title'], 'ET MALWARE X')
         self.assertEqual(a['device_mac'], 'aa:bb:cc:dd:ee:ff')
         self.assertEqual(a['device_name'], 'Front Cam')
@@ -229,9 +229,10 @@ class AlertContractTests(unittest.TestCase):
         self.assertEqual(a['destination_ip'], '8.8.8.8')
         self.assertEqual(a['src_port'], 1234)
         self.assertEqual(a['dst_port'], 53)
-        # No classtype stored on this row -> fallback title/explanation, no role.
-        self.assertEqual(a['display_title'], 'Security alert')
-        self.assertTrue(a['explanation'])
+        # No classtype stored on this row -> fallback title/explanation with
+        # the original rule information, no role.
+        self.assertEqual(a['display_title'], 'Network activity detected')
+        self.assertIn('("ET MALWARE X", rule ID 2025001)', a['explanation'])
         self.assertIsNone(a['classtype'])
         self.assertIsNone(a['category'])
         self.assertIsNone(a['device_role'])
@@ -253,18 +254,17 @@ class AlertContractTests(unittest.TestCase):
                 "VALUES (?, 'Threat', 'ET X', ?, ?, '10.0.0.5', '8.8.8.8', 'High', ?, 1, ?)",
                 (mac, sid, when, state, when))
 
-    def test_open_count_is_db_aggregate_of_new_and_reviewed(self):
-        # setUp already has one New alert; add reviewed + resolved + new.
-        self._insert_alert(state='Reviewed', sid=3001)
+    def test_open_count_is_db_aggregate_of_new(self):
+        # setUp already has one New alert; add resolved + new.
         self._insert_alert(state='Resolved', sid=3002)
         self._insert_alert(state='New', sid=3003)
         self.assertEqual(self.phone.get('/alerts/open_count').status_code, 401)
         self.pair()
         r = self.phone.get('/alerts/open_count')
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json(), {'open': 3})  # 2 New + 1 Reviewed, Resolved excluded
+        self.assertEqual(r.json(), {'open': 2})  # 2 New, Resolved excluded
         # the literal path is matched here, not parsed as an int id
-        self.assertEqual(r.json()['open'], 3)
+        self.assertEqual(r.json()['open'], 2)
 
     def test_open_count_not_capped_by_page_limit(self):
         for i in range(250):
@@ -306,31 +306,31 @@ class AlertContractTests(unittest.TestCase):
     def test_alert_state_transitions_persist_and_enforce_rules(self):
         self.pair()
         aid = self.phone.get('/alerts').json()[0]['id']
-        # New -> Reviewed
-        r = self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'})
+        # Reviewed is retired: rejected as an unknown state, alert stays New
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'}).status_code, 422)
+        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'new')
+        # New -> Resolved
+        r = self.phone.patch('/alerts/' + aid, json={'state': 'resolved'})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()['state'], 'reviewed')
+        self.assertEqual(r.json()['state'], 'resolved')
         # persisted across a fresh read
-        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'reviewed')
-        # Reviewed -> Resolved
-        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
+        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'resolved')
         # Resolved is terminal: no going back
-        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'}).status_code, 409)
         self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'new'}).status_code, 409)
         # unknown state / missing alert
         self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'bogus'}).status_code, 422)
-        self.assertEqual(self.phone.patch('/alerts/99999', json={'state': 'reviewed'}).status_code, 404)
+        self.assertEqual(self.phone.patch('/alerts/99999', json={'state': 'resolved'}).status_code, 404)
 
     def test_alert_state_change_requires_auth(self):
         aid = self.phone.get('/alerts')  # unauthenticated
-        self.assertEqual(self.phone.patch('/alerts/1', json={'state': 'reviewed'}).status_code, 401)
+        self.assertEqual(self.phone.patch('/alerts/1', json={'state': 'resolved'}).status_code, 401)
 
     def test_new_to_resolved_is_allowed(self):
         self.pair()
         aid = self.phone.get('/alerts').json()[0]['id']
         self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
 
-    def test_resolve_is_idempotent_and_late_review_cannot_revert(self):
+    def test_resolve_is_idempotent_and_cannot_revert(self):
         self.pair()
         aid = self.phone.get('/alerts').json()[0]['id']
         self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
@@ -338,14 +338,14 @@ class AlertContractTests(unittest.TestCase):
         r = self.phone.patch('/alerts/' + aid, json={'state': 'resolved'})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()['state'], 'resolved')
-        # a late Reviewed must NOT revert a Resolved alert
-        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'}).status_code, 409)
+        # a late New must NOT revert a Resolved alert
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'new'}).status_code, 409)
         self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'resolved')
 
     def test_concurrent_transitions_never_revert_or_corrupt(self):
-        # Two phones hit the same New alert at once: one Resolves, one Reviews.
-        # The atomic guarded UPDATE must leave a consistent result (Resolved
-        # always wins; the alert is never left New and never reverts).
+        # Two phones Resolve the same New alert at once. The atomic guarded
+        # UPDATE must leave a consistent result: both succeed (the second is an
+        # idempotent no-op) and the alert ends Resolved.
         import threading
         self.pair()
         aid = self.phone.get('/alerts').json()[0]['id']
@@ -358,14 +358,13 @@ class AlertContractTests(unittest.TestCase):
             finally:
                 c.close()
 
-        t1 = threading.Thread(target=do, args=('resolve', 'resolved'))
-        t2 = threading.Thread(target=do, args=('review', 'reviewed'))
+        t1 = threading.Thread(target=do, args=('first', 'resolved'))
+        t2 = threading.Thread(target=do, args=('second', 'resolved'))
         t1.start(); t2.start(); t1.join(); t2.join()
 
         final = self.phone.get('/alerts/' + aid).json()['state']
-        self.assertEqual(final, 'resolved')          # resolved wins regardless of interleaving
-        self.assertIn(codes['resolve'], (200,))       # resolve always applies from new/reviewed
-        self.assertIn(codes['review'], (200, 409))    # review either applied-then-superseded or rejected
+        self.assertEqual(final, 'resolved')
+        self.assertEqual((codes['first'], codes['second']), (200, 200))
 
 
 if __name__ == '__main__':

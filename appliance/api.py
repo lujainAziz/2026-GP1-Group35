@@ -445,7 +445,7 @@ class AlertOut(BaseModel):
     """Threat Alert as the mobile app's SecurityAlert contract expects it.
 
     String casing is locked to what SecurityAlert.fromApi matches: kind
-    "threat", state "new", severity one of critical/high/medium/low (all
+    "threat", state "new" or "resolved", severity one of high/medium/low (all
     lowercase). The anomaly fields are null this sprint.
     """
     id: str
@@ -885,8 +885,8 @@ def _alert_select(conn) -> str:
     )
     return _ALERT_SELECT.format(added=added)
 
-_SEVERITIES = ("critical", "high", "medium", "low")
-_STATES = ("new", "reviewed", "resolved")
+_SEVERITIES = ("high", "medium", "low")
+_STATES = ("new", "resolved")
 
 
 _MACHINE_ID_UUID_RE = re.compile(
@@ -931,32 +931,36 @@ def _alert_device_name(user_name, hostname, model) -> str:
 
 def _severity_api(value) -> str:
     v = (value or "").strip().lower()
+    if v == "critical":
+        # Safety net: Critical no longer exists; the ingester converts stored
+        # rows once (alerts.migrate_release1), priority 1 is now High.
+        return "high"
     return v if v in _SEVERITIES else "low"
 
 
 def _state_api(value) -> str:
+    # Anything not Resolved (including a retired 'Reviewed') is open: New.
     v = (value or "").strip().lower()
     return v if v in _STATES else "new"
 
 
 # Canonical stored casing (the ingester writes 'New'); the API always emits
 # lowercase via _state_api.
-_STATE_DB = {"new": "New", "reviewed": "Reviewed", "resolved": "Resolved"}
+_STATE_DB = {"new": "New", "resolved": "Resolved"}
 
-# PBI-22 allowed forward transitions (a user action; never auto-reverted and
-# never walked backwards). Resolved is terminal. Expressed as the set of source
-# states from which each target is reachable, so the change can be done as one
-# atomic guarded UPDATE (... WHERE state IN <allowed sources>) with no
-# read-then-write race between two phones.
+# Allowed transition (a user action; never auto-reverted and never walked
+# backwards): New -> Resolved only, and Resolved is terminal. Expressed as the
+# set of source states from which each target is reachable, so the change can be
+# done as one atomic guarded UPDATE (... WHERE state IN <allowed sources>) with
+# no read-then-write race between two phones.
 _ALLOWED_SOURCES = {
-    "reviewed": ("new",),              # New -> Reviewed
-    "resolved": ("new", "reviewed"),   # New/Reviewed -> Resolved
-    "new": (),                         # nothing transitions *to* New
+    "resolved": ("new",),   # New -> Resolved
+    "new": (),              # nothing transitions *to* New
 }
 
 
 def row_to_alert(row) -> AlertOut:
-    display_title, explanation = alert_text(row["classtype"])
+    display_title, explanation = alert_text(row["classtype"], row["title"], row["rule_id"])
     role = row["device_role"] if row["device_mac"] else None
     return AlertOut(
         id=str(row["alert_id"]),
@@ -1011,7 +1015,7 @@ def list_alerts(
 
 @app.get("/alerts/open_count", response_model=OpenAlertCount)
 def open_alert_count(conn: sqlite3.Connection = Depends(get_connection)):
-    """Count of OPEN Threat Alerts (state New or Reviewed) across the whole DB.
+    """Count of OPEN (unresolved, state New) Threat Alerts across the whole DB.
 
     This is the Alerts-screen hero figure: it must be the true total, not the
     length of a paginated page. Declared BEFORE /alerts/{alert_id} so the literal
@@ -1020,7 +1024,7 @@ def open_alert_count(conn: sqlite3.Connection = Depends(get_connection)):
     try:
         row = conn.execute(
             "SELECT COUNT(*) FROM alerts "
-            "WHERE alert_type='Threat' AND LOWER(state) IN ('new','reviewed')"
+            "WHERE alert_type='Threat' AND LOWER(state) = 'new'"
         ).fetchone()
         return OpenAlertCount(open=row[0])
     except sqlite3.OperationalError as exc:
@@ -1042,10 +1046,9 @@ def set_alert_state(alert_id: int, body: AlertStateUpdate):
     """Change one alert's state (PBI-22). Authenticated (global require_auth).
 
     A deliberate user action — it never implies ASSAS auto-handled the threat,
-    and only the `state` column of one existing alert is written. Allowed moves:
-    New->Reviewed, New->Resolved, Reviewed->Resolved (Resolved is terminal).
-    The ingester's dedup never touches `state`, so occurrence updates do not
-    revert a reviewed/resolved alert to New.
+    and only the `state` column of one existing alert is written. The only move
+    is New->Resolved (Resolved is terminal). The ingester's dedup never touches
+    `state`, so occurrence updates do not revert a resolved alert to New.
     """
     target = (body.state or "").strip().lower()
     if target not in _STATES:
@@ -1063,8 +1066,7 @@ def set_alert_state(alert_id: int, body: AlertStateUpdate):
                 # ATOMIC transition: only flip the row if it is still in an
                 # allowed source state. If a concurrent phone already moved it
                 # (e.g. to Resolved), this matches 0 rows and the move is
-                # rejected below — a late Reviewed can never revert a Resolved
-                # alert.
+                # rejected below.
                 placeholders = ",".join("?" * len(allowed))
                 cur = conn.execute(
                     f"UPDATE alerts SET state=? "
