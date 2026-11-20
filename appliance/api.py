@@ -18,7 +18,7 @@ import uuid
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -206,6 +206,7 @@ async def lifespan(_app: "FastAPI"):
     ensure_ip_columns()
     ensure_last_monitored_seen_column()
     ensure_settings_table()
+    ensure_alert_reads_table()
     yield
 
 
@@ -476,6 +477,9 @@ class AlertOut(BaseModel):
     category: Optional[str] = None
     # "source" (device started the activity) / "target" / null (no line).
     device_role: Optional[str] = None
+    # Read by the calling phone (Release 1; not a state). Resolved alerts are
+    # read. null for a request without a phone session (the appliance itself).
+    read: Optional[bool] = None
     # Hidden this sprint; sent explicitly as null so the contract is stable.
     model_version: Optional[str] = None
     anomaly_score: Optional[float] = None
@@ -485,6 +489,11 @@ class AlertOut(BaseModel):
 class OpenAlertCount(BaseModel):
     """DB aggregate for the Alerts screen hero (not the loaded-page length)."""
     open: int
+
+
+class UnreadAlertCount(BaseModel):
+    """DB aggregate of the calling phone's unread, unresolved alerts."""
+    unread: int
 
 
 class AlertStateUpdate(BaseModel):
@@ -874,8 +883,9 @@ _ALERT_SELECT = (
     "SELECT a.alert_id, a.device_mac, a.title, a.rule_id, a.event_time, "
     "a.src_ip, a.dst_ip, a.src_port, a.dst_port, a.severity, a.state, "
     "a.occurrence_count, a.last_event_time, a.explanation, {added}, "
+    "{read_session} AS read_session, {read_count} AS read_count, "
     "d.user_name, d.hostname, d.model "
-    "FROM alerts a LEFT JOIN devices d ON d.mac = a.device_mac "
+    "FROM alerts a LEFT JOIN devices d ON d.mac = a.device_mac {reads_join}"
 )
 
 # Columns the ingester adds to existing tables (alerts.ADDED_ALERT_COLUMNS).
@@ -883,13 +893,135 @@ _ALERT_SELECT = (
 # NULL instead of failing the query; the API never alters the alerts table.
 _ALERT_ADDED_COLUMNS = ("category", "classtype", "device_role")
 
+# --------------------------------------------------------------------------- #
+# Per-phone "read" marker (Release 1). Not an alert state (states stay New and
+# Resolved): one row per (paired phone, alert) in the API-owned `alert_reads`
+# table. An alert is read for a phone when it is Resolved, or when the phone's
+# row has read_count >= the alert's occurrence_count, so a detection merged into
+# a read alert makes it unread again. Requests from the appliance itself without
+# a token (e.g. the 7-inch display) have no phone and get read = null.
+# --------------------------------------------------------------------------- #
+_ALERT_READS_DDL = (
+    "CREATE TABLE alert_reads ("
+    " session_id INTEGER NOT NULL,"
+    " alert_id INTEGER NOT NULL,"
+    " read_count INTEGER NOT NULL,"
+    " read_at TEXT NOT NULL,"
+    " PRIMARY KEY (session_id, alert_id)"
+    ")"
+)
 
-def _alert_select(conn) -> str:
+
+def _table_exists(conn, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _ensure_alert_reads(conn) -> bool:
+    """Create `alert_reads` once, together with the Release 1 rollout rule.
+
+    In the SAME transaction as the CREATE, every phone already paired gets every
+    existing unresolved alert marked read (resolved alerts are read anyway), so
+    alerts from before the rollout never show as unread. The table's existence
+    marks the rollout as done. Phones paired later get no rows: unresolved alerts
+    that exist when they pair start unread for them. Returns True when created.
+    """
+    if _table_exists(conn, "alert_reads"):
+        return False
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if _table_exists(conn, "alert_reads"):  # created by another request meanwhile
+            conn.rollback()
+            return False
+        conn.execute(_ALERT_READS_DDL)
+        if _table_exists(conn, "alerts") and _table_exists(conn, "paired_sessions"):
+            conn.execute(
+                "INSERT INTO alert_reads (session_id, alert_id, read_count, read_at) "
+                "SELECT s.id, a.alert_id, a.occurrence_count, ? "
+                "FROM paired_sessions s, alerts a "
+                "WHERE a.alert_type = 'Threat' AND LOWER(a.state) != 'resolved'",
+                (datetime.now().isoformat(timespec="seconds"),),
+            )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return True
+
+
+def ensure_alert_reads_table() -> None:
+    """Startup: create `alert_reads` (with the rollout rule) before any request.
+    A no-op if the DB file does not exist yet."""
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError:
+        return
+    try:
+        _ensure_alert_reads(conn)
+    finally:
+        conn.close()
+
+
+def caller_session_id(request: Request) -> Optional[int]:
+    """paired_sessions.id of the calling phone, or None for a request without a
+    token (the appliance itself). require_auth has already checked the token."""
+    token = _bearer_token(request)
+    if token is None:
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(status_code=503, detail=f"Device database is not available yet: {exc}")
+    try:
+        row = conn.execute(
+            "SELECT id FROM paired_sessions WHERE token_hash = ?", (_hash_token(token),)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def _require_phone(session_id: Optional[int]) -> int:
+    if session_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Read state belongs to a paired phone; this request has no phone session.",
+        )
+    return session_id
+
+
+def _alert_select(conn, session_id: Optional[int] = None):
+    """(sql, join args, read_count expression) for the alert query.
+
+    With a phone session the phone's `alert_reads` row is joined; a missing
+    table reads as "nothing read" (the API creates it at startup)."""
     have = {r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
     added = ", ".join(
         f"a.{c}" if c in have else f"NULL AS {c}" for c in _ALERT_ADDED_COLUMNS
     )
-    return _ALERT_SELECT.format(added=added)
+    if session_id is not None and _table_exists(conn, "alert_reads"):
+        rc, join, join_args = (
+            "r.read_count",
+            "LEFT JOIN alert_reads r ON r.alert_id = a.alert_id AND r.session_id = ? ",
+            (session_id,),
+        )
+    else:
+        rc, join, join_args = "NULL", "", ()
+    sql = _ALERT_SELECT.format(
+        added=added,
+        read_session="NULL" if session_id is None else "1",
+        read_count=rc,
+        reads_join=join,
+    )
+    return sql, join_args, rc
+
+
+def _unread_where(rc: str) -> str:
+    """Unread for this phone AND still unresolved (the Unread tab and count)."""
+    return f"LOWER(a.state) = 'new' AND ({rc} IS NULL OR {rc} < a.occurrence_count)"
 
 _SEVERITIES = ("high", "medium", "low")
 _STATES = ("new", "resolved")
@@ -965,11 +1097,21 @@ _ALLOWED_SOURCES = {
 }
 
 
+def _read_flag(row) -> Optional[bool]:
+    if row["read_session"] is None:
+        return None  # no phone (the appliance itself)
+    if _state_api(row["state"]) == "resolved":
+        return True
+    rc = row["read_count"]
+    return rc is not None and rc >= (row["occurrence_count"] or 0)
+
+
 def row_to_alert(row) -> AlertOut:
     # The rule ID stays in the response (rule_id) but is never put in user text.
     display_title, explanation = alert_text(row["classtype"], row["title"])
     role = row["device_role"] if row["device_mac"] else None
     return AlertOut(
+        read=_read_flag(row),
         id=str(row["alert_id"]),
         kind="threat",
         title=row["title"],
@@ -995,19 +1137,28 @@ def row_to_alert(row) -> AlertOut:
     )
 
 
-def _query_alerts(conn, where: str, args: tuple, limit: int, offset: int = 0):
+def _query_alerts(conn, where: str, args: tuple, limit: int, offset: int = 0,
+                  session_id: Optional[int] = None, unread_only: bool = False):
     # Stable order (last_event_time, then the monotonic alert_id) so paging with
     # LIMIT/OFFSET is deterministic even when timestamps tie.
     try:
+        select, join_args, rc = _alert_select(conn, session_id)
+        if unread_only:
+            where = f"({where}) AND {_unread_where(rc)}"
         sql = (
-            _alert_select(conn) + "WHERE a.alert_type = 'Threat' AND " + where
+            select + "WHERE a.alert_type = 'Threat' AND " + where
             + " ORDER BY a.last_event_time DESC, a.alert_id DESC LIMIT ? OFFSET ?"
         )
-        return conn.execute(sql, (*args, limit, offset)).fetchall()
+        return conn.execute(sql, (*join_args, *args, limit, offset)).fetchall()
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc).lower():
             return []
         raise
+
+
+# The calling phone (None for the appliance itself). Annotated with a None
+# default so the endpoints can also be called directly in tests.
+CallerSession = Annotated[Optional[int], Depends(caller_session_id)]
 
 
 @app.get("/alerts", response_model=list[AlertOut])
@@ -1015,9 +1166,40 @@ def list_alerts(
     conn: sqlite3.Connection = Depends(get_connection),
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
+    view: Annotated[Optional[Literal["unread"]], Query(alias="filter")] = None,
+    session_id: CallerSession = None,
 ):
-    """Threat Alerts, newest first by last event time; LIMIT/OFFSET paginated."""
-    return [row_to_alert(r) for r in _query_alerts(conn, "1=1", (), limit, offset)]
+    """Threat Alerts, newest first by last event time; LIMIT/OFFSET paginated.
+
+    `?filter=unread` returns only the calling phone's unread, unresolved alerts
+    (409 without a phone session)."""
+    unread = view == "unread"
+    if unread:
+        _require_phone(session_id)
+    return [row_to_alert(r) for r in _query_alerts(
+        conn, "1=1", (), limit, offset, session_id=session_id, unread_only=unread)]
+
+
+@app.get("/alerts/unread_count", response_model=UnreadAlertCount)
+def unread_alert_count(
+    conn: sqlite3.Connection = Depends(get_connection),
+    session_id: CallerSession = None,
+):
+    """Count of the calling phone's unread, unresolved alerts across the whole DB
+    (the Unread tab badge). 409 without a phone session. Declared BEFORE
+    /alerts/{alert_id} so 'unread_count' is never parsed as an id."""
+    session_id = _require_phone(session_id)
+    try:
+        select, join_args, rc = _alert_select(conn, session_id)
+        sql = (
+            "SELECT COUNT(*) FROM (" + select
+            + "WHERE a.alert_type = 'Threat' AND " + _unread_where(rc) + ")"
+        )
+        return UnreadAlertCount(unread=conn.execute(sql, join_args).fetchone()[0])
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return UnreadAlertCount(unread=0)
+        raise
 
 
 @app.get("/alerts/open_count", response_model=OpenAlertCount)
@@ -1041,15 +1223,55 @@ def open_alert_count(conn: sqlite3.Connection = Depends(get_connection)):
 
 
 @app.get("/alerts/{alert_id}", response_model=AlertOut)
-def get_alert(alert_id: int, conn: sqlite3.Connection = Depends(get_connection)):
-    rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1)
+def get_alert(alert_id: int, conn: sqlite3.Connection = Depends(get_connection),
+              session_id: CallerSession = None):
+    rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1, session_id=session_id)
     if not rows:
         raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
     return row_to_alert(rows[0])
 
 
+@app.post("/alerts/{alert_id}/read", response_model=AlertOut)
+def mark_alert_read(alert_id: int, session_id: CallerSession = None):
+    """Mark one alert read for the calling phone (opening its details does this).
+
+    Not a state change: `state` is never touched. Stores the alert's current
+    occurrence_count, so a later merged detection makes it unread again.
+    Idempotent. 404 unknown alert; 409 without a phone session.
+    """
+    session_id = _require_phone(session_id)
+    try:
+        conn = _open_writable()
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(status_code=503, detail=f"Device database is not available yet: {exc}")
+    conn.row_factory = sqlite3.Row
+    try:
+        _ensure_alert_reads(conn)
+        try:
+            # One statement: the count stored is the one in the row right now.
+            cur = conn.execute(
+                "INSERT INTO alert_reads (session_id, alert_id, read_count, read_at) "
+                "SELECT ?, alert_id, occurrence_count, ? FROM alerts "
+                "WHERE alert_id = ? AND alert_type = 'Threat' "
+                "ON CONFLICT(session_id, alert_id) DO UPDATE SET "
+                "read_count = excluded.read_count, read_at = excluded.read_at",
+                (session_id, datetime.now().isoformat(timespec="seconds"), alert_id),
+            )
+            conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
+            raise
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
+        rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1, session_id=session_id)
+    finally:
+        conn.close()
+    return row_to_alert(rows[0])
+
+
 @app.patch("/alerts/{alert_id}", response_model=AlertOut)
-def set_alert_state(alert_id: int, body: AlertStateUpdate):
+def set_alert_state(alert_id: int, body: AlertStateUpdate, session_id: CallerSession = None):
     """Change one alert's state (PBI-22). Authenticated (global require_auth).
 
     A deliberate user action — it never implies ASSAS auto-handled the threat,
@@ -1102,7 +1324,7 @@ def set_alert_state(alert_id: int, body: AlertStateUpdate):
             if "no such table" in str(exc).lower():
                 raise HTTPException(status_code=404, detail=f"No alert with id {alert_id}")
             raise
-        rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1)
+        rows = _query_alerts(conn, "a.alert_id = ?", (alert_id,), 1, session_id=session_id)
     finally:
         conn.close()
     return row_to_alert(rows[0])
@@ -1114,10 +1336,12 @@ def list_device_alerts(
     conn: sqlite3.Connection = Depends(get_connection),
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
+    session_id: CallerSession = None,
 ):
     """Alerts linked to one device, newest first; LIMIT/OFFSET paginated."""
     mac = normalize_mac(mac)
-    return [row_to_alert(r) for r in _query_alerts(conn, "a.device_mac = ?", (mac,), limit, offset)]
+    return [row_to_alert(r) for r in _query_alerts(
+        conn, "a.device_mac = ?", (mac,), limit, offset, session_id=session_id)]
 
 
 @app.get("/summary", response_model=SummaryStats)
@@ -1466,6 +1690,10 @@ def pair(body: PairRequest):
             detail=f"Device database is not available yet: {exc}",
         )
     try:
+        # Before the new session exists: if alert_reads is created here, its
+        # one-time rollout backfill covers only phones paired earlier, so this
+        # phone starts with the existing unresolved alerts unread.
+        _ensure_alert_reads(conn)
         conn.execute(_SESSIONS_DDL)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(paired_sessions)")}
         if "device_name" not in columns:
@@ -1539,6 +1767,13 @@ def unpair(request: Request) -> None:
             detail=f"Device database is not available yet: {exc}",
         )
     try:
+        # The phone's read markers go with its session (same transaction).
+        if _table_exists(conn, "alert_reads"):
+            conn.execute(
+                "DELETE FROM alert_reads WHERE session_id IN "
+                "(SELECT id FROM paired_sessions WHERE token_hash = ?)",
+                (_hash_token(token),),
+            )
         conn.execute(
             "DELETE FROM paired_sessions WHERE token_hash = ?",
             (_hash_token(token),),

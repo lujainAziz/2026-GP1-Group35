@@ -4,8 +4,9 @@ HTTP API over the appliance's SQLite database: the discovery daemon's device
 inventory and the alert ingester's Threat Alerts. It is mostly read-only. The only
 requests that change anything are pairing (`POST /pair/verify`, `POST /pair`,
 `POST /unpair`), a device's trust and name (`PUT /devices/{mac}/trust`,
-`PUT /devices/{mac}/name`), the appliance settings (`PUT /settings`) and an
-alert's state (`PATCH /alerts/{alert_id}`). This is the contract the Flutter app
+`PUT /devices/{mac}/name`), the appliance settings (`PUT /settings`), an
+alert's state (`PATCH /alerts/{alert_id}`) and a phone's alert read marker
+(`POST /alerts/{alert_id}/read`). This is the contract the Flutter app
 builds against. All responses are JSON.
 
 ## Base URL / reachability
@@ -126,8 +127,9 @@ Only a SHA-256 hash of the token is stored (table `paired_sessions`, see
 to log in.
 
 ### POST /unpair
-Ends the calling phone's session: its token stops working at once. Other paired
-phones are not affected. Returns `204` with no body.
+Ends the calling phone's session: its token stops working at once, and its alert
+read markers are deleted. Other paired phones are not affected. Returns `204`
+with no body.
 
 ## Timestamps
 All timestamps are **server-local naive ISO-8601** to the second, e.g.
@@ -387,6 +389,13 @@ Example (addresses and names are placeholders):
 - `severity` — lowercase `"high"` / `"medium"` / `"low"`, from the rule priority:
   1 → high, 2 → medium, 3 or more (or missing) → low. There is no `"critical"`.
 - `state` — lowercase `"new"` or `"resolved"`. There is no `"reviewed"`.
+- `read` — whether the **calling phone** has read the alert. It is a per-phone
+  marker, not a state: states stay `new` and `resolved`, and other phones keep
+  their own value. `true` once this phone opened the alert's details
+  (`POST /alerts/{alert_id}/read`) and no detection was merged into it since;
+  a new merged detection makes it `false` again. A resolved alert is always
+  `true`. `null` for a request from the appliance itself without a token (e.g.
+  the 7-inch display), which has no phone.
 - **Repeated detections**: the same rule (`rule_id`) on the same device within a
   5-minute sliding window is one alert. `occurrence_count` is the number of
   detections, `first_event_time` the first and `last_event_time` the latest;
@@ -401,7 +410,17 @@ Example (addresses and names are placeholders):
 ### GET /alerts
 All Threat Alerts, newest first by `last_event_time` (ties by id, so paging is
 stable). Query params: `limit` (int, default 200, min 1, max 1000), `offset` (int,
-default 0).
+default 0), and `filter=unread` (optional): only the calling phone's unread alerts
+that are still unresolved (the app's Unread tab). `filter=unread` without a phone
+session is `409`; any other `filter` value is `422`.
+
+### GET /alerts/unread_count
+The number of the calling phone's unread, unresolved alerts in the whole database
+(the Unread tab badge), not just one page:
+```json
+{"unread": 3}
+```
+`409` for a request without a phone session (the appliance itself).
 
 ### GET /alerts/open_count
 The number of unresolved (`new`) alerts in the whole database, not just one page:
@@ -417,6 +436,25 @@ shows "—". A count of 0 reads "No unresolved alerts".
 
 ### GET /alerts/{alert_id}
 One alert. `404` if unknown.
+
+### POST /alerts/{alert_id}/read
+Marks one alert read for the calling phone; the app calls it when the alert's
+details are opened (there is no button). No body. It never changes `state`.
+- `200` → the alert object, with `read: true`. Calling it again is a no-op `200`.
+- `404` → no alert with that id.
+- `409` → the request has no phone session (the appliance itself).
+- `503` → the database is not available yet.
+
+The marker stores how many detections the alert had when it was read, so a later
+merged detection makes it unread again.
+
+**How alerts start** (read markers are kept per phone, in `alert_reads`, see
+[database-schema.md](database-schema.md)):
+- When Release 1 first starts, every alert that already exists is read for every
+  phone already paired.
+- A phone paired later starts with the unresolved alerts that exist when it pairs
+  unread, and resolved ones read (resolved alerts are always read).
+- `POST /unpair` deletes the phone's read markers together with its session.
 
 ### GET /devices/{mac}/alerts
 The alerts linked to one device, newest first. `mac` accepts `:`/`-`/bare-12-hex

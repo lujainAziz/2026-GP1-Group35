@@ -9,7 +9,7 @@ columns marked below. WAL journal mode allows concurrent reads while the daemons
 
 Verified against the live appliance database on 2026-11-20 (commit `40e1580`).
 The Release 1 alert changes (`alerts.priority`, the severity labels, the removed
-`Reviewed` state) are documented from the code; they are not yet verified on the
+`Reviewed` state, the `alert_reads` table) are documented from the code; they are not yet verified on the
 live appliance database.
 
 | Table | Written by | Purpose |
@@ -24,6 +24,7 @@ live appliance database.
 | `device_addresses` | discovery daemon | Every local address seen for each device, with first/last sighting. Used to link alerts to devices. |
 | `alerts` | alert ingester (+ API for `state`) | One row per Threat Alert from Suricata. |
 | `alert_ingest_state` | alert ingester | Read position in each Suricata `eve.json` file. |
+| `alert_reads` | API | Per-phone "read" marker for alerts (not an alert state). |
 
 `sqlite_sequence` also exists; it is SQLite's internal counter for the
 `AUTOINCREMENT` keys of `paired_sessions` and `alerts` and is not used by Assas code.
@@ -160,7 +161,8 @@ pairing; readers treat a missing table as "nobody is paired yet".
 | `created_at` | TEXT, NOT NULL | When the phone paired. |
 | `device_name` | TEXT, NOT NULL, default `'Unnamed phone'` | Phone name sent with `POST /pair` (max 40 characters), shown on the display. |
 
-`POST /unpair` deletes the calling phone's row; other phones stay paired.
+`POST /unpair` deletes the calling phone's row and its `alert_reads` rows (same
+transaction); other phones stay paired.
 
 ## Table: `app_settings`
 
@@ -279,6 +281,35 @@ column, it reads that column as `NULL`.
 - **Relink**: unlinked alerts whose `last_event_time` is within the last
   24 hours (`ASSAS_ALERT_RELINK_HOURS`) are retried when new address evidence
   arrives. Only `device_mac` and `device_role` are set.
+
+## Table: `alert_reads`
+
+Which alerts each paired phone has read (Release 1). Written only by the API.
+"Read" is a marker kept per phone, not an alert state: `alerts.state` stays
+`New` / `Resolved`, and the ingester never touches this table.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `session_id` | INTEGER, NOT NULL | The phone: `paired_sessions.id`. |
+| `alert_id` | INTEGER, NOT NULL | The alert: `alerts.alert_id`. |
+| `read_count` | INTEGER, NOT NULL | The alert's `occurrence_count` when this phone read it. |
+| `read_at` | TEXT, NOT NULL | When this phone read it. |
+
+Primary key: (`session_id`, `alert_id`).
+
+- **Read rule**: an alert is read for a phone when it is `Resolved`, or when the
+  phone's row has `read_count` ≥ the alert's current `occurrence_count`. A
+  detection merged into the alert raises `occurrence_count`, so it becomes unread
+  again. No row means unread.
+- **Written** by `POST /alerts/{alert_id}/read` (insert or update, storing the
+  current `occurrence_count`). `POST /unpair` deletes the phone's rows.
+- **Created** by the API at startup, or by `POST /pair` / `POST /alerts/{alert_id}/read`
+  if it does not exist yet. In the same transaction as the `CREATE`, every phone
+  already paired gets a row for every existing unresolved alert (the Release 1
+  rollout: existing alerts start read). The table's existence marks this as done,
+  so it runs once. `POST /pair` creates the table before adding the new phone, so
+  a phone paired later gets no rows: the unresolved alerts that exist when it
+  pairs start unread for it.
 
 ## Table: `alert_ingest_state`
 
