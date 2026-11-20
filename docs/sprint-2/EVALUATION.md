@@ -188,7 +188,7 @@ figure is **not** adjusted by excluding any process.
 | Suricata packet-drop rate | record | **0.0%** — 0 drops / 163,368 pkts | **PASS** | `resource-2h-summary.json` |
 
 **Memory — why NOT MET and what it means:** total-device memory exceeded 4 GB, but a development
-agent (Claude Code) was **co-resident on the appliance during this run (~2.4 GB RSS)** and is
+agent was **co-resident on the appliance during this run (~2.4 GB RSS)** and is
 included in the figure as required. It is not part of the deployed appliance, so this baseline
 **overstates** the appliance's own memory. For context only (not a substitute for the acceptance
 figure), the appliance services' own RSS sum is **~1.49 GB** (`appliance-footprint.txt`:
@@ -201,12 +201,12 @@ pass/fail on memory is claimed.
 (CPU target met, memory target not met, zero drops under light traffic).
 
 **Representative run without the development agent (to validly judge the memory target):** use
-`appliance/tools/clean_resource_run.sh`. It refuses to start while a Claude Code agent is present,
+`appliance/tools/clean_resource_run.sh`. It refuses to start while the development agent is present,
 samples only after that precheck passes, and records agent presence every 30 s to
 `clean/agent-guard.log`; the result is valid only if that log shows **zero `PRESENT`** entries.
 ```
-# After the Pi's Claude Code session has fully exited:
-/home/assas/assas/appliance/tools/clean_resource_run.sh
+# After the development agent's session on the Pi has fully exited:
+ASSAS_DEV_AGENT_PATTERN='<agent-process-name>' /home/assas/assas/appliance/tools/clean_resource_run.sh
 # -> evidence/resources/clean/resource-2h-summary.json + clean/agent-guard.log
 
 ### Clean (agent-free) 2-hour run — COMPLETED 2026-11-05 02:26–04:26 UTC

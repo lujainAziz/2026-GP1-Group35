@@ -1,18 +1,21 @@
 #!/bin/sh
 # Representative 2-hour resource run WITHOUT the development agent (Sprint 2).
 #
-# The 13:37-15:37 UTC baseline ran with the Claude Code dev agent co-resident
+# The 13:37-15:37 UTC baseline ran with the development agent co-resident
 # (~2.4 GB RSS), so its total-device memory does not validly judge the <4 GB
 # target. This wrapper produces the agent-free measurement used to judge memory.
 # It is ADDITIVE: it writes to evidence/resources/clean/ and never overwrites the
 # retained baseline files (resource-2h.{csv,summary.json}, appliance-footprint.txt).
 #
-# It refuses to start while a Claude agent is present, and records agent presence
-# every 30 s for the whole run; the result is valid only if agent-guard.log shows
-# zero PRESENT entries.
+# It refuses to start while the development agent is present, and records agent
+# presence every 30 s for the whole run; the result is valid only if
+# agent-guard.log shows zero PRESENT entries.
 #
-# Run it after the Pi's Claude Code session has fully exited:
-#   /home/assas/assas/appliance/tools/clean_resource_run.sh
+# The agent's process name is not stored in the repo: pass it (a `pgrep -x`
+# regex) in ASSAS_DEV_AGENT_PATTERN. The script aborts if it is not set.
+#
+# Run it after the development agent's session on the Pi has fully exited:
+#   ASSAS_DEV_AGENT_PATTERN='<agent-process-name>' /home/assas/assas/appliance/tools/clean_resource_run.sh
 set -eu
 
 REPO=/home/assas/assas
@@ -21,15 +24,22 @@ GUARD="$OUTDIR/agent-guard.log"
 DURATION="${1:-7200}"
 INTERVAL="${2:-10}"
 
+AGENT_PATTERN="${ASSAS_DEV_AGENT_PATTERN:-}"
+if [ -z "$AGENT_PATTERN" ]; then
+    echo "ABORT: ASSAS_DEV_AGENT_PATTERN is not set; cannot check for the development agent." >&2
+    echo "Set it to the agent's process-name pattern (pgrep -x regex) and re-run." >&2
+    exit 1
+fi
+
 agent_present() {
-    pgrep -x claude >/dev/null 2>&1 || pgrep -x claude.exe >/dev/null 2>&1
+    pgrep -x "$AGENT_PATTERN" >/dev/null 2>&1
 }
 
 mkdir -p "$OUTDIR"
 
 if agent_present; then
-    echo "ABORT: a Claude Code agent is still running — stop the session first." >&2
-    pgrep -af 'claude' >&2 || true
+    echo "ABORT: the development agent is still running — stop the session first." >&2
+    pgrep -af "$AGENT_PATTERN" >&2 || true
     exit 1
 fi
 
