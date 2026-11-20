@@ -1,5 +1,15 @@
 # Sprint 2 — Final Verification
 
+> **Superseded in Release 1.** Some Threat Alert behaviour described here has
+> changed: the Reviewed state is removed (New → Resolved only); severities are
+> High / Medium / Low (priority 1 → High, 2 → Medium, 3 or more or missing → Low;
+> no Critical); the fallback title is "Network activity detected" and names the
+> original rule; the app shows the detection count and first/last detection
+> times; the test rules are SIDs 1000001-1000003 (1000004 retired); "Network
+> Risk" is renamed "Network Alert Level" (Sprint 5). This document records
+> Sprint 2 as delivered. Current behaviour: `docs/database-schema.md`,
+> `docs/API_CONTRACT.md`, `docs/sprint-2/threat-alert-titles.md`.
+
 **Sprint status: implementation and automated tests are complete; the clean
 resource run is done (CPU pass; memory target NOT met — see #8/R); the
 drop-measurement re-run (corrected tool, pending an agent-free window), the

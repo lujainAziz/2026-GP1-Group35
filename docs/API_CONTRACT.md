@@ -1,7 +1,12 @@
 # ASSAS Device Inventory API — Contract
 
-Read-only HTTP API over the discovery daemon's SQLite inventory. This is the
-contract the Flutter app builds against. All responses are JSON.
+HTTP API over the appliance's SQLite database: the discovery daemon's device
+inventory and the alert ingester's Threat Alerts. It is mostly read-only. The only
+requests that change anything are pairing (`POST /pair/verify`, `POST /pair`,
+`POST /unpair`), a device's trust and name (`PUT /devices/{mac}/trust`,
+`PUT /devices/{mac}/name`), the appliance settings (`PUT /settings`) and an
+alert's state (`PATCH /alerts/{alert_id}`). This is the contract the Flutter app
+builds against. All responses are JSON.
 
 ## Base URL / reachability
 - The API (uvicorn) binds `0.0.0.0:8000`, so it is reachable on the LAN, not just
@@ -320,6 +325,116 @@ Aggregate counts. Shape:
   "by_device_type": [{"device_type": "Mobile (Apple)", "count": 4}]
 }
 ```
+
+---
+
+## Threat Alerts
+Threat Alerts come from Suricata detections. The alert ingester writes them (see the
+`alerts` table in [database-schema.md](database-schema.md)); the API serves them and
+changes only an alert's `state`. All alert endpoints need a paired token like the
+other data endpoints. If the `alerts` table does not exist yet (the ingester never
+ran), lists are empty, the open count is `0` and a single alert is `404`.
+
+### Alert object
+Example (addresses and names are placeholders):
+```json
+{
+  "id": "17",
+  "kind": "threat",
+  "title": "ET SCAN Suspicious inbound to mySQL port 3306",
+  "display_title": "Network scan",
+  "explanation": "A device scanned the network to find other devices and open services. Check whether this scan was expected.",
+  "classtype": "network-scan",
+  "category": "Detection of a Network Scan",
+  "device_mac": "<device MAC>",
+  "device_name": "<device name>",
+  "device_role": "source",
+  "time": "2026-11-20T10:04:00",
+  "first_event_time": "2026-11-20T10:00:00",
+  "last_event_time": "2026-11-20T10:04:00",
+  "occurrence_count": 4,
+  "rule_id": 2010937,
+  "severity": "low",
+  "state": "new",
+  "source_ip": "<source IP>",
+  "destination_ip": "<destination IP>",
+  "src_port": 51234,
+  "dst_port": 3306,
+  "model_version": null,
+  "anomaly_score": null,
+  "threshold": null
+}
+```
+- `id` — the alert id, as a string.
+- `kind` — always `"threat"`.
+- `title` — the original Suricata rule name (signature), unchanged.
+- `display_title` / `explanation` — plain-language text chosen by the Suricata
+  category (stored as `classtype`). The wording is in
+  [sprint-2/threat-alert-titles.md](sprint-2/threat-alert-titles.md). With no
+  classtype, or one not in that table, the title is `"Network activity detected"`
+  and the explanation names the original rule, e.g. `Assas detected network
+  traffic that matched a security rule ("ASSAS TEST High", rule ID 1000001). The
+  original rule details are shown below.`
+- `classtype` / `category` — the short classtype and Suricata's category text;
+  `null` when unknown.
+- `device_mac` — the linked device, or `null` when no single device could be linked.
+- `device_name` — the device's user name, else a readable hostname, else its model,
+  else `"Unknown device"` (always `"Unknown device"` for unlinked alerts).
+- `device_role` — `"source"` (the device started the activity), `"target"`, or
+  `null` (unlinked or not known).
+- `severity` — lowercase `"high"` / `"medium"` / `"low"`, from the rule priority:
+  1 → high, 2 → medium, 3 or more (or missing) → low. There is no `"critical"`.
+- `state` — lowercase `"new"` or `"resolved"`. There is no `"reviewed"`.
+- **Repeated detections**: the same rule (`rule_id`) on the same device within a
+  5-minute sliding window is one alert. `occurrence_count` is the number of
+  detections, `first_event_time` the first and `last_event_time` the latest;
+  `time` equals `last_event_time` (lists are ordered by it). A detection after
+  the alert was resolved starts a new alert. Unlinked alerts merge only when the
+  source and destination addresses also match.
+- `source_ip` / `destination_ip` / `src_port` / `dst_port` — of the first
+  detection; `null` when the event had none.
+- `model_version`, `anomaly_score`, `threshold` — always `null` (anomaly alerts are
+  a later sprint).
+
+### GET /alerts
+All Threat Alerts, newest first by `last_event_time` (ties by id, so paging is
+stable). Query params: `limit` (int, default 200, min 1, max 1000), `offset` (int,
+default 0).
+
+### GET /alerts/open_count
+The number of unresolved (`new`) alerts in the whole database, not just one page:
+```json
+{"open": 12}
+```
+
+### GET /alerts/{alert_id}
+One alert. `404` if unknown.
+
+### GET /devices/{mac}/alerts
+The alerts linked to one device, newest first. `mac` accepts `:`/`-`/bare-12-hex
+forms. Same `limit` / `offset` as `GET /alerts`. A MAC with no alerts returns `[]`.
+
+### PATCH /alerts/{alert_id}
+Changes one alert's state. The only move is **New → Resolved**; `Resolved` is final.
+Body:
+```json
+{"state": "resolved"}
+```
+- `200` → the updated alert object. Asking for the state the alert already has
+  (e.g. resolving a resolved alert) is a no-op `200`, so two phones resolving at
+  once both succeed.
+- `404` → no alert with that id.
+- `409` → the move is not allowed (e.g. `"new"` on a resolved alert).
+- `422` → unknown state, including `"reviewed"`.
+- `503` → the database is not available yet.
+
+The change is one guarded write, so a resolved alert is never reverted. The
+ingester never changes `state`; new detections of a resolved alert's rule start
+a new alert.
+
+### Network Alert Level (not served yet)
+The Network Alert Level (the highest severity among unresolved alerts) is planned
+for Sprint 5. There is no endpoint yet; the app and the display show it as "Soon".
 
 ---
 

@@ -1,5 +1,15 @@
 # Sprint 2 — Scope and Changes from Sprint 1
 
+> **Superseded in Release 1.** Some Threat Alert behaviour described here has
+> changed: the Reviewed state is removed (New → Resolved only); severities are
+> High / Medium / Low (priority 1 → High, 2 → Medium, 3 or more or missing → Low;
+> no Critical); the fallback title is "Network activity detected" and names the
+> original rule; the app shows the detection count and first/last detection
+> times; the test rules are SIDs 1000001-1000003 (1000004 retired); "Network
+> Risk" is renamed "Network Alert Level" (Sprint 5). This document records
+> Sprint 2 as delivered. Current behaviour: `docs/database-schema.md`,
+> `docs/API_CONTRACT.md`, `docs/sprint-2/threat-alert-titles.md`.
+
 Sprint 2 adds **signature-based threat detection** and **security alert display and state
 management** to the Assas appliance. Sprint 1 delivered passive discovery, capture, classification,
 pairing, the read-only inventory service, and the mobile and display applications; Sprint 2 is
@@ -215,6 +225,9 @@ records them as security alerts in SQLite. Tests: `appliance/test_alerts.py` (51
 - `alert_ingest_state` — `(st_dev, st_ino)` PK + `offset, size_at_eof, consumed, path` — the read
   checkpoint, written in the **same transaction** as the alert upserts.
 
+*Release 1: severity is now 1→High, 2→Medium, 3 or more→Low (no Critical), with the raw priority
+stored in `priority`; existing rows were converted once.*
+
 **Behaviour:** severity from rule priority (1→Critical … ≥4→Low); device linking
 (one→that device, both→source keeping the other IP, neither→NULL); dedup within a window (default
 300 s, `ASSAS_ALERT_DEDUP_WINDOW`, measured from `last_event_time`; NULL-device key = rule+src+dst);
@@ -249,6 +262,9 @@ State update:
   Resolved is final). The transition is one atomic, guarded write; an illegal or backward move is
   rejected (409) and never reverts a Resolved alert.
 
+*Release 1: the only state move is New→Resolved (`reviewed` is rejected with 422), the open count
+is New only, and `severity` is high/medium/low. See `docs/API_CONTRACT.md` → Threat Alerts.*
+
 Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="threat"`,
 `state="new"`, `severity ∈ {critical,high,medium,low}`; plus `id`, `title`, `device_mac`,
 `device_name` (user_name→hostname→model→"Unknown device"), `time` (= `last_event_time`),
@@ -277,6 +293,10 @@ appliance so they survive restarts of the application or the appliance services.
 detection recurs after an alert has been resolved, it is recorded as a **new, independent alert**
 rather than reopening the resolved one. **Device signals from unresolved alerts** are also live:
 an unresolved alert raises its device's attention level, priority and severity accent.
+
+*Release 1: Review and the Reviewed state are removed (Resolve only); the details show
+"{device} · {first detection time}" under the title and the detection count, first and last
+detection, rule name and rule ID.*
 
 | Surface | This sprint | How |
 |---|---|---|
@@ -312,6 +332,8 @@ Sprint 2 decision (2026-11-11): Option 2. Threat Alert explanations ship in Spri
   "This device was the target."; no line for unlinked or MAC-attributed alerts.
 - **Fallback "Security alert"** (and a generic explanation) for rules with no classtype, including
   the four ASSAS TEST rules, or a classtype not in the table; severity is unchanged.
+  *(Release 1: the fallback is "Network activity detected" with the original rule in the
+  explanation.)*
 - The wording lives in `docs/sprint-2/threat-alert-titles.md` (team-reviewed) and
   `appliance/alert_text.py`; `appliance/test_alert_text.py` keeps the two in sync row for row.
 - How: the ingester stores eve's `category` and maps it to the short classtype through
@@ -463,6 +485,8 @@ Purpose: verify that the full pipeline handles all four severity levels
 These are test rules, not attack simulation; real-attack detection is shown by
 the ET Open rules and the dataset evaluation.
 
+- *Release 1: replaced by three rules, SIDs 1000001-1000003 (ASSAS TEST High,
+  Medium, Low; priority 1-3; `rev:2`); 1000004 is retired.*
 - Four local rules, SIDs 1000001-1000004, priority 1-4 (Critical, High,
   Medium, Low). Each fires on an HTTP request to `/assas-test/<level>` on the
   appliance. The request is harmless (the server answers 404).

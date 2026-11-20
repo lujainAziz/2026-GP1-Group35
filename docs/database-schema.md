@@ -8,6 +8,9 @@ The API (`appliance/api.py`) opens it read-only, except for the API-owned tables
 columns marked below. WAL journal mode allows concurrent reads while the daemons write.
 
 Verified against the live appliance database on 2026-11-20 (commit `40e1580`).
+The Release 1 alert changes (`alerts.priority`, the severity labels, the removed
+`Reviewed` state) are documented from the code; they are not yet verified on the
+live appliance database.
 
 | Table | Written by | Purpose |
 |---|---|---|
@@ -223,8 +226,8 @@ by the alert ingester; the API writes only `state`. Payloads are never stored.
 | `dst_ip` | TEXT | Destination address of the first event; `NULL` as above. |
 | `src_port` | INTEGER | Source port of the first event; `NULL` when absent. |
 | `dst_port` | INTEGER | Destination port of the first event; `NULL` when absent. |
-| `severity` | TEXT, NOT NULL | From the rule priority (`alert.severity`): 1 = `Critical`, 2 = `High`, 3 = `Medium`, 4 or more / missing = `Low`. |
-| `state` | TEXT, NOT NULL, default `'New'` | `New` / `Reviewed` / `Resolved`. **API-owned after insert**: the ingester inserts `New` and never changes it; the API changes it via `PATCH /alerts/{alert_id}` (New→Reviewed, New→Resolved, Reviewed→Resolved; `Resolved` is final). |
+| `severity` | TEXT, NOT NULL | From the rule priority (`alert.severity`): 1 = `High`, 2 = `Medium`, 3 or more / missing = `Low`. There is no `Critical`. |
+| `state` | TEXT, NOT NULL, default `'New'` | `New` / `Resolved`. **API-owned after insert**: the ingester inserts `New` and never changes it; the API changes it via `PATCH /alerts/{alert_id}` (New→Resolved only; `Resolved` is final). |
 | `explanation` | TEXT | Stored explanation; not written today. When `NULL` the API shows the `classtype` text. |
 | `model_version` | TEXT | Not written or read by any code today (always `NULL`). |
 | `anomaly_score` | REAL | Not written or read by any code today (always `NULL`). |
@@ -234,16 +237,31 @@ by the alert ingester; the API writes only `state`. Payloads are never stored.
 | `category` | TEXT | Suricata `alert.category` (the classtype description), as received. `NULL` for rules without a classtype. |
 | `classtype` | TEXT | Short classtype name, mapped back from `category` through Suricata's `classification.config`. `NULL` when unknown or ambiguous; the API then shows a fallback title. |
 | `device_role` | TEXT | Side of the first event the linked device was on: `source` / `target`. `NULL` when unlinked or linked by MAC. |
+| `priority` | INTEGER | Raw Suricata rule priority (eve `alert.severity`) that `severity` was derived from; `NULL` when the event had none. Rows converted in Release 1 from the old `Low` label also have `NULL` (the old label does not say whether it was 4 or more). |
 
-`category`, `classtype` and `device_role` were added after the table first shipped
-(by the ingester or the API at startup); rows from before that have `NULL`.
+`category`, `classtype` and `device_role` were added after the table first shipped.
+Only the ingester adds them, at startup; rows from before that have `NULL`. The API
+never alters the `alerts` table: if it starts before the ingester has added a
+column, it reads that column as `NULL`.
+
+`priority` is also added only by the ingester, by the one-time Release 1 conversion below.
 
 ### Notes
+- **Release 1 conversion** (one time, ingester only, `alerts.migrate_release1`):
+  in a single transaction the ingester adds `priority`, fills it from the old
+  label, and rewrites the labels: `Critical`→`High`, `High`→`Medium`,
+  `Medium`→`Low`, `Low`→`Low`; it also sets every `Reviewed` alert to `New`.
+  The column's existence marks the conversion as done, so it never runs twice
+  (running it again would shift `High` to `Medium`), and a fresh table is never
+  converted. If any step fails the whole conversion rolls back. The API reads a
+  leftover `Critical` as `high` and a leftover `Reviewed` as `new`.
 - **De-dup**: a new event is merged into the most recent alert with the same
   `rule_id` and the same `device_mac` (for unlinked alerts: same `rule_id`,
   `src_ip` and `dst_ip`, so unknown hosts never merge), if that alert is not
   `Resolved` and its `last_event_time` is within 5 minutes of the event
-  (`ASSAS_ALERT_DEDUP_WINDOW`, seconds). A merge adds 1 to `occurrence_count`
+  (`ASSAS_ALERT_DEDUP_WINDOW`, seconds). The window slides: it is measured from
+  the latest event, so a long run of repeats stays one alert. A merge adds 1 to
+  `occurrence_count`
   and widens `event_time` / `last_event_time`; every other column, including
   `state`, keeps its value. If the newest match is `Resolved` or outside the
   window, a new alert is inserted with state `New`.

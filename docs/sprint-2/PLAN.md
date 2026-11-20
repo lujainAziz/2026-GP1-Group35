@@ -1,5 +1,15 @@
 # Sprint 2 — Implementation Plan
 
+> **Superseded in Release 1.** Some Threat Alert behaviour described here has
+> changed: the Reviewed state is removed (New → Resolved only); severities are
+> High / Medium / Low (priority 1 → High, 2 → Medium, 3 or more or missing → Low;
+> no Critical); the fallback title is "Network activity detected" and names the
+> original rule; the app shows the detection count and first/last detection
+> times; the test rules are SIDs 1000001-1000003 (1000004 retired); "Network
+> Risk" is renamed "Network Alert Level" (Sprint 5). This document records
+> Sprint 2 as delivered. Current behaviour: `docs/database-schema.md`,
+> `docs/API_CONTRACT.md`, `docs/sprint-2/threat-alert-titles.md`.
+
 **Scope:** signature-based threat detection and Threat Alerts. The PBI-13 / PBI-14 acceptance items
 and their status are tracked in `README.md` → *Requirements tracking*; this document is the
 implementation plan behind them.

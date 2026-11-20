@@ -1,6 +1,7 @@
-# Threat Alert titles and explanations: DRAFT for team review
+# Threat Alert titles and explanations
 
-Source: Sprint 2 decision (2026-11-11): Option 2. The title in the alert list is a short plain-language name based on the rule classification (classtype). The original Suricata rule name stays visible in the alert details. Titles must be clear and must accurately reflect the detected threat.
+Source: Sprint 2 decision (2026-11-11): Option 2, updated by the Release 1 decisions
+(see *Release 1 changes* at the end). The title in the alert list is a short plain-language name based on the rule classification (classtype). The original Suricata rule name stays visible in the alert details. Titles must be clear and must accurately reflect the detected threat.
 
 Classtypes below are the 39 that appear in the enabled rules on the device (counted 2026-11-14), ordered by number of enabled rules.
 
@@ -62,6 +63,14 @@ The explanation is written so it reads correctly with either line.
 
 ## Team decisions (2026-11-14)
 1. Language: English only, same as the app interface.
-2. Rules with no classtype, including the four test rules (ASSAS TEST Critical/High/Medium/Low), use the fallback title "Security alert". Their original rule name stays in the details, and their severity is unchanged.
-3. policy-violation keeps its Critical severity (priority 1). Its title is "Unsafe activity" (not "not an attack", so the title does not contradict the Critical badge).
+2. Rules with no classtype, including the test rules, use the fallback title. Their original rule name stays in the details. *(Release 1: the fallback title is now "Network activity detected", the explanation names the rule, and the test rules are ASSAS TEST High/Medium/Low; see below.)*
+3. policy-violation keeps its top severity (priority 1). Its title is "Unsafe activity" (not "not an attack", so the title does not contradict the badge). *(Release 1: priority 1 is now High, not Critical.)*
 4. Each title and explanation is reviewed by at least one more team member before release (titles must not understate or overstate the risk).
+
+## Release 1 changes
+- **Chosen by the Suricata category.** The ingester stores Suricata's category text and maps it to the short classtype through `classification.config`; the table above is looked up by that classtype when an alert is read, so a wording change applies to every alert.
+- **Severity.** Priority 1 → High, 2 → Medium, 3 or more (or missing) → Low. There is no Critical.
+- **Fallback.** No classtype, or one not in the table: title "Network activity detected", and the explanation names the original rule and its rule ID (`{rule}` in the table row is filled with `"<rule name>", rule ID <SID>`).
+- **Device and time.** The app shows "{device} · {first detection time}" under the title; for unlinked alerts it shows "Unknown device · {time}". This line is not part of the stored text.
+- **Original rule.** The original rule name and rule ID are always shown in the alert details, even when there is a plain title.
+- **Test rules.** ASSAS TEST High (SID 1000001, priority 1), Medium (1000002, priority 2) and Low (1000003, priority 3). SID 1000004 is retired. None has a classtype, so all three use the fallback.

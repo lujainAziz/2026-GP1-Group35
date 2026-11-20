@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only FastAPI backend exposing the ASSAS device inventory.
+"""FastAPI backend exposing the ASSAS device inventory and Threat Alerts.
 
-Reads the same SQLite `devices` table that discovery.py writes, opening the
-connection in mode=ro so this process can never write to it. discovery.py
-runs in WAL journal mode, so concurrent reads while it writes are safe.
+Reads the same SQLite database that discovery.py and the alert ingester
+(alerts.py) write. Ordinary reads use a mode=ro connection; the few writes
+(pairing sessions, device trust and name, settings, an alert's state) go through
+_open_writable(). The daemons run in WAL journal mode, so concurrent reads while
+they write are safe.
 """
 import os
 import hashlib
@@ -42,9 +44,11 @@ DEV_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 def _open_writable() -> sqlite3.Connection:
     """Open the devices DB read-write WITHOUT creating it (mode=rw, not rwc).
 
-    This is the only writable door into the DB. It exists solely for (1) the
-    additive `trusted` schema guard below and (2) explicit user trust writes.
-    Ordinary API reads keep using the mode=ro connection in get_connection().
+    This is the only writable door into the DB. It is used for (1) the additive
+    schema guards below (run at startup) and (2) explicit user actions: pairing
+    and unpairing, device trust and name, settings, and an alert's state
+    (PATCH /alerts/{alert_id}). Ordinary API reads keep using the mode=ro
+    connection in get_connection().
     Raises sqlite3.OperationalError if the DB file does not exist yet.
     """
     conn = sqlite3.connect(f"file:{DB_PATH}?mode=rw", uri=True, timeout=5.0)
@@ -298,7 +302,7 @@ def normalize_mac(mac: str) -> str:
 def _is_locally_administered_mac(mac) -> bool:
     """True if the MAC's locally-administered bit (randomized MAC) is set.
 
-    Kept as a local one-liner so this read-only API stays import-free of
+    Kept as a local one-liner so this API stays import-free of
     discovery.py; mirrors discovery.is_locally_administered_mac().
     """
     try:
@@ -861,8 +865,10 @@ def set_device_name(mac: str, body: NameUpdate):
 
 
 # --------------------------------------------------------------------------- #
-# Threat alerts (PBI-14). Read-only; the ingester (appliance/alerts.py) owns the
-# `alerts` table. A missing table (ingester never ran) reads as "no alerts".
+# Threat alerts (PBI-14). The ingester (appliance/alerts.py) owns the `alerts`
+# table and its schema; the API only reads it, except PATCH /alerts/{alert_id},
+# which writes the `state` column of one alert (New -> Resolved). A missing
+# table (ingester never ran) reads as "no alerts".
 # --------------------------------------------------------------------------- #
 _ALERT_SELECT = (
     "SELECT a.alert_id, a.device_mac, a.title, a.rule_id, a.event_time, "

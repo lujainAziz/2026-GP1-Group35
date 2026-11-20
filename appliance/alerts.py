@@ -184,8 +184,9 @@ def migrate_release1(conn):
 def ensure_alert_columns(conn):
     """Add ADDED_ALERT_COLUMNS to an existing alerts table (idempotent).
 
-    Also called by the API at startup, which may run before the ingester has
-    migrated. A missing alerts table is left alone (the ingester creates it).
+    Called only by the ingester (ensure_schema); the API never alters the alerts
+    table and reads a column that is not there yet as NULL. A missing alerts
+    table is left alone (the ingester creates it).
     """
     with conn:
         have = {r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
