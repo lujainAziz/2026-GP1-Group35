@@ -130,8 +130,9 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                   // it is not repeated here. Repeated detections of the same rule
                   // on the same device (5-minute sliding window) are one alert:
                   // its count and first/last detection times are shown. The
-                  // original rule name and rule ID are always kept here; ports stay
-                  // hidden (they remain in the database and API).
+                  // original rule name is always kept here. The rule ID and ports
+                  // are never shown (team decision; they remain in the database
+                  // and API).
                   SpecList(
                     railColor: c,
                     copyable: const {'Source IP', 'Destination IP'},
@@ -140,8 +141,6 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                       ('Alert type', a.kindLabel, Ui.ink),
                       if (a.kind == AlertKind.threat && a.ruleName != null)
                         ('Rule', a.ruleName!, Ui.ink),
-                      if (a.kind == AlertKind.threat && a.ruleId != null)
-                        ('Rule ID', a.ruleId!, Ui.ink),
                       ('Severity', a.severityLabel, c),
                       ('Detections', '${a.occurrenceCount}', Ui.ink),
                       ('First detected', TimeFormat.alertTime(a.firstDetected), Ui.ink),

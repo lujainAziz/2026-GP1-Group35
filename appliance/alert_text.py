@@ -170,25 +170,23 @@ CLASSTYPE_TEXT = {
 }
 
 # No classtype, or a classtype not listed above (includes the ASSAS TEST rules).
-# {rule} is filled with the original rule information (name and rule ID).
+# {rule} is filled with the original rule name. The rule ID is never shown to
+# the user (team decision); it stays in the API response for internal use.
 FALLBACK_TEXT = (
     "Network activity detected",
     "Assas detected network traffic that matched a security rule ({rule}). The original rule details are shown below.",
 )
 
 
-def rule_info(rule_name=None, rule_id=None):
-    """The original rule as shown in the fallback text: '"<name>", rule ID <sid>'."""
+def rule_info(rule_name=None):
+    """The original rule as shown in the fallback text: '"<name>"'."""
     name = rule_name.strip() if isinstance(rule_name, str) else ""
-    parts = [f'"{name}"'] if name else []
-    if rule_id is not None:
-        parts.append(f"rule ID {rule_id}")
-    return ", ".join(parts) or "no rule details available"
+    return f'"{name}"' if name else "no rule details available"
 
 
-def alert_text(classtype, rule_name=None, rule_id=None):
+def alert_text(classtype, rule_name=None):
     """(title, explanation) for a stored classtype; the fallback when unknown."""
     if isinstance(classtype, str) and classtype.strip() in CLASSTYPE_TEXT:
         return CLASSTYPE_TEXT[classtype.strip()]
     title, explanation = FALLBACK_TEXT
-    return title, explanation.format(rule=rule_info(rule_name, rule_id))
+    return title, explanation.format(rule=rule_info(rule_name))

@@ -1557,7 +1557,8 @@ class AlertEndpointTests(_SeededDBTest):
         self.assertEqual(
             a.explanation,
             'Assas detected network traffic that matched a security rule '
-            '("ET A", rule ID 1). The original rule details are shown below.')
+            '("ET A"). The original rule details are shown below.')
+        self.assertEqual(a.rule_id, 1)  # kept in the response for internal use
         self.assertIsNone(a.device_role)
         self.assertIsNone(a.anomaly_score)
 
@@ -1606,7 +1607,9 @@ class AlertEndpointTests(_SeededDBTest):
         self.assertEqual(a.title, "ASSAS TEST High")
         self.assertEqual(a.severity, "high")
         self.assertEqual(a.display_title, "Network activity detected")
-        self.assertIn('("ASSAS TEST High", rule ID 1000001)', a.explanation)
+        self.assertIn('("ASSAS TEST High")', a.explanation)
+        self.assertNotIn("1000001", a.explanation)  # rule ID never in user text
+        self.assertEqual(a.rule_id, 1000001)  # but kept in the response
         self.assertIsNone(a.device_role)  # no device -> no role line
 
     def test_legacy_critical_and_reviewed_read_as_high_and_new(self):

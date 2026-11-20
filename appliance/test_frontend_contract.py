@@ -230,9 +230,11 @@ class AlertContractTests(unittest.TestCase):
         self.assertEqual(a['src_port'], 1234)
         self.assertEqual(a['dst_port'], 53)
         # No classtype stored on this row -> fallback title/explanation with
-        # the original rule information, no role.
+        # the original rule name (never the rule ID, which stays in rule_id),
+        # no role.
         self.assertEqual(a['display_title'], 'Network activity detected')
-        self.assertIn('("ET MALWARE X", rule ID 2025001)', a['explanation'])
+        self.assertIn('("ET MALWARE X")', a['explanation'])
+        self.assertNotIn('2025001', a['explanation'])
         self.assertIsNone(a['classtype'])
         self.assertIsNone(a['category'])
         self.assertIsNone(a['device_role'])

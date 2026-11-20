@@ -34,17 +34,18 @@ def test_alert_text_lookup_and_fallback():
     assert alert_text.alert_text("trojan-activity") == alert_text.CLASSTYPE_TEXT["trojan-activity"]
     assert alert_text.alert_text(" network-scan ")[0] == "Network scan"
     for missing in (None, "", "tcp-connection", 5):
-        title, explanation = alert_text.alert_text(missing, "ASSAS TEST High", 1000001)
+        title, explanation = alert_text.alert_text(missing, "ASSAS TEST High")
         assert title == "Network activity detected"
-        assert '("ASSAS TEST High", rule ID 1000001)' in explanation
-        assert "{rule}" not in explanation
+        assert explanation == (
+            'Assas detected network traffic that matched a security rule ("ASSAS TEST High"). '
+            "The original rule details are shown below.")
 
 
-def test_fallback_rule_info_parts():
-    assert alert_text.rule_info("ET X", 7) == '"ET X", rule ID 7'
-    assert alert_text.rule_info("  ", 7) == "rule ID 7"
-    assert alert_text.rule_info("ET X", None) == '"ET X"'
-    assert alert_text.rule_info(None, None) == "no rule details available"
+def test_fallback_rule_info_is_the_name_only():
+    # Team decision: the rule ID is never shown to the user.
+    assert alert_text.rule_info("ET X") == '"ET X"'
+    assert alert_text.rule_info("  ") == "no rule details available"
+    assert alert_text.rule_info(None) == "no rule details available"
 
 
 def test_policy_violation_title_does_not_deny_an_attack():

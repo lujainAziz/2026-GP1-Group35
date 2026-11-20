@@ -373,8 +373,10 @@ Example (addresses and names are placeholders):
   [sprint-2/threat-alert-titles.md](sprint-2/threat-alert-titles.md). With no
   classtype, or one not in that table, the title is `"Network activity detected"`
   and the explanation names the original rule, e.g. `Assas detected network
-  traffic that matched a security rule ("ASSAS TEST High", rule ID 1000001). The
-  original rule details are shown below.`
+  traffic that matched a security rule ("ASSAS TEST High"). The original rule
+  details are shown below.` The rule ID is never put in user-facing text.
+- `rule_id` — the Suricata signature id (SID). For internal use (de-dup,
+  support); the app does not show it to the user.
 - `classtype` / `category` — the short classtype and Suricata's category text;
   `null` when unknown.
 - `device_mac` — the linked device, or `null` when no single device could be linked.

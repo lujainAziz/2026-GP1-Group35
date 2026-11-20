@@ -2,8 +2,8 @@
 // readable — no overflow/clipping — at the smallest, default, and largest
 // supported font sizes, with long device names and full IPv6 addresses.
 // Also checks the opaque-hostname -> "Unknown device" display rule, the
-// repeated-detection rows (count, first/last detected, rule ID) and that the
-// ports stay hidden.
+// repeated-detection rows (count, first/last detected) and that the rule ID
+// and ports stay hidden.
 import 'package:assas_core/assas_core.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/alerts/alert_list_screen.dart';
@@ -126,10 +126,10 @@ void main() {
         home: DesignScale(zoom: 1, child: AlertDetailsScreen(state: s, alertId: '1'))));
     await tester.pump(const Duration(milliseconds: 60));
     // SpecList uppercases labels. Repeated detections: count + first/last.
-    for (final f in ['DETECTIONS', 'FIRST DETECTED', 'LAST DETECTED', 'RULE ID']) {
+    for (final f in ['DETECTIONS', 'FIRST DETECTED', 'LAST DETECTED']) {
       expect(find.text(f), findsOneWidget, reason: '$f should be shown');
     }
-    for (final f in ['OCCURRENCES', 'FIRST SEEN', 'LAST SEEN', 'DEVICE']) {
+    for (final f in ['RULE ID', 'OCCURRENCES', 'FIRST SEEN', 'LAST SEEN', 'DEVICE']) {
       expect(find.text(f), findsNothing, reason: '$f should not be shown');
     }
     expect(find.text('40'), findsOneWidget); // occurrence_count
@@ -140,11 +140,12 @@ void main() {
     expect(find.textContaining(':443'), findsNothing);
     expect(find.text('SOURCE IP'), findsOneWidget);
     expect(find.text('DESTINATION IP'), findsOneWidget);
-    // Plain title as heading; original rule name and rule ID in the details.
+    // Plain title as heading; original rule name in the details; the rule ID
+    // is never shown (team decision).
     expect(find.text('Unsafe activity'), findsOneWidget);
     expect(find.text('RULE'), findsOneWidget);
     expect(find.text(_longTitle), findsOneWidget);
-    expect(find.text('2046657'), findsOneWidget);
+    expect(find.textContaining('2046657'), findsNothing);
     // Explanation + device role line.
     expect(find.text(_longExplanation), findsOneWidget);
     expect(find.text('This device started the activity.'), findsOneWidget);

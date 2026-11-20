@@ -220,7 +220,7 @@ by the alert ingester; the API writes only `state`. Payloads are never stored.
 | `device_mac` | TEXT | Linked device (see device linking below). `NULL` when no single device could be linked. |
 | `alert_type` | TEXT, NOT NULL, default `'Threat'` | Alert kind. The ingester writes only `Threat`, and the API serves only `Threat` rows. |
 | `title` | TEXT, NOT NULL | Suricata rule signature text; `Suricata alert` when the event has none. The API returns it as `title` and adds a plain-language `display_title` from `classtype`. |
-| `rule_id` | INTEGER | Suricata signature id (`alert.signature_id`). |
+| `rule_id` | INTEGER | Suricata signature id (`alert.signature_id`). Returned by the API for internal use; never shown to the user. |
 | `event_time` | TEXT, NOT NULL | Earliest event of this alert. Ingest time when the event has no usable timestamp. |
 | `src_ip` | TEXT | Source address of the first event; `NULL` for events without addresses (e.g. decoder events). |
 | `dst_ip` | TEXT | Destination address of the first event; `NULL` as above. |

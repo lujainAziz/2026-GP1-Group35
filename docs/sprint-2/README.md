@@ -296,7 +296,7 @@ an unresolved alert raises its device's attention level, priority and severity a
 
 *Release 1: Review and the Reviewed state are removed (Resolve only); the details show
 "{device} · {first detection time}" under the title and the detection count, first and last
-detection, rule name and rule ID.*
+detection, and the rule name (the rule ID stays hidden).*
 
 | Surface | This sprint | How |
 |---|---|---|

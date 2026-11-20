@@ -966,7 +966,8 @@ _ALLOWED_SOURCES = {
 
 
 def row_to_alert(row) -> AlertOut:
-    display_title, explanation = alert_text(row["classtype"], row["title"], row["rule_id"])
+    # The rule ID stays in the response (rule_id) but is never put in user text.
+    display_title, explanation = alert_text(row["classtype"], row["title"])
     role = row["device_role"] if row["device_mac"] else None
     return AlertOut(
         id=str(row["alert_id"]),

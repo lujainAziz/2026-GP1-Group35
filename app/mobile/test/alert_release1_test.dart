@@ -1,7 +1,8 @@
 // Release 1 Threat Alert decisions in the app: Resolve is the only action
 // (New -> Resolved), the "{device} · {first detection time}" line under the
-// title (unlinked: "Unknown device"), the original rule always kept in the
-// details, and the renamed "Network Alert Level" card (still Soon, Sprint 5).
+// title (unlinked: "Unknown device"), the original rule name always kept in the
+// details (never the rule ID), and the renamed "Network Alert Level" card
+// (still Soon, Sprint 5).
 import 'package:assas_core/assas_core.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/dashboard/dashboard_screen.dart';
@@ -60,12 +61,15 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('original rule row is kept even when it equals the title', (tester) async {
+  testWidgets('original rule row is kept even when it equals the title; no rule ID', (tester) async {
     final s = await _state(tester);
     await _pumpDetails(tester, s, 'same');
     expect(find.text('RULE'), findsOneWidget);
     expect(find.text('ASSAS TEST High'), findsNWidgets(2)); // heading + rule row
-    expect(find.text('1000001'), findsOneWidget);
+    // Team decision: the rule ID is never shown (still parsed from the API).
+    expect(find.text('RULE ID'), findsNothing);
+    expect(find.textContaining('1000001'), findsNothing);
+    expect(s.alertById('same')!.ruleId, '1000001');
     await tester.pumpWidget(const SizedBox());
   });
 

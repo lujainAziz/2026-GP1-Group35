@@ -70,7 +70,8 @@ The explanation is written so it reads correctly with either line.
 ## Release 1 changes
 - **Chosen by the Suricata category.** The ingester stores Suricata's category text and maps it to the short classtype through `classification.config`; the table above is looked up by that classtype when an alert is read, so a wording change applies to every alert.
 - **Severity.** Priority 1 → High, 2 → Medium, 3 or more (or missing) → Low. There is no Critical.
-- **Fallback.** No classtype, or one not in the table: title "Network activity detected", and the explanation names the original rule and its rule ID (`{rule}` in the table row is filled with `"<rule name>", rule ID <SID>`).
+- **Fallback.** No classtype, or one not in the table: title "Network activity detected", and the explanation names the original rule (`{rule}` in the table row is filled with `"<rule name>"`), e.g. Assas detected network traffic that matched a security rule ("ASSAS TEST High"). The original rule details are shown below.
 - **Device and time.** The app shows "{device} · {first detection time}" under the title; for unlinked alerts it shows "Unknown device · {time}". This line is not part of the stored text.
-- **Original rule.** The original rule name and rule ID are always shown in the alert details, even when there is a plain title.
+- **Original rule.** The original rule name is always shown in the alert details, even when there is a plain title.
+- **Rule ID.** Team decision: the rule ID is never shown to the user, neither in the details nor in any title or explanation. It stays in the API response (`rule_id`) for internal use.
 - **Test rules.** ASSAS TEST High (SID 1000001, priority 1), Medium (1000002, priority 2) and Low (1000003, priority 3). SID 1000004 is retired. None has a classtype, so all three use the fallback.
