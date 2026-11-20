@@ -575,15 +575,24 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The title is never clipped: it may wrap to a second line, and when it
+    // does not fit beside the trailing control (e.g. the sort button at large
+    // text sizes) the control moves to its own line under the title.
+    final title = Text(text, style: UiText.section, maxLines: 2, overflow: TextOverflow.ellipsis);
     return Padding(
       padding: padding,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(child: Text(text, style: UiText.section, maxLines: 1)),
-          if (trailing != null) trailing!,
-        ],
-      ),
+      child: trailing == null
+          ? Row(children: [Expanded(child: title)])
+          : SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [title, trailing!],
+              ),
+            ),
     );
   }
 }

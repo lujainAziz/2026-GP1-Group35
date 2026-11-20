@@ -26,7 +26,7 @@ extension FilterPoleX on FilterPole {
 
   String get label => switch (this) {
         FilterPole.attention => 'Attention',
-        FilterPole.notAttention => 'Not attention',
+        FilterPole.notAttention => 'No attention needed',
         FilterPole.trusted => 'Trusted',
         FilterPole.untrusted => 'Untrusted',
         FilterPole.online => 'Online',
@@ -477,7 +477,7 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
             GlowDot(p.dot, size: 7, glow: 0),
             const SizedBox(width: 7),
             // Full label always visible: shrink-to-fit instead of ellipsis, so
-            // "Not attention"/"Not monitored" are never clipped at large fonts
+            // "No attention needed"/"Not monitored" are never clipped at large fonts
             // while the two-per-row layout is kept.
             Expanded(
               child: FittedBox(
@@ -504,11 +504,11 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
             child: FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
-              child: Text('DEVICE INDEX · $shown / $total', style: style),
+              child: Text('DEVICES · $shown of $total', style: style),
             ),
           ),
           const SizedBox(width: 10),
-          Text('ATTENTION FIRST', style: style.copyWith(color: Ui.acc)),
+          Text('NEEDS ATTENTION FIRST', style: style.copyWith(color: Ui.acc)),
         ],
       ),
     );

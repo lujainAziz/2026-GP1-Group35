@@ -62,7 +62,7 @@ class _MainShellState extends State<MainShell> {
     await SessionStore.clear();
     repository.setAuthToken(null);
     if (!mounted) return;
-    showToast(context, 'Session ended. Pair again.');
+    showToast(context, 'This phone is no longer paired. Pair it again to continue.');
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const PairingScreen()),
       (_) => false,

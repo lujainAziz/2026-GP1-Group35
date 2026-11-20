@@ -563,7 +563,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
     if (alerts == null) {
       return _empty(
         'Alerts are not available yet',
-        'Threat and anomaly alerts will appear here once detection is running.',
+        'Security alerts will appear here once detection is running.',
       );
     }
     // Without alert management there are no Unread / Resolved tabs: show all.

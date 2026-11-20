@@ -119,11 +119,13 @@ void main() {
   testWidgets('Alert details: no overflow; detection rows shown; ports hidden; device line once', (tester) async {
     await _loadFonts();
     final s = await _state(tester);
+    // Both states of the Signal details section (collapsed by default).
     await _pumpAll(tester, () => AlertDetailsScreen(state: s, alertId: '1'));
+    await _pumpAll(tester, () => AlertDetailsScreen(state: s, alertId: '1', signalDetailsOpen: true));
     // re-pump once at default to assert content
     tester.view.physicalSize = const Size(400, 900);
     await tester.pumpWidget(MaterialApp(theme: MobileTheme.light,
-        home: DesignScale(zoom: 1, child: AlertDetailsScreen(state: s, alertId: '1'))));
+        home: DesignScale(zoom: 1, child: AlertDetailsScreen(state: s, alertId: '1', signalDetailsOpen: true))));
     await tester.pump(const Duration(milliseconds: 60));
     // SpecList uppercases labels. Repeated detections: count + first/last.
     for (final f in ['DETECTIONS', 'FIRST DETECTED', 'LAST DETECTED']) {

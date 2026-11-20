@@ -43,7 +43,8 @@ Future<void> _pumpDetails(WidgetTester tester, AppState s, String id) async {
   tester.view.physicalSize = const Size(400, 1400);
   await tester.pumpWidget(MaterialApp(
     theme: MobileTheme.light,
-    home: AlertDetailsScreen(state: s, alertId: id),
+    // Signal details expanded: these tests check its rows.
+    home: AlertDetailsScreen(state: s, alertId: id, signalDetailsOpen: true),
   ));
   await tester.pump(const Duration(milliseconds: 60));
 }

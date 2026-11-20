@@ -16,10 +16,19 @@ import '../devices/device_details_screen.dart';
 /// resolve action (PBI-19; Release 1: New -> Resolved only).
 /// No raw SHAP values, model scores, or feature names are shown.
 class AlertDetailsScreen extends StatefulWidget {
-  const AlertDetailsScreen({super.key, required this.state, required this.alertId});
+  const AlertDetailsScreen({
+    super.key,
+    required this.state,
+    required this.alertId,
+    this.signalDetailsOpen = false,
+  });
 
   final AppState state;
   final String alertId;
+
+  /// Whether the "Signal details" section starts expanded (collapsed by
+  /// default; tapping its heading toggles it).
+  final bool signalDetailsOpen;
 
   @override
   State<AlertDetailsScreen> createState() => _AlertDetailsScreenState();
@@ -30,6 +39,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
   // Fetched directly by id so the alert survives leaving the loaded/paginated
   // list (the global page can scroll past it while this screen is open).
   SecurityAlert? _fetched;
+  late bool _signalOpen = widget.signalDetailsOpen;
 
   @override
   void initState() {
@@ -115,6 +125,18 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                         const SizedBox(height: 10),
                         // "{device} · {first detection time}" (Release 1).
                         _deviceLink(context, a),
+                        // Repeated alerts: count and first/last detection,
+                        // always visible (not inside Signal details).
+                        if (a.occurrenceCount > 1) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            TimeFormat.detectionSummary(
+                                a.occurrenceCount, a.firstDetected, a.lastTime ?? a.time),
+                            key: const ValueKey('detectionLine'),
+                            textAlign: TextAlign.center,
+                            style: UiText.secondary.copyWith(color: Ui.mute),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -128,10 +150,11 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                     ),
                     _explain(a, c),
                   ],
-                  const SectionHeader(
-                    'Signal details',
-                    padding: EdgeInsets.fromLTRB(22, 24, 22, 8),
-                  ),
+                  // "Signal details" is an accordion: the heading (with a
+                  // chevron) stays visible and toggles the rows; collapsed by
+                  // default. Title, device/time line, explanation, "Why Assas
+                  // noticed" and Resolve stay visible either way.
+                  _signalHeader(),
                   // Device shown once via the tappable pill under the title, so
                   // it is not repeated here. Repeated detections of the same rule
                   // on the same device (5-minute sliding window) are one alert:
@@ -139,6 +162,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                   // original rule name is always kept here. The rule ID and ports
                   // are never shown (team decision; they remain in the database
                   // and API).
+                  if (_signalOpen)
                   SpecList(
                     railColor: c,
                     copyable: const {'Source IP', 'Destination IP'},
@@ -181,7 +205,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                       child: SizedBox(
                         width: double.infinity,
                         child: Text(
-                          '✓ RESOLVED — kept in history for context',
+                          'Resolved. Kept in your alert history.',
                           textAlign: TextAlign.center,
                           style: UiText.mono(11, 600, color: Ui.low),
                         ),
@@ -204,6 +228,30 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Tappable "Signal details" heading with a chevron (down = collapsed,
+  /// up = expanded).
+  Widget _signalHeader() {
+    return Pressable(
+      key: const ValueKey('signalDetailsHeader'),
+      semanticLabel: 'Signal details, ${_signalOpen ? 'expanded' : 'collapsed'}. '
+          'Tap to ${_signalOpen ? 'collapse' : 'expand'}.',
+      onTap: () => setState(() => _signalOpen = !_signalOpen),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 24, 22, 8),
+        child: Row(
+          children: [
+            Expanded(child: Text('Signal details', style: UiText.section, maxLines: 2)),
+            AnimatedRotation(
+              turns: _signalOpen ? .5 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: Icon(Icons.expand_more_rounded, size: 24, color: Ui.mute),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -256,7 +304,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
   Widget _explain(SecurityAlert a, Color c) {
     final why = a.displayNote ??
         (a.kind == AlertKind.threat
-            ? 'This matched a known security pattern. ASSAS is showing the event and context so you can decide whether it belongs on your network.'
+            ? 'This matched a known security pattern.'
             : 'This behavior differs from the device baseline. ASSAS flags the change for review without assuming it is malicious.');
     Widget tile(String icon, Color color, Color bg) => Container(
           width: 30,
