@@ -127,15 +127,48 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  test('detection summary: same day shows times; different days show dates', () {
+  test('detection summary: same day shows times; across days the device-line style', () {
+    final now = DateTime(2026, 11, 20, 10);
     expect(
-      TimeFormat.detectionSummary(3, DateTime(2026, 10, 8, 21, 27), DateTime(2026, 10, 8, 21, 40)),
+      TimeFormat.detectionSummary(3, DateTime(2026, 10, 8, 21, 27), DateTime(2026, 10, 8, 21, 40), now: now),
       'Detected 3 times · first 9:27 PM, last 9:40 PM',
     );
     expect(
-      TimeFormat.detectionSummary(5, DateTime(2026, 10, 8, 23, 50), DateTime(2026, 10, 9, 0, 5)),
-      'Detected 5 times · first 8 Oct, 11:50 PM, last 9 Oct, 12:05 AM',
+      TimeFormat.detectionSummary(5, DateTime(2026, 11, 19, 23, 50), DateTime(2026, 11, 20, 0, 5), now: now),
+      'Detected 5 times · first Yesterday, 11:50 PM, last Today, 12:05 AM',
     );
+    expect(
+      TimeFormat.detectionSummary(2, DateTime(2026, 11, 17, 9, 27), DateTime(2026, 11, 18, 9, 27), now: now),
+      'Detected 2 times · first 17 Nov, 9:27 AM, last 18 Nov, 9:27 AM',
+    );
+  });
+
+  testWidgets('Signal details rows show day and time, like the device line', (tester) async {
+    final s = await _state(tester);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final first = today.subtract(const Duration(days: 1)).add(const Duration(hours: 21, minutes: 27));
+    final last = today.subtract(const Duration(days: 1)).add(const Duration(hours: 21, minutes: 40));
+    (s.repo as _Repo).list[0] = SecurityAlert(
+      id: 'a1', kind: AlertKind.threat, title: 'Network scan', deviceMac: _camera,
+      deviceName: 'Front door camera', time: last, firstTime: first, lastTime: last,
+      severity: Severity.medium, state: AlertState.newAlert, read: true, occurrenceCount: 3,
+    );
+    await tester.runAsync(s.refresh);
+    await tester.pumpWidget(MaterialApp(
+      theme: MobileTheme.light,
+      home: AlertDetailsScreen(state: s, alertId: 'a1', signalDetailsOpen: true),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+    // Rows: never a bare "Yesterday".
+    expect(find.text('Yesterday, 9:27 PM'), findsOneWidget); // First detected
+    expect(find.text('Yesterday, 9:40 PM'), findsOneWidget); // Last detected
+    expect(find.text('Yesterday'), findsNothing);
+    // Device line and detection line use the same style.
+    expect(find.text('Front door camera · Yesterday, 9:27 PM'), findsOneWidget);
+    expect(find.text('Detected 3 times · first 9:27 PM, last 9:40 PM'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('repeated alert: detection line under the title, visible while collapsed', (tester) async {

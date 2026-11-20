@@ -173,8 +173,9 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                         ('Rule', a.ruleName!, Ui.ink),
                       ('Severity', a.severityLabel, c),
                       ('Detections', '${a.occurrenceCount}', Ui.ink),
-                      ('First detected', TimeFormat.alertTime(a.firstDetected), Ui.ink),
-                      ('Last detected', TimeFormat.alertTime(a.lastTime ?? a.time), Ui.ink),
+                      // Day and time, like the device line: "Yesterday, 9:27 PM".
+                      ('First detected', TimeFormat.alertDetected(a.firstDetected), Ui.ink),
+                      ('Last detected', TimeFormat.alertDetected(a.lastTime ?? a.time), Ui.ink),
                       if (a.kind == AlertKind.threat && a.sourceIp != null)
                         ('Source IP', a.sourceIp!, Ui.ink),
                       if (a.kind == AlertKind.threat && a.destinationIp != null)

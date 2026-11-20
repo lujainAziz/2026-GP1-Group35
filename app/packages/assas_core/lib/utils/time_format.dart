@@ -47,11 +47,13 @@ class TimeFormat {
     return '${t.day} ${_months[t.month - 1]}, ${clock(t)}';
   }
 
-  /// Repeated alert: "Detected 3 times · first 9:27 PM, last 9:40 PM". Both
-  /// times show their date ("3 Oct, 9:27 PM") when they fall on different days.
-  static String detectionSummary(int count, DateTime first, DateTime last) {
+  /// Repeated alert: "Detected 3 times · first 9:27 PM, last 9:40 PM". On one
+  /// day the times stand alone (the device line above already shows the day);
+  /// across days both show their day in the [alertDetected] style
+  /// ("Yesterday, 11:50 PM", "Today, 12:05 AM", "18 Nov, 9:27 PM").
+  static String detectionSummary(int count, DateTime first, DateTime last, {DateTime? now}) {
     final sameDay = first.year == last.year && first.month == last.month && first.day == last.day;
-    String at(DateTime t) => sameDay ? clock(t) : '${t.day} ${_months[t.month - 1]}, ${clock(t)}';
+    String at(DateTime t) => sameDay ? clock(t) : alertDetected(t, now: now);
     return 'Detected $count times · first ${at(first)}, last ${at(last)}';
   }
 
