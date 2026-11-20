@@ -1,5 +1,6 @@
 import contextlib
 import io
+import ipaddress
 import os
 import socket
 import sqlite3
@@ -439,6 +440,11 @@ class ProbeTriggerTests(unittest.TestCase):
     not only brand-new ones (the target unknowns are already in the DB)."""
 
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.100.0/24",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -994,6 +1000,11 @@ class NbnsProbeTests(unittest.TestCase):
 
 class NbnsProbeTriggerTests(unittest.TestCase):
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.100.0/24",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -1391,7 +1402,9 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
         gate = patch.object(discovery, 'ENABLE_ACTIVE_PROBE', True)
         gate.start()
         self.addCleanup(gate.stop)
-        network = patch.object(discovery, 'monitored_networks', [])
+        network = patch.object(discovery, 'monitored_networks',
+                               # addresses are recorded only inside a known subnet
+                               [ipaddress.ip_network(n) for n in ("192.168.1.0/24",)])
         network.start()
         self.addCleanup(network.stop)
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -1486,7 +1499,9 @@ class ActiveProbeLoggingTests(unittest.TestCase):
         gate = patch.object(discovery, 'ENABLE_ACTIVE_PROBE', True)
         gate.start()
         self.addCleanup(gate.stop)
-        network = patch.object(discovery, 'monitored_networks', [])
+        network = patch.object(discovery, 'monitored_networks',
+                               # addresses are recorded only inside a known subnet
+                               [ipaddress.ip_network(n) for n in ("192.168.1.0/24",)])
         network.start()
         self.addCleanup(network.stop)
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -1780,6 +1795,11 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
     The Nmap/active probe must stay unclassified-only (not broadened)."""
 
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.1.0/24",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -2166,7 +2186,9 @@ class ProbeGuardTests(unittest.TestCase):
         gate = patch.object(discovery, 'ENABLE_NBNS_PROBE', True)
         gate.start()
         self.addCleanup(gate.stop)
-        network = patch.object(discovery, 'monitored_networks', [])
+        network = patch.object(discovery, 'monitored_networks',
+                               # addresses are recorded only inside a known subnet
+                               [ipaddress.ip_network(n) for n in ("192.168.100.0/24",)])
         network.start()
         self.addCleanup(network.stop)
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -2334,6 +2356,11 @@ class UpdateDeviceIpTrackingTests(unittest.TestCase):
     own column while leaving the legacy `ip` column behaving as before."""
 
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.1.0/24", "2001:db8::/64",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
