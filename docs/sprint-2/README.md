@@ -482,6 +482,35 @@ alerts. The names and reasons are in `appliance/suricata/disable.conf`.
   `assas-suricata`, `assas-alerts`, `assas-api` and `assas-discovery` are
   active.
 
+### Rule-scope tuning, round 5 (prepared 2026-11-23)
+
+Team decision: disable 50 more rules that only produce trivial alerts, and keep
+one flowbit helper enabled without alerts. The names and reasons are in
+`appliance/suricata/disable.conf` (Round 5 section) and
+`appliance/suricata/modify.conf`.
+
+- Group A: 48 ET rules with classtype `not-suspicious` that raise alerts. They
+  are informational only, not a threat, and of low value for home users.
+  2003481 sets flowbit `BE.Radmin.Auth.Challenge`, used only by 2003482; both
+  are disabled together.
+- Group B: 2200073 (SURICATA IPv4 invalid checksum) and 2200074 (SURICATA
+  TCPv4 invalid checksum): false positives from checksum offloading, millions
+  of hits in IoT-23 testing.
+- Kept enabled without alerts: 2016503 (ET INFO JAVA - Java Serialized Data
+  Download) sets flowbit `et.exploitkitlanding`, which is checked by 2014526
+  (ET EXPLOIT_KIT Exploit Kit Delivering JAR Archive to Client). Disabling it
+  would remove one of about 190 rules that set this flowbit, so it stays
+  enabled as a silent helper to keep full detection for 2014526:
+  `modify.conf` adds `flowbits:noalert`.
+  This makes 28 enabled helper rules with `noalert`.
+- Deployment: `modify.conf` is installed to `/etc/suricata/modify.conf`, and
+  `/etc/suricata/update.yaml` now has an explicit `modify-conf` entry next to
+  `disable-conf`.
+- Expected after `suricata-update --offline -c /etc/suricata/update.yaml`:
+  enabled rules **53,197 → 53,147 (−50)**, same counting method as round 2
+  (2016503 stays enabled). The enabled-SID diff must equal exactly the 50 SIDs,
+  and the 2016503 rule line must contain `flowbits:noalert`.
+
 ### Severity test rules (applied 2026-11-10)
 
 Purpose: verify that the full pipeline handles all four severity levels
