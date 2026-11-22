@@ -245,7 +245,7 @@ class DashboardScreen extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
                     !Released.risk
-                        ? 'Network Alert Level arrives in Sprint 5'
+                        ? 'Network Alert Level arrives in Sprint 4'
                         : risk == null
                             ? 'Alert level is not available yet'
                             : note,

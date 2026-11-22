@@ -6,7 +6,7 @@
 > no Critical); the fallback title is "Network activity detected" and names the
 > original rule; the app shows the detection count and first/last detection
 > times; the test rules are SIDs 1000001-1000003 (1000004 retired); "Network
-> Risk" is renamed "Network Alert Level" (Sprint 5). This document records
+> Risk" is renamed "Network Alert Level" (Sprint 4). This document records
 > Sprint 2 as delivered. Current behaviour: `docs/database-schema.md`,
 > `docs/API_CONTRACT.md`, `docs/sprint-2/threat-alert-titles.md`.
 

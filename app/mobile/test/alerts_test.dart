@@ -171,7 +171,7 @@ void main() {
       // Everything else stays hidden until its own sprint:
       // Threat Alert explanations RELEASED in Sprint 2 (Option 2).
       expect(FeatureRelease.alertExplanations, isTrue); // "What happened" block
-      expect(FeatureRelease.risk, isFalse); // Network Alert Level (Sprint 5)
+      expect(FeatureRelease.risk, isFalse); // Network Alert Level (Sprint 4)
     });
   });
 

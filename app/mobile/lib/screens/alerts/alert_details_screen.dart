@@ -186,7 +186,7 @@ class _AlertDetailsScreenState extends State<AlertDetailsScreen> {
                   if (!Released.alertManagement)
                     const Padding(
                       padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
-                      child: Center(child: SoonTag(5)),
+                      child: Center(child: SoonTag(2)),
                     )
                   else
                   Padding(

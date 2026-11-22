@@ -282,7 +282,7 @@ void main() {
     Text count(WidgetTester tester) => tester.widget<Text>(find.byKey(const ValueKey('unresolvedCount')));
     Finder note() => find.byKey(const ValueKey('unresolvedNote'));
 
-    testWidgets('shows the DB count; Network Alert Level stays Soon, Sprint 5', (tester) async {
+    testWidgets('shows the DB count; Network Alert Level stays Soon, Sprint 4', (tester) async {
       final s = await _state(tester, _Repo([_mk('u1'), _mk('r1', read: true, sec: 5),
           _mk('done', state: AlertState.resolved, read: true)]));
       await pumpHome(tester, s);
@@ -292,7 +292,7 @@ void main() {
       expect(note(), findsNothing);
       expect(find.text('NETWORK ALERT LEVEL'), findsOneWidget);
       expect(find.text('Soon'), findsOneWidget);
-      expect(find.text('Network Alert Level arrives in Sprint 5'), findsOneWidget);
+      expect(find.text('Network Alert Level arrives in Sprint 4'), findsOneWidget);
       _expectNoOpenWord(tester, 'Home');
       await tester.pumpWidget(const SizedBox());
     });

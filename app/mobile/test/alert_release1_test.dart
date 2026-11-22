@@ -2,7 +2,7 @@
 // (New -> Resolved), the "{device} · {first detection time}" line under the
 // title (unlinked: "Unknown device"), the original rule name always kept in the
 // details (never the rule ID), and the renamed "Network Alert Level" card
-// (still Soon, Sprint 5).
+// (still Soon, Sprint 4).
 import 'package:assas_core/assas_core.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/dashboard/dashboard_screen.dart';
@@ -74,7 +74,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('dashboard card reads Network Alert Level, Soon, Sprint 5', (tester) async {
+  testWidgets('dashboard card reads Network Alert Level, Soon, Sprint 4', (tester) async {
     final s = await _state(tester);
     addTearDown(tester.view.reset);
     tester.view.devicePixelRatio = 1;
@@ -87,7 +87,7 @@ void main() {
     expect(find.text('NETWORK ALERT LEVEL'), findsOneWidget);
     expect(find.text('NETWORK RISK'), findsNothing);
     expect(find.text('Soon'), findsOneWidget);
-    expect(find.text('Network Alert Level arrives in Sprint 5'), findsOneWidget);
+    expect(find.text('Network Alert Level arrives in Sprint 4'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 }

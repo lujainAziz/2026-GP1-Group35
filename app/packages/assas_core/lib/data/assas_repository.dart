@@ -28,7 +28,7 @@ abstract class AssasRepository {
   Future<ConnectionStatus> checkHealth();
   Future<LiveActivity?> getActivity() async => null;
 
-  /// null = not available yet (Sprint 5). Never shown as a fake value.
+  /// null = not available yet (Sprint 4). Never shown as a fake value.
   Future<RiskInfo?> getRiskLevel();
 
   // ---------- Devices (Sprint 1) ----------

@@ -399,7 +399,7 @@ class StatePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Alert states arrive with alert management (Sprint 5).
+    // Alert states arrive with alert management (Sprint 2).
     if (!Released.alertManagement) return const SizedBox.shrink();
     return Container(
       padding: padding ?? const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

@@ -20,7 +20,7 @@ extension ConnectionStatusLabel on ConnectionStatus {
       };
 }
 
-/// Network Alert Level (Sprint 5): the highest severity among unresolved
+/// Network Alert Level (Sprint 4): the highest severity among unresolved
 /// alerts. The label is kept as text coming from the backend.
 class RiskInfo {
   final String level;

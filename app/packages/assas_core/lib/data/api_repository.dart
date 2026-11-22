@@ -25,7 +25,7 @@ import 'assas_repository.dart';
 //    PUT  /devices/{mac}/trust  {"trusted": true}   -> 204               saved in DB (survives restart)
 //    GET  /alerts               -> [alert, ...]     (Sprint 2+)
 //    PATCH /alerts/{id}         {"state": "resolved"}
-//    GET  /risk                 -> {"level": "High"} (Network Alert Level, Sprint 5)
+//    GET  /risk                 -> {"level": "High"} (Network Alert Level, Sprint 4)
 //    GET  /settings             -> {"active_probes": true}
 //    PUT  /settings             {"active_probes": false}
 //

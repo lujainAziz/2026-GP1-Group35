@@ -225,9 +225,9 @@ class _StatusScreenState extends State<StatusScreen> {
             FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
               child: Text(FeatureRelease.risk ? (_risk?.level ?? '—') : 'Soon', style: UiText.riskWord.copyWith(color: riskColor))),
             const SizedBox(height: 8),
-            Text(!FeatureRelease.risk ? 'Network Alert Level arrives in Sprint 5' : _risk == null ? 'Alert level is not available yet' : 'Highest severity among open alerts',
+            Text(!FeatureRelease.risk ? 'Network Alert Level arrives in Sprint 4' : _risk == null ? 'Alert level is not available yet' : 'Highest severity among open alerts',
               style: UiText.secondary.copyWith(color: Ui.mute)),
-            if (!FeatureRelease.risk) ...[const SizedBox(height: 10), const SoonTag(5)],
+            if (!FeatureRelease.risk) ...[const SizedBox(height: 10), const SoonTag(4)],
           ])),
         Expanded(child: Container(padding: const EdgeInsets.all(18), decoration: surfCard(UiRadius.onlineCard),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [

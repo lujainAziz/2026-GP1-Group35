@@ -85,7 +85,7 @@ void main() {
     expect(repo.alertListCalls, 0);
     // No Soon tag on this card; the Network Alert Level card stays Soon.
     expect(find.text('SOON · SPRINT 2'), findsNothing);
-    expect(find.text('SOON · SPRINT 5'), findsOneWidget);
+    expect(find.text('SOON · SPRINT 4'), findsOneWidget);
     await _end(tester);
   });
 

@@ -481,7 +481,7 @@ a new alert.
 
 ### Network Alert Level (not served yet)
 The Network Alert Level (the highest severity among unresolved alerts) is planned
-for Sprint 5. There is no endpoint yet; the app and the display show it as "Soon".
+for Sprint 4. There is no endpoint yet; the app and the display show it as "Soon".
 
 ---
 
