@@ -482,7 +482,10 @@ alerts. The names and reasons are in `appliance/suricata/disable.conf`.
   `assas-suricata`, `assas-alerts`, `assas-api` and `assas-discovery` are
   active.
 
-### Rule-scope tuning, round 5 (prepared 2026-11-23)
+### Rule-scope tuning, round 5 (applied 2026-11-23)
+
+Applied on the device on 2026-11-23: enabled rules 53,147, removed exactly the
+50 listed SIDs, 2016503 has `flowbits:noalert`, `suricata -T` passed.
 
 Team decision: disable 50 more rules that only produce trivial alerts, and keep
 one flowbit helper enabled without alerts. The names and reasons are in
@@ -506,10 +509,11 @@ one flowbit helper enabled without alerts. The names and reasons are in
 - Deployment: `modify.conf` is installed to `/etc/suricata/modify.conf`, and
   `/etc/suricata/update.yaml` now has an explicit `modify-conf` entry next to
   `disable-conf`.
-- Expected after `suricata-update --offline -c /etc/suricata/update.yaml`:
-  enabled rules **53,197 → 53,147 (−50)**, same counting method as round 2
-  (2016503 stays enabled). The enabled-SID diff must equal exactly the 50 SIDs,
-  and the 2016503 rule line must contain `flowbits:noalert`.
+- Result after `suricata-update --offline -c /etc/suricata/update.yaml` on the
+  device: enabled rules **53,197 → 53,147 (−50)**, same counting method as
+  round 2 (2016503 stays enabled). The enabled-SID diff equals exactly the 50
+  listed SIDs, the 2016503 rule line contains `flowbits:noalert`, and
+  `suricata -T` passed.
 
 ### Severity test rules (applied 2026-11-10)
 
