@@ -7,12 +7,11 @@ A separate process, the alert ingester (`appliance/alerts.py`, service
 The API (`appliance/api.py`) opens it read-only, except for the API-owned tables and
 columns marked below. WAL journal mode allows concurrent reads while the daemons write.
 
-Verified against the live appliance database on 2026-11-20 (commit `40e1580`).
-The Release 1 alert changes (`alerts.priority`, the severity labels, the removed
-`Reviewed` state, the `alert_reads` table) and the off-link address fix (the
-`migrations` table, the address-column rules, the one-time cleanups) are
-documented from the code; they are not yet verified on the
-live appliance database.
+Schema verified against the device database on 2026-11-23, after the Release 1
+alert-model changes: every table, column, type, default, NOT NULL, key, CHECK
+constraint and index below matches it. Only the schema was compared, not the
+data, so the value rules and the one-time conversions and cleanups described
+below are documented from the code.
 
 | Table | Written by | Purpose |
 |---|---|---|
@@ -148,7 +147,7 @@ Single row (`id = 1`) holding the rolling live-traffic summary served by
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `data` | TEXT, NOT NULL | JSON: recent packets-per-second samples (at most 12) and the protocols seen recently (e.g. `ARP`, `MDNS`, `UDP`). No DNS query names or payloads. |
 
 `GET /activity` returns `{"available": false}` when the table does not exist yet, and
@@ -161,7 +160,7 @@ device sends traffic.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `updated_at` | REAL, NOT NULL | Last heartbeat (epoch seconds). |
 
 `/healthz` reports `daemon_stale: true` when the heartbeat is older than the stale
@@ -188,7 +187,7 @@ Single row (`id = 1`).
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `active_probes` | INTEGER (0/1), NOT NULL, default 0 | "Active identification" switch in the app. 0 = passive only (no nmap / mDNS / NBNS probes). The daemon reloads it at runtime. |
 
 ## Table: `appliance_identity`
@@ -197,7 +196,7 @@ Single row (`id = 1`).
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `value` | TEXT, NOT NULL | Random UUID created once. Public identifier returned by `/healthz` and `/pair` so the app knows it is talking to the same appliance. Not a credential. |
 
 ## Table: `device_addresses`
