@@ -1556,8 +1556,8 @@ class AlertEndpointTests(_SeededDBTest):
         self.assertEqual(a.display_title, "Network activity detected")
         self.assertEqual(
             a.explanation,
-            'Assas detected network traffic that matched a security rule '
-            '("ET A"). The original rule details are shown below.')
+            'Assas noticed traffic that matched one of its security rules '
+            '("ET A"). The full rule details are below.')
         self.assertEqual(a.rule_id, 1)  # kept in the response for internal use
         self.assertIsNone(a.device_role)
         self.assertIsNone(a.anomaly_score)
@@ -1567,7 +1567,7 @@ class AlertEndpointTests(_SeededDBTest):
         self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="laptop", status="online")
         self._add_alert(
             device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat",
-            title="ET SCAN Suspicious inbound to mySQL port 3306", rule_id=2010937,
+            title="ET SCAN X", rule_id=8,
             event_time="2026-11-02T10:00:00", severity="Medium", state="New",
             occurrence_count=1, last_event_time="2026-11-02T10:00:00",
             src_ip="192.168.8.50", dst_ip="192.168.8.60",
@@ -1581,20 +1581,39 @@ class AlertEndpointTests(_SeededDBTest):
             classtype="web-application-attack", device_role="target")
         target, source = api.list_alerts(conn=self.conn, limit=200)
         # The original rule name is kept in `title`; nothing existing is removed.
-        self.assertEqual(source.title, "ET SCAN Suspicious inbound to mySQL port 3306")
-        self.assertEqual(source.rule_id, 2010937)
+        self.assertEqual(source.title, "ET SCAN X")
+        self.assertEqual(source.rule_id, 8)
         self.assertEqual(source.display_title, "Network scan")
         self.assertEqual(source.explanation, alert_text.CLASSTYPE_TEXT["network-scan"][1])
         self.assertEqual(source.classtype, "network-scan")
         self.assertEqual(source.category, "Detection of a Network Scan")
         self.assertEqual(source.device_role, "source")
-        self.assertEqual(target.display_title, "Web attack attempt")
+        self.assertEqual(target.display_title, "Attempt to attack a website")
         self.assertEqual(target.device_role, "target")
         # Single-alert and per-device endpoints carry the same fields.
         one = api.get_alert(int(source.id), conn=self.conn)
         self.assertEqual((one.display_title, one.device_role), ("Network scan", "source"))
         dev = api.list_device_alerts("aa:bb:cc:dd:ee:ff", conn=self.conn, limit=200)
-        self.assertEqual([a.display_title for a in dev], ["Web attack attempt", "Network scan"])
+        self.assertEqual([a.display_title for a in dev], ["Attempt to attack a website", "Network scan"])
+
+    def test_rule_specific_text_overrides_classtype(self):
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat",
+            title="ET SCAN Suspicious inbound to mySQL port 3306", rule_id=2010937,
+            event_time="2026-11-02T10:00:00", severity="Medium", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            category="Detection of a Network Scan", classtype="network-scan")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual(a.display_title, "Attempt to reach a device's database feature")
+        self.assertEqual(a.explanation, alert_text.RULE_TEXT[2010937][1])
+        # The original rule name and classtype stay; the rule ID is not in user text.
+        self.assertEqual(a.title, "ET SCAN Suspicious inbound to mySQL port 3306")
+        self.assertEqual(a.classtype, "network-scan")
+        self.assertEqual(a.rule_id, 2010937)
+        self.assertNotIn("2010937", a.display_title + a.explanation)
+        one = api.get_alert(int(a.id), conn=self.conn)
+        self.assertEqual(one.display_title, a.display_title)
 
     def test_unknown_classtype_and_unlinked_role_fall_back(self):
         self._schema()

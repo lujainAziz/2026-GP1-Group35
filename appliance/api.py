@@ -470,7 +470,7 @@ class AlertOut(BaseModel):
     destination_ip: Optional[str] = None
     src_port: Optional[int] = None
     dst_port: Optional[int] = None
-    # Plain-language text per classtype (alert_text.py; fallback when unknown).
+    # Plain-language text per rule ID or classtype (alert_text.py; fallback when unknown).
     display_title: Optional[str] = None
     explanation: Optional[str] = None
     classtype: Optional[str] = None
@@ -1108,7 +1108,7 @@ def _read_flag(row) -> Optional[bool]:
 
 def row_to_alert(row) -> AlertOut:
     # The rule ID stays in the response (rule_id) but is never put in user text.
-    display_title, explanation = alert_text(row["classtype"], row["title"])
+    display_title, explanation = alert_text(row["classtype"], row["title"], row["rule_id"])
     role = row["device_role"] if row["device_mac"] else None
     return AlertOut(
         read=_read_flag(row),

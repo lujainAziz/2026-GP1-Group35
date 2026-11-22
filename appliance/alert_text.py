@@ -1,7 +1,8 @@
-"""Plain-language Threat Alert titles and explanations, per Suricata classtype.
+"""Plain-language Threat Alert titles and explanations, per Suricata classtype,
+with rule-specific text for a few SIDs.
 
 Source of truth: docs/sprint-2/threat-alert-titles.md (reviewed per team
-decision 4). test_alert_text.py checks this table against that document row
+decision 4). test_alert_text.py checks both tables against that document row
 for row, so a wording change is made in both places or the tests fail.
 
 The text is looked up when an alert is read (API), never stored on the alert:
@@ -12,169 +13,202 @@ English only (team decision 1).
 # classtype -> (title shown in the alert list, explanation shown in the details)
 CLASSTYPE_TEXT = {
     "trojan-activity": (
-        "Malware activity",
-        "Traffic from or to this device matches a known pattern of malicious software. The device may be infected. Check it with a security scanner and update its software.",
+        "Possible harmful software",
+        "This traffic matches the behavior of known harmful software. A device may be infected. Run an antivirus scan on it and keep its apps updated.",
     ),
     "bad-unknown": (
         "Suspicious traffic",
-        "Traffic looks suspicious but is not linked to a specific known threat. It can also come from normal apps. Watch whether it repeats on this device.",
+        "A device used a website or service that attackers sometimes use, but normal apps use it too. No action is needed unless it keeps happening.",
     ),
     "domain-c2": (
-        "Contact with a known malware server",
-        "A device looked up or contacted a server address known to be used to control malware. The device that made the request may be infected, or a bad link was opened. Check that device with a security scanner.",
+        "Contact with a known harmful server",
+        "A device tried to reach an internet address known to control harmful software. This can happen after clicking a bad link, or if the device is infected. Run an antivirus scan on it.",
     ),
     "web-application-attack": (
-        "Web attack attempt",
-        "A request tried to attack a website or web service, for example by injecting commands. If the target is a device in your home, make sure its software is up to date.",
+        "Attempt to attack a website",
+        "Someone sent a request that tries to break into a website or a device's settings page. If this device was the target, update its software. If it sent the request, run an antivirus scan on it.",
     ),
     "misc-activity": (
-        "Notable activity (usually harmless)",
-        "Activity that is not normally harmful but is worth noting. Usually no action is needed unless it repeats often.",
+        "Notable activity (often harmless)",
+        "This activity is often harmless but worth knowing about. No action is needed unless it keeps happening or you do not recognize it.",
     ),
     "command-and-control": (
-        "Malware communicating with its controller",
-        "The traffic matches how malware talks to the server that controls it. The device that started this traffic is likely infected. Disconnect it if possible and check it with a security scanner.",
+        "Harmful software contacting its controller",
+        "This traffic matches how harmful software talks to the computer that controls it. The device is likely infected. Disconnect it from the network if you can, and run an antivirus scan.",
     ),
     "exploit-kit": (
-        "Attempt to break in through software flaws",
-        "Traffic matches tools that try to break into a device through weaknesses in its browser or software. Update the device's browser and software.",
+        "Contact with a site that attacks devices",
+        "A device tried to reach a website linked to tools that break into devices through old browsers or apps. Update the device's browser and apps.",
     ),
     "attempted-admin": (
-        "Attempt to take admin control",
-        "Someone tried to gain administrator control of a device or service. Check that the target uses strong passwords and up-to-date software.",
+        "Attempt to take full control of a device",
+        "Someone tried to get full control of a device or one of its features. Make sure the device uses a strong password and updated software.",
     ),
     "social-engineering": (
-        "Possible scam or phishing",
-        "Traffic matches content that tries to trick users, such as fake login pages or scam sites. Do not enter passwords on such pages.",
+        "Possible scam website",
+        "A device tried to reach or opened content that may be a scam, such as a fake sign-in page. Do not enter passwords or payment details on pages you do not trust.",
     ),
     "credential-theft": (
         "Possible password theft",
-        "Traffic matches pages or tools used to steal usernames and passwords. If a password was entered, change it.",
+        "A device may have entered information on a fake page used to steal passwords. If you typed a password there, change it right away.",
     ),
     "misc-attack": (
-        "Attack attempt",
-        "Traffic matches a known attack that does not fit a more specific group. Check that the target device is up to date.",
+        "Traffic with a risky address",
+        "A device exchanged traffic with an internet address that security lists mark as risky. This is not always an attack. Watch whether it keeps happening.",
     ),
     "targeted-activity": (
-        "Targeted attack activity",
-        "Traffic matches tools used in planned attacks against specific targets. Check the device with a security scanner.",
+        "Contact linked to a hacking group",
+        "A device tried to reach an address linked to organized hacking groups. Run an antivirus scan on it.",
     ),
     "attempted-user": (
-        "Attempt to gain access to a device",
-        "Someone tried to gain user-level access to a device or service. Check the target's passwords and updates.",
+        "Attempt to get into a device",
+        "Someone tried to get into a device or one of its features. Make sure it uses a strong password and updated software.",
     ),
     "pup-activity": (
-        "Unwanted software activity",
-        "Traffic matches software that is often unwanted, such as adware or toolbars. Review the apps installed on the device that started this activity.",
+        "Unwanted app activity",
+        "This traffic matches apps that are often unwanted, such as apps that show ads or browser add-ons. Check the apps installed on the device and remove ones you do not need.",
     ),
     "protocol-command-decode": (
-        "Unusual communication pattern",
-        "Devices communicated in an unusual way. Often harmless, but can be part of an attack.",
+        "Irregular network messages",
+        "Devices sent network messages that did not follow the expected format. This is usually harmless, but it can be part of an attack. No action is needed unless it keeps happening.",
     ),
     "policy-violation": (
-        "Unsafe activity",
-        "Activity that puts privacy or security at serious risk, such as sending a password without encryption or using anonymity networks. It is not always an attack, but it should not happen without a reason. Check whether this activity is expected on this device.",
+        "Activity many networks block",
+        "This is activity that many networks do not allow, such as file-sharing, chat or game apps, or sending information without protection. This is not always an attack, but it can put privacy or security at risk. Check that it is expected on this device.",
     ),
     "attempted-recon": (
-        "Information gathering attempt",
-        "Someone tried to collect information about a device or service, often the first step before an attack.",
+        "Attempt to learn about a device",
+        "Someone tried to learn about a device, such as what it runs. This is often an early step before an attack. Make sure the device's software is updated.",
     ),
     "web-application-activity": (
-        "Access to a vulnerable web application",
-        "A device accessed a web application known to have weaknesses. Make sure it is updated.",
+        "Use of a website with known weaknesses",
+        "A device used a website or web page that has known security weaknesses. If the page belongs to this device, update its software.",
     ),
     "external-ip-check": (
-        "Device checked its public IP address",
-        "A device asked an online service for your home's public IP address. Many apps do this, but malware does too. Check the device only if it is unknown or acts strangely.",
+        "Device checked your internet address",
+        "A device asked an online service for your home's internet address. Many apps do this, but harmful software does too. Check the device only if you do not recognize it or it acts strangely.",
     ),
     "unknown": (
-        "Unclassified activity (usually harmless)",
-        "Traffic that the rules could not classify. Usually no action is needed.",
+        "Unclassified activity",
+        "This traffic did not fit a specific group. It is often harmless, but some of these checks look for signs of harmful software. Watch whether it keeps happening.",
     ),
     "attempted-dos": (
-        "Attempt to overload a service",
-        "Traffic tried to make a device or service stop responding by overloading it.",
+        "Attempt to overload a device",
+        "Traffic tried to stop a device from working by flooding it with requests. If this device was the target and stopped responding, restart it.",
     ),
     "not-suspicious": (
-        "Informational event",
-        "Traffic recorded for information only; it is not considered suspicious.",
+        "Normal activity (for your information)",
+        "This activity was recorded for information only. It is not considered suspicious. No action is needed.",
     ),
     "shellcode-detect": (
-        "Malicious code in traffic",
-        "Traffic contains code that attacks use to take control of a program. Check the target device and update its software.",
+        "Possible attack code",
+        "The traffic contains code that attacks often use to take over apps. Make sure the device's software is updated.",
     ),
     "rpc-portmap-decode": (
-        "Request listing a device's services",
-        "A device was asked which services it offers. Normal in some networks, but also used before attacks.",
+        "Request to list what a device offers",
+        "A device was asked what network features it offers. This is normal on some networks, but attackers also do it before an attack. No action is needed unless it keeps happening.",
     ),
     "coin-mining": (
         "Cryptocurrency mining activity",
-        "Traffic matches cryptocurrency mining. If you did not set this up on the device that started it, that device may be infected.",
+        "This traffic matches cryptocurrency mining, which uses a device's power to earn digital money. If you did not set this up, the device may be infected. Run an antivirus scan on it.",
     ),
     "successful-admin": (
-        "Admin control may have been gained",
-        "Traffic suggests an attacker gained administrator control of a device or service. Check the device right away and change its passwords.",
+        "Someone may have taken full control of a device",
+        "The traffic suggests someone may have gained full control of a device. Check the device right away and change its passwords.",
     ),
     "suspicious-filename-detect": (
-        "Suspicious file name",
-        "A file with a name commonly used by malware was transferred. Do not open the file.",
+        "Request for a suspicious file",
+        "A device asked for a file whose name is often used by harmful or password-stealing software. Do not run or install such files unless you expected them.",
     ),
     "successful-recon-limited": (
-        "Information may have leaked",
-        "A device may have revealed information about itself or its configuration.",
+        "Device may have shared private information",
+        "A device may have shared information about itself, such as its settings or user accounts. Make sure the device's software is updated.",
     ),
     "network-scan": (
         "Network scan",
-        "A device scanned the network to find other devices and open services. Check whether this scan was expected.",
+        "A device searched the network to find other devices and what they offer. This is fine if you or an app you trust started it. Otherwise, check the device.",
     ),
     "denial-of-service": (
-        "Attack to stop a service from working",
-        "Traffic matches an attack that tries to stop a device or service from working.",
+        "Possible attack to stop a device",
+        "The traffic matches attacks that try to stop a device from working. If this device was the target and stopped responding, restart it and update its software.",
     ),
     "suspicious-login": (
-        "Suspicious login attempt",
-        "Someone tried to log in with a suspicious username. Check the target's passwords.",
+        "Suspicious sign-in activity",
+        "The traffic matches suspicious sign-in attempts or tools used to steal passwords. Make sure the device uses strong passwords.",
     ),
     "unsuccessful-user": (
-        "Failed attempt to gain access",
-        "Someone tried to gain access to a device or service and failed. Keep passwords strong.",
+        "Failed attempt to get into a device",
+        "Someone tried to get into a device and failed. Keep the device's passwords strong.",
     ),
     "string-detect": (
         "Suspicious text in traffic",
-        "Traffic contains text often linked to attacks. Usually low risk on its own.",
+        "The traffic contains text often linked to attacks. On its own this is usually low risk. No action is needed unless it keeps happening.",
     ),
     "successful-user": (
-        "Access to a device may have been gained",
-        "Traffic suggests an attacker gained user-level access to a device. Check the device and change its passwords.",
+        "Someone may have gotten into a device",
+        "The traffic suggests someone may have gotten into a device. Check the device right away and change its passwords.",
     ),
     "default-login-attempt": (
-        "Login attempt with a default password",
-        "Someone tried to log in using a factory default username and password. Change default passwords on all devices.",
+        "Sign-in attempt with a device's original password",
+        "Someone tried to sign in using the password a device came with when it was bought. Change these passwords on all your devices.",
     ),
     "successful-recon-largescale": (
-        "Large information leak possible",
-        "A device may have revealed a large amount of information about itself.",
+        "Device revealed information useful to attackers",
+        "A device shared information that attackers can use, such as an old software version or stored records. Update the device's software.",
     ),
     "non-standard-protocol": (
-        "Non-standard communication",
-        "A device communicated in a way that is not standard.",
+        "Non-standard connection",
+        "A device communicated in a non-standard way. This is usually harmless. No action is needed unless it keeps happening.",
     ),
     "unusual-client-port-connection": (
-        "Connection on an unusual port",
-        "A device connected using an unusual port, which some malware does to avoid detection.",
+        "Connection on an uncommon channel",
+        "A device connected through an uncommon channel that some harmful software uses to hide. Check this device if you do not recognize this activity.",
     ),
     "system-call-detect": (
-        "Suspicious system command",
-        "Traffic contains a system command often used in attacks.",
+        "Suspicious command in traffic",
+        "The traffic contains a command often used in attacks to take over a device. Make sure the device's software is updated.",
     ),
 }
+
+# Rule-specific text: overrides the classtype text for these SIDs. Each group
+# shares one (title, explanation); the original rule name stays in the details.
+# The SIDs are only the lookup key and are never shown to the user.
+RULE_GROUPS = (
+    ((2100498, 2019284), (
+        "Possible remote control of a device",
+        "A device sent back a reply that often appears when someone is running commands on it from another place. Check the device right away and change its passwords.",
+    )),
+    ((2002023, 2002024, 2002025, 2002027, 2002028, 2000355, 2000345), (
+        "Connection to an old chat system",
+        "A device connected to an old chat system that people rarely use today. Harmful software on smart devices often uses it to receive commands. If this is a smart device, restart it, update it and change its password.",
+    )),
+    ((2019240, 2032973), (
+        "Program file for smart devices downloaded",
+        "A device downloaded a program file made for devices like cameras and routers. Harmful software often spreads to smart devices this way. If you did not install anything, restart the device, update it and change its password.",
+    )),
+    ((2038656, 2032924, 2025126, 2025123, 2025125, 2038657), (
+        "Request for a program built for smart devices",
+        "A device asked for program files built for smart devices, such as cameras and routers. This is a common sign of an attempt to infect a smart device. Restart the device, update it and change its password.",
+    )),
+    ((2003068,), (
+        "Device trying to reach many other devices",
+        "A device tried to reach the remote sign-in feature of many other devices. Infected smart devices do this to spread. If this device started it, restart it, update it and change its password.",
+    )),
+    ((2010935, 2010937), (
+        "Attempt to reach a device's database feature",
+        "Someone tried to reach a database feature on a device. Scans do this to find weak devices. If you did not run a security scan, check the device.",
+    )),
+)
+
+# SID -> (title, explanation)
+RULE_TEXT = {sid: text for sids, text in RULE_GROUPS for sid in sids}
 
 # No classtype, or a classtype not listed above (includes the ASSAS TEST rules).
 # {rule} is filled with the original rule name. The rule ID is never shown to
 # the user (team decision); it stays in the API response for internal use.
 FALLBACK_TEXT = (
     "Network activity detected",
-    "Assas detected network traffic that matched a security rule ({rule}). The original rule details are shown below.",
+    "Assas noticed traffic that matched one of its security rules ({rule}). The full rule details are below.",
 )
 
 
@@ -184,8 +218,23 @@ def rule_info(rule_name=None):
     return f'"{name}"' if name else "no rule details available"
 
 
-def alert_text(classtype, rule_name=None):
-    """(title, explanation) for a stored classtype; the fallback when unknown."""
+def _sid(rule_id):
+    """The stored rule ID as an int, or None when missing or not a number."""
+    if isinstance(rule_id, bool):
+        return None
+    if isinstance(rule_id, int):
+        return rule_id
+    if isinstance(rule_id, str) and rule_id.strip().isdigit():
+        return int(rule_id.strip())
+    return None
+
+
+def alert_text(classtype, rule_name=None, rule_id=None):
+    """(title, explanation): the rule-specific text for a listed SID, else the
+    text for the stored classtype, else the fallback."""
+    sid = _sid(rule_id)
+    if sid in RULE_TEXT:
+        return RULE_TEXT[sid]
     if isinstance(classtype, str) and classtype.strip() in CLASSTYPE_TEXT:
         return CLASSTYPE_TEXT[classtype.strip()]
     title, explanation = FALLBACK_TEXT

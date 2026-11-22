@@ -323,7 +323,10 @@ appliance session is headless). See `evidence/ui/README.md` and the per-criterio
 ### Threat Alert titles and explanations (2026-11-14)
 
 Sprint 2 decision (2026-11-11): Option 2. Threat Alert explanations ship in Sprint 2.
-- **Plain title per classtype** in the alert list (e.g. "Malware activity", "Network scan").
+- **Plain title per classtype** in the alert list (e.g. "Possible harmful software", "Network scan").
+  *(Release 1 text review, 2026-11-22: all titles and explanations reworded; 20 rules (by SID)
+  have their own text that overrides the classtype text, e.g. "Connection to an old chat
+  system".)*
 - The **original Suricata rule name** is kept and shown in the alert details ("Rule" row); the
   **rule ID stays hidden** (kept in the database and service).
 - **Explanation per classtype** in the details ("What happened"): what it means and what the user
@@ -335,7 +338,8 @@ Sprint 2 decision (2026-11-11): Option 2. Threat Alert explanations ship in Spri
   *(Release 1: the fallback is "Network activity detected" with the original rule in the
   explanation.)*
 - The wording lives in `docs/sprint-2/threat-alert-titles.md` (team-reviewed) and
-  `appliance/alert_text.py`; `appliance/test_alert_text.py` keeps the two in sync row for row.
+  `appliance/alert_text.py`; `appliance/test_alert_text.py` keeps the two in sync row for row
+  (classtype table and rule-specific table).
 - How: the ingester stores eve's `category` and maps it to the short classtype through
   `/etc/suricata/classification.config`, and stores the device role when it links the alert; the
   service adds `display_title` and `explanation` when the alert is read. Existing alerts keep
