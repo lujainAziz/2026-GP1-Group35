@@ -222,12 +222,14 @@ class _StatusScreenState extends State<StatusScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('NETWORK ALERT LEVEL', style: UiText.kicker.copyWith(color: Ui.mute)),
             const SizedBox(height: 10),
-            FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
-              child: Text(FeatureRelease.risk ? (_risk?.level ?? '—') : 'Soon', style: UiText.riskWord.copyWith(color: riskColor))),
-            const SizedBox(height: 8),
-            Text(!FeatureRelease.risk ? 'Network Alert Level arrives in Sprint 4' : _risk == null ? 'Alert level is not available yet' : 'Highest severity among open alerts',
-              style: UiText.secondary.copyWith(color: Ui.mute)),
-            if (!FeatureRelease.risk) ...[const SizedBox(height: 10), const SoonTag(4)],
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Expanded(child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+                child: Text(FeatureRelease.risk ? (_risk?.level ?? '—') : 'Soon', style: UiText.riskWord.copyWith(color: riskColor)))),
+              const SizedBox(width: 12),
+              ConstrainedBox(constraints: const BoxConstraints(maxWidth: 130),
+                child: Text(!FeatureRelease.risk ? 'Network Alert Level arrives in Sprint 4' : _risk == null ? 'Alert level is not available yet' : 'Highest severity among open alerts',
+                  textAlign: TextAlign.right, style: UiText.secondary.copyWith(height: 1.35, color: Ui.mute))),
+            ]),
           ])),
         Expanded(child: Container(padding: const EdgeInsets.all(18), decoration: surfCard(UiRadius.onlineCard),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [

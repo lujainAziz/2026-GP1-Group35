@@ -93,7 +93,7 @@ void main() {
     expect(find.text('NETWORK ALERT LEVEL'), findsOneWidget);
     expect(find.text('NETWORK RISK'), findsNothing);
     expect(find.text('Network Alert Level arrives in Sprint 4'), findsOneWidget);
-    expect(find.text('SOON · SPRINT 4'), findsOneWidget);
+    expect(find.text('SOON · SPRINT 4'), findsNothing);
     // Unresolved alerts are live (Sprint 2 feature): the demo has 2 New alerts.
     expect(find.text('SOON · SPRINT 2'), findsNothing);
     expect(find.text('2'), findsOneWidget);
