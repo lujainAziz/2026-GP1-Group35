@@ -19,12 +19,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _mac = '02:5a:01:00:0e:8f';
+const _mac = '02:00:00:00:00:01';
 const _ipv6 = '2001:0db8:dea6:2200:79ee:14d2:e191:965e';
 
 class _Repo extends DemoRepository {
   final Device _dev = const Device(
-    mac: _mac, ip: '192.168.100.238', ipv6: [_ipv6], hostname: 'Living-Room-TV',
+    mac: _mac, ip: '192.0.2.10', ipv6: [_ipv6], hostname: 'Living-Room-TV',
     vendor: 'Samsung', deviceType: 'Smart TV / Media Device',
     presence: Presence.online, trusted: true, monitored: true);
   final List<SecurityAlert> _list = [
@@ -33,7 +33,7 @@ class _Repo extends DemoRepository {
       'display_title':'Notable activity (usually harmless)','classtype':'misc-activity','device_role':'source',
       'explanation':'Activity that is not normally harmful but is worth noting. Usually no action is needed unless it repeats often.',
       'device_mac':_mac,'device_name':'Living-Room-TV','time':'2026-11-04T10:04:00',
-      'severity':'medium','state':'new','source_ip':'192.168.100.238','destination_ip':_ipv6,
+      'severity':'medium','state':'new','source_ip':'192.0.2.10','destination_ip':_ipv6,
       'src_port':443,'dst_port':51000,'rule_id':'2046657','occurrence_count':40,
       'first_event_time':'2026-11-04T09:00:00','last_event_time':'2026-11-04T10:04:00'}),
     SecurityAlert.fromApi({
@@ -41,7 +41,7 @@ class _Repo extends DemoRepository {
       'display_title':'Unusual communication pattern','classtype':'protocol-command-decode','device_role':'target',
       'explanation':'Devices communicated in an unusual way. Often harmless, but can be part of an attack.',
       'device_mac':_mac,'device_name':'Living-Room-TV','time':'2026-11-04T09:40:00',
-      'severity':'medium','state':'new','source_ip':_ipv6,'destination_ip':'192.168.100.238',
+      'severity':'medium','state':'new','source_ip':_ipv6,'destination_ip':'192.0.2.10',
       'rule_id':'2210054','occurrence_count':4,
       'first_event_time':'2026-11-04T09:38:00','last_event_time':'2026-11-04T09:40:00'}),
   ];
@@ -275,7 +275,7 @@ class _HomeScaleRepo extends DemoRepository {
 class _ScaleRepo extends DemoRepository {
   final Device _dev = const Device(
     mac: _mac,
-    ip: '192.168.100.238',
+    ip: '192.0.2.10',
     ipv6: ['2001:0db8:c83e:5700:78f5:8a3d:cbf4:b5fe'],
     hostname: '0badc396-c1f4-40db-ba83-c0702b11ae58', // opaque -> model shown
     model: 'emulator (sdk_gphone64_x86_64)',
