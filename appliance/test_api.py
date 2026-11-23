@@ -11,6 +11,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from collections import namedtuple
 from datetime import datetime, timedelta
@@ -161,6 +162,111 @@ class HealthzHeartbeatTests(_SeededDBTest):
         self.assertIsNone(h["last_write"])
         self.assertIsNone(h["seconds_since_write"])
         self.assertTrue(h["daemon_stale"])
+
+
+class ApplianceIdentityTests(_SeededDBTest):
+    """/healthz is read-only: the identity is created once, never per request."""
+
+    def setUp(self):
+        super().setUp()
+        # Production daemons run the DB in WAL mode.
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+        self._readers = []
+
+    def tearDown(self):
+        for gen in self._readers:
+            gen.close()
+        api.DB_PATH = self._orig_db_path
+        super().tearDown()
+        for suffix in ("-wal", "-shm"):
+            if os.path.exists(self.path + suffix):
+                os.remove(self.path + suffix)
+
+    def _ro_conn(self):
+        gen = api.get_connection()
+        self._readers.append(gen)
+        return next(gen)
+
+    def _startup(self):
+        async def run():
+            async with api.lifespan(api.app):
+                pass
+        asyncio.run(run())
+
+    def test_startup_creates_identity(self):
+        self._startup()
+        row = self.conn.execute("SELECT value FROM appliance_identity WHERE id=1").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(api.healthz(self._ro_conn())["appliance_id"], row[0])
+
+    def test_healthz_works_while_another_connection_holds_write_lock(self):
+        self._startup()
+        expected = api.appliance_identity()
+        writer = sqlite3.connect(self.path, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("INSERT INTO devices (mac) VALUES ('busy')")
+            original = api._create_appliance_identity
+            api._create_appliance_identity = lambda path: self.fail("healthz wrote to the DB")
+            try:
+                started = time.monotonic()
+                h = api.healthz(self._ro_conn())
+                elapsed = time.monotonic() - started
+            finally:
+                api._create_appliance_identity = original
+        finally:
+            writer.execute("ROLLBACK")
+            writer.close()
+        self.assertEqual(h["status"], "ok")
+        self.assertEqual(h["appliance_id"], expected)
+        self.assertLess(elapsed, 1.0)
+
+    def test_short_exclusive_lock_waits_instead_of_raising(self):
+        # Rollback-journal EXCLUSIVE blocks even readers; the busy timeout must
+        # absorb a short hold instead of raising "database is locked".
+        self.conn.execute("PRAGMA journal_mode=DELETE")
+        self._startup()
+        expected = api.appliance_identity()
+        locked, release = threading.Event(), threading.Event()
+
+        def hold():
+            writer = sqlite3.connect(self.path, isolation_level=None)
+            writer.execute("BEGIN EXCLUSIVE")
+            locked.set()
+            release.wait(5)
+            time.sleep(0.5)
+            writer.execute("ROLLBACK")
+            writer.close()
+
+        t = threading.Thread(target=hold)
+        t.start()
+        try:
+            self.assertTrue(locked.wait(5))
+            release.set()
+            h = api.healthz(self._ro_conn())
+        finally:
+            release.set()
+            t.join()
+        self.assertEqual(h["appliance_id"], expected)
+
+    def test_appliance_id_stable_across_calls_and_restarts(self):
+        self._startup()
+        first = api.healthz(self._ro_conn())["appliance_id"]
+        self.assertEqual(first, api.healthz(self._ro_conn())["appliance_id"])
+        self.assertEqual(first, api.appliance_identity())  # the value /pair returns
+        self._startup()  # API restart
+        self._startup()
+        self.assertEqual(first, api.healthz(self._ro_conn())["appliance_id"])
+        count = self.conn.execute("SELECT COUNT(*) FROM appliance_identity").fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_first_need_creates_identity_when_db_appeared_after_startup(self):
+        # No startup ran (DB created later): the first call creates it once.
+        first = api.healthz(self._ro_conn())["appliance_id"]
+        self.assertTrue(first)
+        self.assertEqual(first, api.healthz(self._ro_conn())["appliance_id"])
 
 
 class OnlineOnlyConsistencyTests(_SeededDBTest):
