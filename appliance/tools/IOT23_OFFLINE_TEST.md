@@ -153,6 +153,81 @@ A=/home/assas/assas/appliance
 
     The real services and `assas.db` were never written to.
 
+## Batch run: all B1/B2 scenarios (`iot23_batch.sh`)
+
+`iot23_batch.sh` runs steps 2-7 above for every scenario in `iot23_scenarios.txt`, one at
+a time. Each scenario gets its own folder and its own test database under `IOT23_OUT`
+(default `/home/assas/iot23-batch`). The PCAPs are read in place from the dataset folder
+(`/home/assas/dataset-eval/iot23/opt/Malware-Project/BigDataset/IoTScenarios`), not copied.
+
+- **B1 malware** (20 scenarios): only the main pcap is used, meaning the largest `*.pcap`
+  left after skipping partial cuts (`*.irc.pcap`, `port*`, `*-port-23*`, `test.pcap`,
+  `telnet.pcap`, `*.only15000000*`, `104.248.*`).
+- **B2 benign** (Honeypot 4-1, 5-1, 7-1): every `*.pcap` in the folder, including
+  subfolders. Each pcap gets its own `runN/` Suricata folder, and all of them are ingested
+  into the scenario's one test database.
+- **Host IP**: the table's `host_ip` column, which holds the official value from the IoT-23
+  dataset page for every scenario. Without it, the IP comes from the file name. A scenario
+  added with neither ends with status `need_ip`; `--plan` lists the most frequent LAN source
+  IPs as a hint.
+- **Host MAC**: found automatically (tcpdump, then tshark, then a built-in Python
+  pcap/pcapng reader) and seeded with `iot23_seed_devices.py`. A host IP that is the
+  device's own address or its default gateway ends with status `ip_conflict` (it would never
+  link).
+
+```sh
+A=/home/assas/assas/appliance
+$A/tools/iot23_batch.sh --plan          # pcaps and host IPs per scenario; runs nothing
+$A/tools/iot23_batch.sh                 # everything not yet done
+$A/tools/iot23_batch.sh --only CTU-IoT-Malware-Capture-8-1
+```
+
+Run it inside `tmux` or with `nohup`, because the large captures take hours (60-1 is 21 GB).
+If the rules can't be read as `assas`, add `IOT23_SUDO="sudo -n"`. The script then
+chowns each run folder back to you.
+
+- Suricata runs as `nice -n 10 ionice -c 3 suricata -c /etc/suricata/assas.yaml -r <pcap>
+  -l <scenario>/runN -k none --set unix-command.enabled=no`.
+- **After ingest**, `IOT23_EVE_MODE` decides what happens to `eve.json`: `alerts` (the
+  default) keeps only the alert lines as `eve-alerts.json.gz` and deletes `eve.json`;
+  `gzip` compresses the whole file; `delete` removes it. `fast.log` is gzipped.
+- **Resumable.** A scenario with a `DONE` file is skipped. An unfinished one (interrupted,
+  failed, or stopped for disk) is deleted and redone from the start, so a test database is
+  never half-ingested.
+- **Disk guard.** Free space on `/home` is checked before each scenario and every 5 s while
+  Suricata runs. Below `IOT23_MIN_FREE_GB` (5), Suricata is stopped and the batch exits
+  with code 3. Run it again once space is freed.
+- `run-info.txt` records `suricata -V` and the rules file date for each invocation.
+  Each scenario folder holds `run.log`, `pcap.sha256` and `result.json`.
+
+**`results/summary.csv`** has one row per table entry in table order, rebuilt after every
+run. Columns: `scenario, kind, label, status, host_ips, host_macs, pcaps, pcap_bytes,
+suricata_seconds, run_seconds, raw_alert_events` (all raw eve alert events, before dedup),
+`raw_host_events` (raw events with the host as source or destination), `stored_alerts`,
+`merged` (occurrences merged by the 5-minute dedup), `linked_host_alerts` (stored alerts
+linked to the host's MAC as source or target), `distinct_sids`, `top5_sids` (`sid:count;...`),
+`category, earlier_category`.
+
+**Category (provisional rule).** This rule is computed from the raw events touching the
+host:
+
+| Category | Rule |
+|---|---|
+| Not detected | no raw alert event with the host as source or destination |
+| Strong | at least one such event has classtype `trojan-activity`, `command-and-control` or `targeted-activity`, or a signature containing `MALWARE` or `TROJAN` |
+| Indirect | otherwise, at least one such event has priority 1-2 |
+| Weak | otherwise (only priority 3+ events) |
+
+For the benign scenarios, any category other than *Not detected* means false positives on
+the benign host. The summary prints every scenario whose category differs from the table's
+`earlier` column. The repo has no earlier per-scenario category yet (EVALUATION.md section 3
+is still *Planned*), so `earlier` is empty, and the summary lists those scenarios as "no
+earlier category recorded". Fill the column (`Strong`, `Indirect`, `Weak`, `Not_detected`)
+to compare.
+
+Helper tests: `appliance/test_iot23_batch.py` (table parsing, pcap selection, IP from the
+file name, the pcap/pcapng MAC reader, eve/database counts, summary and comparison).
+
 ## Tests
 
 `appliance/test_iot23_tools.py` covers the path guards, the schema copy (no rows), device
