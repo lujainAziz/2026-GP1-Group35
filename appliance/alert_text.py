@@ -46,14 +46,14 @@ CLASSTYPE_TEXT = {
     ),
     "social-engineering": (
         "Possible scam website",
-        "A device tried to reach or opened content that may be a scam, such as a fake sign-in page. Do not enter passwords or payment details on pages you do not trust.",
+        "A device opened, or tried to open, a page that may be a scam, such as a fake sign-in page. Do not enter passwords or payment details on pages you do not trust.",
     ),
     "credential-theft": (
         "Possible password theft",
-        "A device may have entered information on a fake page used to steal passwords. If you typed a password there, change it right away.",
+        "Someone using a device may have typed information into a fake page used to steal passwords. If you typed a password there, change it right away.",
     ),
     "misc-attack": (
-        "Traffic with a risky address",
+        "Contact with a risky internet address",
         "A device exchanged traffic with an internet address that security lists mark as risky. This is not always an attack. Watch whether it keeps happening.",
     ),
     "targeted-activity": (
@@ -70,11 +70,11 @@ CLASSTYPE_TEXT = {
     ),
     "protocol-command-decode": (
         "Irregular network messages",
-        "Devices sent network messages that did not follow the expected format. This is usually harmless, but it can be part of an attack. No action is needed unless it keeps happening.",
+        "A device sent or received network messages that did not follow the expected format. This is usually harmless, but it can be part of an attack. No action is needed unless it keeps happening.",
     ),
     "policy-violation": (
-        "Activity many networks block",
-        "This is activity that many networks do not allow, such as file-sharing, chat or game apps, or sending information without protection. This is not always an attack, but it can put privacy or security at risk. Check that it is expected on this device.",
+        "Risky or restricted activity",
+        "A device did something that many networks do not allow, such as using file-sharing, chat or game apps, or sending passwords or other private information in a way others could read. This is not always an attack, but it can put privacy or security at risk. Check that it is expected on this device.",
     ),
     "attempted-recon": (
         "Attempt to learn about a device",
@@ -90,11 +90,11 @@ CLASSTYPE_TEXT = {
     ),
     "unknown": (
         "Unclassified activity",
-        "This traffic did not fit a specific group. It is often harmless, but some of these checks look for signs of harmful software. Watch whether it keeps happening.",
+        "This traffic matched a security rule that has no specific group. It is often harmless, but some of these rules look for signs of harmful software. Watch whether it keeps happening.",
     ),
     "attempted-dos": (
         "Attempt to overload a device",
-        "Traffic tried to stop a device from working by flooding it with requests. If this device was the target and stopped responding, restart it.",
+        "There was an attempt to stop a device from working by flooding it with requests. If this device was the target and stopped responding, restart it.",
     ),
     "not-suspicious": (
         "Normal activity (for your information)",
@@ -150,19 +150,19 @@ CLASSTYPE_TEXT = {
     ),
     "default-login-attempt": (
         "Sign-in attempt with a device's original password",
-        "Someone tried to sign in using the password a device came with when it was bought. Change these passwords on all your devices.",
+        "Someone tried to sign in using the password a device came with when it was bought. Change the original passwords on all your devices.",
     ),
     "successful-recon-largescale": (
         "Device revealed information useful to attackers",
-        "A device shared information that attackers can use, such as an old software version or stored records. Update the device's software.",
+        "A device shared information that attackers can use, such as which old software version it runs or data it has saved. Update the device's software.",
     ),
     "non-standard-protocol": (
-        "Non-standard connection",
-        "A device communicated in a non-standard way. This is usually harmless. No action is needed unless it keeps happening.",
+        "Connection in an unexpected format",
+        "A device connected in a way that does not follow the usual rules for that kind of connection. This is usually harmless. No action is needed unless it keeps happening.",
     ),
     "unusual-client-port-connection": (
-        "Connection on an uncommon channel",
-        "A device connected through an uncommon channel that some harmful software uses to hide. Check this device if you do not recognize this activity.",
+        "Connection made in an uncommon way",
+        "A device connected in a way that normal apps rarely use. Some harmful software connects this way to hide. Check this device if you do not recognize this activity.",
     ),
     "system-call-detect": (
         "Suspicious command in traffic",
@@ -176,19 +176,19 @@ CLASSTYPE_TEXT = {
 RULE_GROUPS = (
     ((2100498, 2019284), (
         "Possible remote control of a device",
-        "A device sent back a reply that often appears when someone is running commands on it from another place. Check the device right away and change its passwords.",
+        "A device sent back a reply that often appears when someone is running commands on it from another computer. Check the device right away and change its passwords.",
     )),
     ((2002023, 2002024, 2002025, 2002027, 2002028, 2000355, 2000345), (
         "Connection to an old chat system",
         "A device connected to an old chat system that people rarely use today. Harmful software on smart devices often uses it to receive commands. If this is a smart device, restart it, update it and change its password.",
     )),
     ((2019240, 2032973), (
-        "Program file for smart devices downloaded",
+        "Smart-device program downloaded",
         "A device downloaded a program file made for devices like cameras and routers. Harmful software often spreads to smart devices this way. If you did not install anything, restart the device, update it and change its password.",
     )),
     ((2038656, 2032924, 2025126, 2025123, 2025125, 2038657), (
         "Request for a program built for smart devices",
-        "A device asked for program files built for smart devices, such as cameras and routers. This is a common sign of an attempt to infect a smart device. Restart the device, update it and change its password.",
+        "A device asked for a program file built for smart devices, such as cameras and routers. This is a common sign of an attempt to infect a smart device. Restart the device, update it and change its password.",
     )),
     ((2003068,), (
         "Device trying to reach many other devices",

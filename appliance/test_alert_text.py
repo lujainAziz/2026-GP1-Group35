@@ -95,6 +95,6 @@ def test_fallback_rule_info_is_the_name_only():
 def test_policy_violation_text_does_not_deny_an_attack():
     # Team decision 3: the text must not contradict its High badge (priority 1).
     title, explanation = alert_text.CLASSTYPE_TEXT["policy-violation"]
-    assert title == "Activity many networks block"
+    assert title == "Risky or restricted activity"
     assert "It is not an attack" not in explanation
     assert "This is not always an attack, but it can put privacy or security at risk." in explanation
