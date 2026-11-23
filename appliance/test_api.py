@@ -64,13 +64,13 @@ class _SeededDBTest(unittest.TestCase):
 class DeviceDetailClassificationTests(_SeededDBTest):
     def test_detail_includes_classification_needles(self):
         self.insert(
-            mac="72:a3:36:be:90:06", ip="192.168.1.5", device_type="Mobile (Apple)",
+            mac="02:5a:05:00:12:06", ip="192.168.1.5", device_type="Mobile (Apple)",
             model="iPhone", class_source="mDNS model (mapped identifier)", class_score=80,
             model_source="mDNS model (mapped identifier)", model_score=80,
             vendor_class="TL-SG105E", status="online", discovered_current=1,
             last_seen="2026-09-20T10:57:37",
         )
-        d = api.get_device("72:a3:36:be:90:06", self.conn)
+        d = api.get_device("02:5a:05:00:12:06", self.conn)
         c = d.classification
         self.assertIsNotNone(c)
         self.assertEqual(c.device_type, "Mobile (Apple)")
@@ -85,10 +85,10 @@ class DeviceDetailClassificationTests(_SeededDBTest):
 
     def test_vendor_on_randomized_mac_is_inferred(self):
         self.insert(
-            mac="72:a3:36:be:90:06", vendor="Apple Inc.", vendor_source=None,
+            mac="02:5a:05:00:12:06", vendor="Apple Inc.", vendor_source=None,
             status="online", last_seen="2026-09-20T10:57:37",
         )
-        d = api.get_device("72:a3:36:be:90:06", self.conn)
+        d = api.get_device("02:5a:05:00:12:06", self.conn)
         self.assertEqual(d.classification.vendor_source, "inferred: private MAC")
 
 
@@ -349,24 +349,24 @@ class EffectiveVendorSourceTests(unittest.TestCase):
         # An OUI never produces a vendor for a locally-administered MAC, so
         # the API must surface it as inferred rather than as certain fact.
         self.assertEqual(
-            api._effective_vendor_source("72:a3:36:be:90:06", "Apple Inc.", None),
+            api._effective_vendor_source("02:5a:05:00:12:06", "Apple Inc.", None),
             "inferred: private MAC",
         )
 
     def test_real_mac_null_source_unchanged(self):
         # Genuine OUI vendor on a real MAC must stay non-inferred.
         self.assertIsNone(
-            api._effective_vendor_source("28:39:5e:d7:44:0c", "Samsung Electronics", None)
+            api._effective_vendor_source("28:39:5e:00:0a:0c", "Samsung Electronics", None)
         )
 
     def test_explicit_inferred_source_preserved(self):
         self.assertEqual(
-            api._effective_vendor_source("72:a3:36:be:90:06", "Apple Inc.", "inferred: model"),
+            api._effective_vendor_source("02:5a:05:00:12:06", "Apple Inc.", "inferred: model"),
             "inferred: model",
         )
 
     def test_no_vendor_stays_none(self):
-        self.assertIsNone(api._effective_vendor_source("72:a3:36:be:90:06", None, None))
+        self.assertIsNone(api._effective_vendor_source("02:5a:05:00:12:06", None, None))
 
     def test_locally_administered_bit(self):
         self.assertTrue(api._is_locally_administered_mac("02:11:22:33:44:55"))
@@ -1534,16 +1534,16 @@ class AlertEndpointTests(_SeededDBTest):
             device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET A", rule_id=1,
             event_time="2026-11-02T10:00:00", severity="High", state="New",
             occurrence_count=1, last_event_time="2026-11-02T10:00:00",
-            src_ip="10.0.0.5", dst_ip="8.8.8.8", src_port=5, dst_port=53)
+            src_ip="10.0.0.5", dst_ip="198.51.100.8", src_port=5, dst_port=53)
         self._add_alert(
             device_mac=None, alert_type="Threat", title="ET B", rule_id=2,
-            event_time="2026-11-02T11:00:00", severity="Critical", state="New",
+            event_time="2026-11-02T11:00:00", severity="Medium", state="New",
             occurrence_count=3, last_event_time="2026-11-02T11:30:00",
             src_ip="203.0.113.1", dst_ip="198.51.100.1")
         out = api.list_alerts(conn=self.conn, limit=200)
         self.assertEqual([a.title for a in out], ["ET B", "ET A"])  # newest last_event_time first
         b, a = out
-        self.assertEqual((b.kind, b.state, b.severity), ("threat", "new", "critical"))
+        self.assertEqual((b.kind, b.state, b.severity), ("threat", "new", "medium"))
         self.assertEqual(a.severity, "high")
         self.assertIsNone(b.device_mac)
         self.assertEqual(b.device_name, "Unknown device")
@@ -1551,9 +1551,14 @@ class AlertEndpointTests(_SeededDBTest):
         self.assertEqual((b.source_ip, b.destination_ip), ("203.0.113.1", "198.51.100.1"))
         self.assertEqual(a.device_name, "cam-1")  # hostname (no user_name)
         self.assertEqual(a.first_event_time, "2026-11-02T10:00:00")
-        # No classtype stored -> fallback text; rule name stays in title.
-        self.assertEqual(a.display_title, "Security alert")
-        self.assertEqual(a.explanation, alert_text.FALLBACK_TEXT[1])
+        # No classtype stored -> fallback text naming the original rule; the
+        # rule name also stays in title.
+        self.assertEqual(a.display_title, "Network activity detected")
+        self.assertEqual(
+            a.explanation,
+            'Assas noticed traffic that matched one of its security rules '
+            '("ET A"). The full rule details are below.')
+        self.assertEqual(a.rule_id, 1)  # kept in the response for internal use
         self.assertIsNone(a.device_role)
         self.assertIsNone(a.anomaly_score)
 
@@ -1562,7 +1567,7 @@ class AlertEndpointTests(_SeededDBTest):
         self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="laptop", status="online")
         self._add_alert(
             device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat",
-            title="ET SCAN Suspicious inbound to mySQL port 3306", rule_id=2010937,
+            title="ET SCAN X", rule_id=8,
             event_time="2026-11-02T10:00:00", severity="Medium", state="New",
             occurrence_count=1, last_event_time="2026-11-02T10:00:00",
             src_ip="192.168.8.50", dst_ip="192.168.8.60",
@@ -1570,39 +1575,71 @@ class AlertEndpointTests(_SeededDBTest):
             device_role="source")
         self._add_alert(
             device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET WEB X",
-            rule_id=7, event_time="2026-11-02T11:00:00", severity="Critical",
+            rule_id=7, event_time="2026-11-02T11:00:00", severity="High",
             state="New", occurrence_count=1, last_event_time="2026-11-02T11:00:00",
             src_ip="203.0.113.9", dst_ip="192.168.8.50",
             classtype="web-application-attack", device_role="target")
         target, source = api.list_alerts(conn=self.conn, limit=200)
         # The original rule name is kept in `title`; nothing existing is removed.
-        self.assertEqual(source.title, "ET SCAN Suspicious inbound to mySQL port 3306")
-        self.assertEqual(source.rule_id, 2010937)
+        self.assertEqual(source.title, "ET SCAN X")
+        self.assertEqual(source.rule_id, 8)
         self.assertEqual(source.display_title, "Network scan")
         self.assertEqual(source.explanation, alert_text.CLASSTYPE_TEXT["network-scan"][1])
         self.assertEqual(source.classtype, "network-scan")
         self.assertEqual(source.category, "Detection of a Network Scan")
         self.assertEqual(source.device_role, "source")
-        self.assertEqual(target.display_title, "Web attack attempt")
+        self.assertEqual(target.display_title, "Attempt to attack a website")
         self.assertEqual(target.device_role, "target")
         # Single-alert and per-device endpoints carry the same fields.
         one = api.get_alert(int(source.id), conn=self.conn)
         self.assertEqual((one.display_title, one.device_role), ("Network scan", "source"))
         dev = api.list_device_alerts("aa:bb:cc:dd:ee:ff", conn=self.conn, limit=200)
-        self.assertEqual([a.display_title for a in dev], ["Web attack attempt", "Network scan"])
+        self.assertEqual([a.display_title for a in dev], ["Attempt to attack a website", "Network scan"])
+
+    def test_rule_specific_text_overrides_classtype(self):
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat",
+            title="ET SCAN Suspicious inbound to mySQL port 3306", rule_id=2010937,
+            event_time="2026-11-02T10:00:00", severity="Medium", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            category="Detection of a Network Scan", classtype="network-scan")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual(a.display_title, "Attempt to reach a device's database feature")
+        self.assertEqual(a.explanation, alert_text.RULE_TEXT[2010937][1])
+        # The original rule name and classtype stay; the rule ID is not in user text.
+        self.assertEqual(a.title, "ET SCAN Suspicious inbound to mySQL port 3306")
+        self.assertEqual(a.classtype, "network-scan")
+        self.assertEqual(a.rule_id, 2010937)
+        self.assertNotIn("2010937", a.display_title + a.explanation)
+        one = api.get_alert(int(a.id), conn=self.conn)
+        self.assertEqual(one.display_title, a.display_title)
 
     def test_unknown_classtype_and_unlinked_role_fall_back(self):
         self._schema()
         self._add_alert(
-            device_mac=None, alert_type="Threat", title="ASSAS TEST Critical",
-            rule_id=1000001, event_time="2026-11-02T10:00:00", severity="Critical",
+            device_mac=None, alert_type="Threat", title="ASSAS TEST High",
+            rule_id=1000001, event_time="2026-11-02T10:00:00", severity="High",
             state="New", occurrence_count=1, last_event_time="2026-11-02T10:00:00",
             classtype="tcp-connection", device_role="source")
         (a,) = api.list_alerts(conn=self.conn, limit=200)
-        self.assertEqual(a.title, "ASSAS TEST Critical")
-        self.assertEqual(a.severity, "critical")  # severity unchanged
-        self.assertEqual((a.display_title, a.explanation), alert_text.FALLBACK_TEXT)
+        self.assertEqual(a.title, "ASSAS TEST High")
+        self.assertEqual(a.severity, "high")
+        self.assertEqual(a.display_title, "Network activity detected")
+        self.assertIn('("ASSAS TEST High")', a.explanation)
+        self.assertNotIn("1000001", a.explanation)  # rule ID never in user text
+        self.assertEqual(a.rule_id, 1000001)  # but kept in the response
         self.assertIsNone(a.device_role)  # no device -> no role line
+
+    def test_legacy_critical_and_reviewed_read_as_high_and_new(self):
+        # Safety net for rows the one-time conversion has not reached.
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ET OLD", rule_id=9,
+            event_time="2026-11-02T10:00:00", severity="Critical", state="Reviewed",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual((a.severity, a.state), ("high", "new"))
 
     def test_table_without_new_columns_still_reads(self):
         # An alerts table the ingester has not migrated yet (pre-classtype).
@@ -1621,7 +1658,7 @@ class AlertEndpointTests(_SeededDBTest):
             occurrence_count=1, last_event_time="2026-11-02T10:00:00")
         (a,) = api.list_alerts(conn=self.conn, limit=200)
         self.assertEqual(a.title, "ET OLD")
-        self.assertEqual(a.display_title, "Security alert")
+        self.assertEqual(a.display_title, "Network activity detected")
         self.assertIsNone(a.classtype)
         self.assertIsNone(a.device_role)
 

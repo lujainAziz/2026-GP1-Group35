@@ -19,12 +19,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _mac = 'e6:42:65:03:0d:8f';
-const _ipv6 = '2001:16a2:dea6:2200:79ee:14d2:e191:965e';
+const _mac = '02:00:00:00:00:01';
+const _ipv6 = '2001:0db8:dea6:2200:79ee:14d2:e191:965e';
 
 class _Repo extends DemoRepository {
   final Device _dev = const Device(
-    mac: _mac, ip: '192.168.100.238', ipv6: [_ipv6], hostname: 'Living-Room-TV',
+    mac: _mac, ip: '192.0.2.10', ipv6: [_ipv6], hostname: 'Living-Room-TV',
     vendor: 'Samsung', deviceType: 'Smart TV / Media Device',
     presence: Presence.online, trusted: true, monitored: true);
   final List<SecurityAlert> _list = [
@@ -33,7 +33,7 @@ class _Repo extends DemoRepository {
       'display_title':'Notable activity (usually harmless)','classtype':'misc-activity','device_role':'source',
       'explanation':'Activity that is not normally harmful but is worth noting. Usually no action is needed unless it repeats often.',
       'device_mac':_mac,'device_name':'Living-Room-TV','time':'2026-11-04T10:04:00',
-      'severity':'medium','state':'new','source_ip':'192.168.100.238','destination_ip':_ipv6,
+      'severity':'medium','state':'new','source_ip':'192.0.2.10','destination_ip':_ipv6,
       'src_port':443,'dst_port':51000,'rule_id':'2046657','occurrence_count':40,
       'first_event_time':'2026-11-04T09:00:00','last_event_time':'2026-11-04T10:04:00'}),
     SecurityAlert.fromApi({
@@ -41,7 +41,7 @@ class _Repo extends DemoRepository {
       'display_title':'Unusual communication pattern','classtype':'protocol-command-decode','device_role':'target',
       'explanation':'Devices communicated in an unusual way. Often harmless, but can be part of an attack.',
       'device_mac':_mac,'device_name':'Living-Room-TV','time':'2026-11-04T09:40:00',
-      'severity':'medium','state':'new','source_ip':_ipv6,'destination_ip':'192.168.100.238',
+      'severity':'medium','state':'new','source_ip':_ipv6,'destination_ip':'192.0.2.10',
       'rule_id':'2210054','occurrence_count':4,
       'first_event_time':'2026-11-04T09:38:00','last_event_time':'2026-11-04T09:40:00'}),
   ];
@@ -208,7 +208,7 @@ void main() {
   // active, 3-digit counts (like All 281 / Open 280 / Resolved 1).
   Future<void> alertsHeaderShot(WidgetTester tester, String name, {required bool active}) async {
     SharedPreferences.setMockInitialValues(
-        active ? {'ui.alertSeverities': ['low', 'medium', 'high', 'critical']} : {});
+        active ? {'ui.alertSeverities': ['low', 'medium', 'high']} : {});
     for (final f in ['BricolageGrotesque', 'JetBrainsMono']) {
       final l = FontLoader(f == 'BricolageGrotesque' ? 'Bricolage Grotesque' : 'JetBrains Mono');
       l.addFont(rootBundle.load('assets/fonts/$f.ttf'));
@@ -238,9 +238,8 @@ void main() {
   testWidgets('alerts-filter-active-large', (t) => alertsHeaderShot(t, 'alerts-filter-active-large', active: true), skip: !gen);
 }
 
-/// 288 alerts: 287 open (mostly Low, a couple High) + 1 resolved Critical, so
-/// the tabs read All 288 / Open 287 / Resolved 1. The active filter (High +
-/// Critical) renders only a few cards, keeping the shot light.
+/// 288 alerts: 287 open (mostly Low, a couple High) + 1 resolved High, so
+/// the tabs read All 288 / Open 287 / Resolved 1.
 class _AlertsBulkRepo extends DemoRepository {
   final List<SecurityAlert> _list = [
     for (var i = 0; i < 285; i++)
@@ -252,7 +251,7 @@ class _AlertsBulkRepo extends DemoRepository {
           time: DateTime(2026, 11, 7, 11).add(Duration(seconds: i)),
           severity: Severity.high, state: AlertState.newAlert),
     SecurityAlert(id: 'done', kind: AlertKind.threat, title: 'sig done', deviceName: 'dev',
-        time: DateTime(2026, 11, 7, 9), severity: Severity.critical, state: AlertState.resolved),
+        time: DateTime(2026, 11, 7, 9), severity: Severity.high, state: AlertState.resolved),
   ];
   @override
   Future<List<SecurityAlert>?> getAlerts({int? limit}) async =>
@@ -276,8 +275,8 @@ class _HomeScaleRepo extends DemoRepository {
 class _ScaleRepo extends DemoRepository {
   final Device _dev = const Device(
     mac: _mac,
-    ip: '192.168.100.238',
-    ipv6: ['2001:16a2:c83e:5700:78f5:8a3d:cbf4:b5fe'],
+    ip: '192.0.2.10',
+    ipv6: ['2001:0db8:c83e:5700:78f5:8a3d:cbf4:b5fe'],
     hostname: '0badc396-c1f4-40db-ba83-c0702b11ae58', // opaque -> model shown
     model: 'emulator (sdk_gphone64_x86_64)',
     vendor: 'Google', deviceType: 'Computer',

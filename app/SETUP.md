@@ -67,14 +67,44 @@ window decorations: the header-bar branch is removed and the window uses
 - Release binary:
   `/home/assas/assas/app/display/build/linux/arm64/release/bundle/assas_app`
 
-### Autostart (labwc)
+### Autostart and auto-restart (labwc, NFR-03)
 The labwc session runs `~/.config/labwc/autostart` on login. It contains exactly
-one line that launches the release binary:
+one line that launches the release binary through `lwrespawn` (`<repo>` is the
+repository checkout on the Pi):
 ```
-/home/assas/assas/app/display/build/linux/arm64/release/bundle/assas_app &
+lwrespawn <repo>/app/display/build/linux/arm64/release/bundle/assas_app
 ```
-No systemd service is used. After reboot: autologin -> labwc session -> this line
-opens the display fullscreen. The physical HDMI panel must be connected and active.
+`lwrespawn` restarts the app whenever it exits, so a crash brings the display
+back without a manual step. No systemd service is used. After reboot: autologin
+-> labwc session -> this line opens the display fullscreen. The physical HDMI
+panel must be connected and active.
+
+### Stop the display app on purpose
+Killing only `assas_app` is not enough: `lwrespawn` starts it again. Stop
+`lwrespawn` first, then the app:
+```
+pkill -f "lwrespawn.*assas_app"
+pkill -x assas_app
+```
+The app comes back at the next login or reboot. To start it again in the
+current session, run the autostart line from the graphical session.
+
+### Auto-restart verification (2026-11-23, on the device)
+- **Reboot test:** after `sudo reboot`, with no manual step, `lwrespawn` and
+  `assas_app` were running and `assas-suricata` and `assas-discovery` were
+  active. Pass.
+- **Crash test:** `pkill -x assas_app` killed the app; 5 seconds later
+  `assas_app` was running again with a new process ID. Pass.
+- **Service kill test:** `assas-alerts`, `assas-api`, `assas-discovery` and
+  `assas-suricata` have `Restart=on-failure`. `kill -9` of each service's
+  MainPID: 60 seconds later all four were active again, `NRestarts` 0 -> 1 for
+  each, all four back active in the same second, so back within seconds (the
+  exact restart time was not measured). `assas-capture` has `Restart=no`, which
+  is correct: it is `Type=oneshot` with `RemainAfterExit=yes` and no main
+  process, and only sets the capture interface to promiscuous mode at boot. It
+  was not part of the kill test and stayed active. Pass.
+
+NFR-03 (display app and service auto-restart): verified.
 
 ### Temporarily disable autostart (troubleshooting)
 Comment the line out (prefix with `#`) or rename the file, then restart the

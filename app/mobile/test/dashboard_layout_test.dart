@@ -86,13 +86,14 @@ Future<void> _eachLayout(
 }
 
 void main() {
-  testWidgets('dashboard has no overflow at every text size; Open alerts shows SOON', (tester) async {
+  testWidgets('dashboard has no overflow at every text size; Unresolved alerts shows the count', (tester) async {
     await _eachLayout(tester, DemoRepository(), (reason) {
-      // Open alerts and Unrecognized now share one card layout (a Wrap): label
-      // on the left, value (here the deferred "SOON" marker) on the right.
-      final label = find.text('Open\nalerts');
+      // Unresolved alerts and Unrecognized share one card layout (a Wrap): label
+      // on the left, value (the demo's 2 unresolved alerts) on the right.
+      final label = find.text('Unresolved\nalerts');
       final card = find.ancestor(of: label, matching: find.byType(Wrap)).first;
-      expect(find.descendant(of: card, matching: find.text('SOON')), findsOneWidget, reason: reason);
+      expect(find.descendant(of: card, matching: find.text('2')), findsOneWidget, reason: reason);
+      expect(find.text('Open\nalerts'), findsNothing, reason: reason);
     });
   });
 
@@ -122,10 +123,10 @@ void main() {
           find.ancestor(of: text, matching: find.byType(Pressable)).first,
         );
     final online = cardOf(find.text('ONLINE'));
-    final openAlerts = cardOf(find.text('Open\nalerts'));
+    final openAlerts = cardOf(find.text('Unresolved\nalerts'));
     final unrecognized = cardOf(find.text('Unrecog\u00adnized'));
 
-    // Open alerts aligns to Online's top; Unrecognized to its bottom.
+    // Unresolved alerts aligns to Online's top; Unrecognized to its bottom.
     expect(openAlerts.top, moreOrLessEquals(online.top, epsilon: 1.0));
     expect(unrecognized.bottom, moreOrLessEquals(online.bottom, epsilon: 1.0));
     // The two right cards share one width and the same right/left edges.

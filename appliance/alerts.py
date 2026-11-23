@@ -8,7 +8,8 @@ Design notes:
 - Only `event_type == "alert"` events are ingested. Decoder-event alerts may have
   no addresses/ports; those fields are then NULL and the alert links to no device.
 - Severity from the matched rule priority (eve `alert.severity`):
-  1 -> Critical, 2 -> High, 3 -> Medium, >=4 -> Low.
+  1 -> High, 2 -> Medium, 3 or more (or missing) -> Low. The raw priority is
+  stored too (`priority`).
 - Device linking matches src/dst against the device inventory; both match ->
   source device (the other IP is still stored); neither -> device_mac NULL.
   The matched side is stored as device_role ('source' / 'target'); it is NULL
@@ -42,6 +43,8 @@ import time
 from contextlib import closing
 from datetime import datetime, timedelta
 
+import addr_scope
+
 DB_PATH = os.getenv("ASSAS_DB_PATH", "/home/assas/assas/assas.db")
 EVE_PATH = os.getenv("ASSAS_EVE_PATH", "/var/log/suricata/eve.json")
 # The file Suricata loads (assas.yaml `classification-file`).
@@ -71,7 +74,7 @@ REAP_GRACE_SECONDS = float(os.getenv("ASSAS_ALERT_REAP_GRACE", "10"))
 
 log = logging.getLogger("assas.alerts")
 
-_SEVERITY = {1: "Critical", 2: "High", 3: "Medium"}
+_SEVERITY = {1: "High", 2: "Medium"}
 
 ALERTS_DDL = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -95,7 +98,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     last_event_time  TEXT NOT NULL,
     category         TEXT,
     classtype        TEXT,
-    device_role      TEXT
+    device_role      TEXT,
+    priority         INTEGER
 )
 """
 
@@ -135,13 +139,56 @@ def ensure_schema(conn):
         for ddl in INDEX_DDL:
             conn.execute(ddl)
     ensure_alert_columns(conn)
+    migrate_release1(conn)
+
+
+def migrate_release1(conn):
+    """One-time Release 1 conversion of existing alerts (ingester only).
+
+    Adds the `priority` column and, in the SAME transaction, converts the old
+    severity labels and the retired Reviewed state. The old label gives the
+    priority exactly (Critical=1, High=2, Medium=3, Low=4+/missing -> NULL), so
+    Critical->High, High->Medium, Medium->Low, Low->Low; Reviewed -> New. The
+    severity rewrite is not idempotent, so the column's existence is the
+    "already converted" marker: a table that has it (including a fresh one) is
+    never touched. Returns True when the conversion ran.
+    """
+    def has_priority():
+        return "priority" in {r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+
+    if has_priority():
+        return False
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if has_priority():  # converted by another process since the check above
+            conn.rollback()
+            return False
+        conn.execute("ALTER TABLE alerts ADD COLUMN priority INTEGER")
+        conn.execute(
+            "UPDATE alerts SET priority = CASE LOWER(severity) "
+            "WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 END"
+        )
+        conn.execute(
+            "UPDATE alerts SET severity = CASE LOWER(severity) "
+            "WHEN 'critical' THEN 'High' WHEN 'high' THEN 'Medium' ELSE 'Low' END"
+        )
+        reviewed = conn.execute(
+            "UPDATE alerts SET state = 'New' WHERE LOWER(state) = 'reviewed'"
+        ).rowcount
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    log.info("Release 1 alert conversion done: severities remapped, %d Reviewed -> New", reviewed)
+    return True
 
 
 def ensure_alert_columns(conn):
     """Add ADDED_ALERT_COLUMNS to an existing alerts table (idempotent).
 
-    Also called by the API at startup, which may run before the ingester has
-    migrated. A missing alerts table is left alone (the ingester creates it).
+    Called only by the ingester (ensure_schema); the API never alters the alerts
+    table and reads a column that is not there yet as NULL. A missing alerts
+    table is left alone (the ingester creates it).
     """
     with conn:
         have = {r[1] for r in conn.execute("PRAGMA table_info(alerts)").fetchall()}
@@ -161,7 +208,7 @@ def ensure_alert_columns(conn):
 # Pure helpers (unit-tested directly)
 # --------------------------------------------------------------------------- #
 def severity_label(priority):
-    """Map a Suricata rule priority to a severity label (>=4 or unknown -> Low)."""
+    """Map a Suricata rule priority to a severity label (3 or more, or unknown -> Low)."""
     try:
         p = int(priority)
     except (TypeError, ValueError):
@@ -232,6 +279,7 @@ def parse_alert_event(obj):
         "category": cat.strip() if isinstance(cat, str) and cat.strip() else None,
         "rule_id": _as_int(a.get("signature_id")),
         "severity": severity_label(a.get("severity")),
+        "priority": _as_int(a.get("severity")),
         "event_time": local_naive_iso(obj.get("timestamp")),
         "src_ip": obj.get("src_ip") if isinstance(obj.get("src_ip"), str) else None,
         "dst_ip": obj.get("dest_ip") if isinstance(obj.get("dest_ip"), str) else None,
@@ -321,7 +369,7 @@ def classtype_for(category, path=None):
 def _addr_forms(ip):
     """Textual forms an address may be stored under.
 
-    Suricata writes IPv6 zero-padded exploded ('2001:16a2:...:0cf3:...'), while
+    Suricata writes IPv6 zero-padded exploded ('2001:db8:...:0cf3:...'), while
     the inventory's last_* columns hold the kernel's compressed form
     ('...:cf3:...'). Both forms are matched so format differences never break a
     link. Returns a list with the original string as a fallback.
@@ -346,7 +394,9 @@ def link_device_with_role(conn, src_ip, dst_ip, event_time=None):
     The caller still stores both IPs on the alert, so the other IP is retained.
 
     Two sources are consulted per address:
-      - the devices last_* columns (latest address of each family), and
+      - the devices last_* columns (latest address of each family), for
+        LAN-scoped addresses only (addr_scope: private IPv4, CGNAT,
+        link-local, IPv6 ULA), and
       - the device_addresses evidence table (full set, written by discovery
         from ARP/DHCP/NDP/guarded traffic). Evidence counts only when the
         alert's event time falls inside
@@ -405,7 +455,12 @@ def link_device_with_role(conn, src_ip, dst_ip, event_time=None):
             if "no such table" not in str(exc).lower():
                 raise
             evidence_covers_addr = False
-        if not evidence_covers_addr:
+        # The column fallback is for LAN-scoped addresses only (addr_scope).
+        # Any other address (public IPv4, global IPv6) links ONLY through
+        # time-windowed evidence: an internet server's address, seen behind the
+        # router's MAC, once ended up in the router's columns and linked
+        # alerts to the router.
+        if not evidence_covers_addr and addr_scope.is_lan_scoped(ip):
             for form in _addr_forms(ip):
                 macs.update(
                     r[0] for r in conn.execute(
@@ -710,6 +765,115 @@ def relink_recent(conn, window_hours=None, now_iso=None):
     return linked
 
 
+# Same table discovery uses for its one-time steps (name, applied time).
+MIGRATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS migrations ("
+    " name TEXT PRIMARY KEY,"
+    " applied_at TEXT NOT NULL"
+    ")"
+)
+RELINK_OFFLINK_LINKS = "2026-11-relink-offlink-alert-links"
+
+
+def _evidence_norm(ip):
+    """The form device_addresses stores: IPv4 dotted, IPv6 exploded lowercase."""
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return None
+    return str(addr) if addr.version == 4 else addr.exploded.lower()
+
+
+def relink_offlink_links(conn):
+    """One-time repair (marker in `migrations`): re-link alerts that the old
+    column fallback linked through an internet address (typically to the
+    router, whose columns held internet servers' addresses).
+
+    An alert is a suspect only when its current link cannot be justified:
+      - role 'source' / 'target': that side's address is not LAN-scoped and
+        the linked device has no address evidence for it;
+      - no role (alerts from before roles were stored) but with addresses:
+        neither side is evidence for the device, nor a LAN-scoped address in
+        its columns.
+    Suspects get link_device_with_role() again (which no longer uses the
+    column fallback for such addresses): the right device and role, or
+    unlinked. ONLY device_mac and device_role change; state, counts, times and
+    read markers are untouched. Alerts linked by MAC (no addresses) and every
+    justified link are left alone. All alerts are covered, not a recent
+    window. One transaction; returns the number of alerts changed, or None
+    when it already ran.
+    """
+    conn.execute(MIGRATIONS_DDL)
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("SELECT 1 FROM migrations WHERE name=?",
+                        (RELINK_OFFLINK_LINKS,)).fetchone():
+            conn.rollback()
+            return None
+        try:
+            evidence = {(m, a) for m, a in conn.execute(
+                "SELECT mac, addr FROM device_addresses").fetchall()}
+        except sqlite3.OperationalError:
+            evidence = set()
+
+        def has_evidence(mac, ip):
+            return (mac, _evidence_norm(ip)) in evidence
+
+        def lan_in_columns(mac, ip):
+            if not addr_scope.is_lan_scoped(ip):
+                return False
+            for form in _addr_forms(ip):
+                if conn.execute(
+                    "SELECT 1 FROM devices WHERE mac=? AND "
+                    "? IN (last_ipv4, last_ipv6_global, last_ipv6_ll, ip)", (mac, form),
+                ).fetchone():
+                    return True
+            return False
+
+        try:
+            rows = conn.execute(
+                "SELECT alert_id, device_mac, device_role, src_ip, dst_ip, event_time "
+                "FROM alerts WHERE alert_type='Threat' AND device_mac IS NOT NULL "
+                "AND (src_ip IS NOT NULL OR dst_ip IS NOT NULL)"
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc).lower():
+                raise
+            rows = []
+        changed = 0
+        for alert_id, mac, role, src, dst, event_time in rows:
+            if role in ("source", "target"):
+                side = src if role == "source" else dst
+                suspect = bool(side) and not addr_scope.is_lan_scoped(side) \
+                    and not has_evidence(mac, side)
+            else:
+                suspect = not any(
+                    ip and (has_evidence(mac, ip) or lan_in_columns(mac, ip))
+                    for ip in (src, dst)
+                )
+            if not suspect:
+                continue
+            new_mac, new_role = link_device_with_role(conn, src, dst, event_time)
+            if (new_mac, new_role) != (mac, role):
+                conn.execute(
+                    "UPDATE alerts SET device_mac=?, device_role=? WHERE alert_id=?",
+                    (new_mac, new_role, alert_id),
+                )
+                changed += 1
+        conn.execute(
+            "INSERT INTO migrations (name, applied_at) VALUES (?, ?)",
+            (RELINK_OFFLINK_LINKS, datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    log.info("one-time relink: %d alert(s) linked through an internet address were "
+             "re-linked or unlinked", changed)
+    return changed
+
+
 def _parse_iso(s):
     return datetime.fromisoformat(s) if s else None
 
@@ -729,7 +893,7 @@ def upsert_alert(conn, a, device_mac, window_seconds, device_role=None):
     # is closed and the event starts a fresh, independent alert (new id, state
     # 'New') — even if an OLDER matching alert is still open and inside the
     # window (we must not re-attach to it). Only a newest match that is open
-    # (New/Reviewed) and within the window absorbs the recurrence.
+    # (New) and within the window absorbs the recurrence.
     if device_mac is not None:
         row = conn.execute(
             "SELECT alert_id, event_time, last_event_time, state FROM alerts "
@@ -764,14 +928,15 @@ def upsert_alert(conn, a, device_mac, window_seconds, device_role=None):
     conn.execute(
         "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
         "src_ip, dst_ip, src_port, dst_port, severity, state, occurrence_count, "
-        "last_event_time, category, classtype, device_role) "
-        "VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', 1, ?, ?, ?, ?)",
+        "last_event_time, category, classtype, device_role, priority) "
+        "VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', 1, ?, ?, ?, ?, ?)",
         (
             device_mac, a["title"], a["rule_id"], event_time,
             a["src_ip"], a["dst_ip"], a["src_port"], a["dst_port"],
             a["severity"], event_time,
             a.get("category"), a.get("classtype"),
             device_role if device_mac is not None else None,
+            a.get("priority"),
         ),
     )
     return "inserted"
@@ -836,46 +1001,54 @@ def process_file(conn, path, window_seconds):
         if offset == size:
             return dev, ino, offset, size  # nothing new
 
+        # Stream line by line: memory stays bounded by the longest line, never
+        # the file (an offline eve.json can be several GB). Same rule as
+        # split_complete_lines: a trailing partial line (no newline yet) is
+        # left unconsumed so it is re-read when complete.
         f.seek(offset)
-        data = f.read()
-
-    complete, consumed = split_complete_lines(data)
-    new_offset = offset + consumed
-
-    with conn:  # ONE transaction: all upserts + the checkpoint
-        for raw in complete:
-            s = raw.strip()
-            if not s:
-                continue
-            try:
-                obj = json.loads(s)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                # json.loads(bytes) auto-detects encoding and raises
-                # UnicodeDecodeError (not JSONDecodeError) on malformed bytes;
-                # catch both so one bad line is skipped, not fatal. The line's
-                # bytes are still counted in `consumed`, so the offset advances
-                # past it and the daemon never stalls on it.
-                log.warning("skipping malformed eve line (bad JSON) in %s", path)
-                continue
-            try:
-                a = parse_alert_event(obj)
-            except (AttributeError, TypeError, ValueError, KeyError) as exc:
-                # Valid JSON but an unexpected shape (e.g. a bare null/list, or a
-                # non-object `alert`). Skip the record; DO NOT catch DB errors
-                # here, which must roll the transaction back and be retried.
-                log.warning("skipping structurally-invalid eve record in %s (%s)", path, type(exc).__name__)
-                continue
-            if a is None:
-                continue
-            ingest_alert(conn, a, window_seconds)
-        conn.execute(
-            "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(st_dev, st_ino) DO UPDATE SET offset=excluded.offset, "
-            "path=excluded.path, updated_at=excluded.updated_at",
-            (dev, ino, path, new_offset, datetime.now().replace(microsecond=0).isoformat(sep="T")),
-        )
+        new_offset = offset
+        with conn:  # ONE transaction: all upserts + the checkpoint
+            for raw in f:
+                if not raw.endswith(b"\n"):
+                    break
+                new_offset += len(raw)
+                _ingest_line(conn, raw, path, window_seconds)
+            conn.execute(
+                "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(st_dev, st_ino) DO UPDATE SET offset=excluded.offset, "
+                "path=excluded.path, updated_at=excluded.updated_at",
+                (dev, ino, path, new_offset, datetime.now().replace(microsecond=0).isoformat(sep="T")),
+            )
     return dev, ino, new_offset, size
+
+
+def _ingest_line(conn, raw, path, window_seconds):
+    """Parse one eve line and ingest it if it is an alert; bad lines are skipped."""
+    s = raw.strip()
+    if not s:
+        return
+    try:
+        obj = json.loads(s)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # json.loads(bytes) auto-detects encoding and raises
+        # UnicodeDecodeError (not JSONDecodeError) on malformed bytes;
+        # catch both so one bad line is skipped, not fatal. The line's
+        # bytes are still counted in the offset, so the daemon never
+        # stalls on it.
+        log.warning("skipping malformed eve line (bad JSON) in %s", path)
+        return
+    try:
+        a = parse_alert_event(obj)
+    except (AttributeError, TypeError, ValueError, KeyError) as exc:
+        # Valid JSON but an unexpected shape (e.g. a bare null/list, or a
+        # non-object `alert`). Skip the record; DO NOT catch DB errors
+        # here, which must roll the transaction back and be retried.
+        log.warning("skipping structurally-invalid eve record in %s (%s)", path, type(exc).__name__)
+        return
+    if a is None:
+        return
+    ingest_alert(conn, a, window_seconds)
 
 
 def _resume_at_eof(conn, path, dev, ino, offset, size):
@@ -1091,6 +1264,7 @@ def main():
     )
     with closing(_open_db()) as conn:
         ensure_schema(conn)
+        relink_offlink_links(conn)  # one-time; a no-op once its marker exists
         while running["on"]:
             try:
                 run_once(conn, EVE_PATH, DEDUP_WINDOW_SECONDS)

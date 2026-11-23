@@ -25,28 +25,27 @@ void main() {
       expect(out.map((a) => a.id).toList(), ['new', 'mid', 'old']);
     });
 
-    test('most severe first: Critical, High, Medium, Low', () {
+    test('most severe first: High, Medium, Low', () {
       final out = sortedAlerts([
         _a('med', Severity.medium, at(10)),
-        _a('crit', Severity.critical, at(10)),
         _a('low', Severity.low, at(10)),
         _a('high', Severity.high, at(10)),
       ], AlertSort.severity);
-      expect(out.map((a) => a.id).toList(), ['crit', 'high', 'med', 'low']);
+      expect(out.map((a) => a.id).toList(), ['high', 'med', 'low']);
     });
 
     test('equal severity falls back to newest first', () {
       final out = sortedAlerts([
         _a('h-old', Severity.high, at(0)),
         _a('h-new', Severity.high, at(90)),
-        _a('c', Severity.critical, at(1)),
+        _a('m', Severity.medium, at(95)),
       ], AlertSort.severity);
-      // critical leads; within High the newer one comes before the older.
-      expect(out.map((a) => a.id).toList(), ['c', 'h-new', 'h-old']);
+      // High leads even though Medium is newest; within High newer comes first.
+      expect(out.map((a) => a.id).toList(), ['h-new', 'h-old', 'm']);
     });
 
     test('does not mutate the input list', () {
-      final input = [_a('a', Severity.low, at(0)), _a('b', Severity.critical, at(1))];
+      final input = [_a('a', Severity.low, at(0)), _a('b', Severity.high, at(1))];
       final copy = List.of(input);
       sortedAlerts(input, AlertSort.severity);
       expect(input.map((a) => a.id).toList(), copy.map((a) => a.id).toList());
@@ -55,23 +54,22 @@ void main() {
 
   group('alertsWithSeverity', () {
     final all = [
-      _a('c', Severity.critical, at(3)),
       _a('h', Severity.high, at(2)),
       _a('m', Severity.medium, at(1)),
       _a('l', Severity.low, at(0)),
     ];
 
     test('keeps only the selected severities', () {
-      final out = alertsWithSeverity(all, {Severity.critical, Severity.high});
-      expect(out.map((a) => a.id).toList(), ['c', 'h']);
+      final out = alertsWithSeverity(all, {Severity.high, Severity.low});
+      expect(out.map((a) => a.id).toList(), ['h', 'l']);
     });
 
     test('empty set shows everything (no accidental blank list)', () {
-      expect(alertsWithSeverity(all, <Severity>{}).length, 4);
+      expect(alertsWithSeverity(all, <Severity>{}).length, 3);
     });
 
     test('a full set shows everything', () {
-      expect(alertsWithSeverity(all, Severity.values.toSet()).length, 4);
+      expect(alertsWithSeverity(all, Severity.values.toSet()).length, 3);
     });
   });
 }

@@ -406,7 +406,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
     if (raw == null || raw.isEmpty) {
       return EmptyDashed(
         padding: const EdgeInsets.all(26),
-        title: raw == null ? 'Alerts are not available yet' : 'All quiet',
+        title: raw == null ? 'Alerts are not available yet' : 'No alerts for this device',
         hint: 'Alerts related to this device will appear here.',
       );
     }

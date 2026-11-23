@@ -153,6 +153,34 @@ systemctl status assas-discovery assas-api
 
 The corresponding systemd configuration files are maintained under `appliance/systemd/`.
 
+### Optional AP association polling
+
+`assas-discovery` can read the wireless-station list from the TP-Link access point. The AP takes its IP address by DHCP, so it changes with the upstream router; discovery therefore finds the AP by its MAC address.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ASSAS_AP_PASSWORD` | unset | AP admin password. Polling is enabled only when set. |
+| `ASSAS_AP_MAC` | unset | AP MAC. When `ASSAS_AP_URL` is unset, the AP's current IPv4 is looked up by this MAC in the neighbour table (`/proc/net/arp`, `ip -4 neigh`, then the last IPv4 discovery recorded) on every poll. Also removed from the station list. |
+| `ASSAS_AP_URL` | unset | Fixed AP address (for example `http://192.0.2.10`). Overrides the MAC lookup. |
+| `ASSAS_AP_USER` | `admin` | AP admin user. |
+| `ASSAS_AP_SSID` | `Assas-Test` | SSID name used in log messages. |
+| `ASSAS_AP_POLL_SECONDS` | `5` | Poll interval (minimum 3). |
+| `ASSAS_AP_AUTH_TTL_SECONDS` | `600` | How long a successful AP login is reused. |
+| `ASSAS_AP_CLIENTS` | unset | Manual station MAC list, for tests or as a fallback. |
+
+If polling is enabled but the AP address cannot be found, discovery logs one warning per poll, skips that poll, and keeps working normally.
+
+The repository holds no real AP values. Put them in a device-only drop-in that is not committed:
+
+```ini
+# /etc/systemd/system/assas-discovery.service.d/ap.conf
+[Service]
+Environment=ASSAS_AP_MAC=02:00:00:00:00:01
+Environment=ASSAS_AP_PASSWORD=change-me
+```
+
+Then run `sudo systemctl daemon-reload && sudo systemctl restart assas-discovery`.
+
 ## Running Tests
 
 Discovery tests use the system Python environment, while API tests use the project virtual environment.

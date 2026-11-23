@@ -1,5 +1,15 @@
 # Sprint 2 — Scope and Changes from Sprint 1
 
+> **Superseded in Release 1.** Some Threat Alert behaviour described here has
+> changed: the Reviewed state is removed (New → Resolved only); severities are
+> High / Medium / Low (priority 1 → High, 2 → Medium, 3 or more or missing → Low;
+> no Critical); the fallback title is "Network activity detected" and names the
+> original rule; the app shows the detection count and first/last detection
+> times; the test rules are SIDs 1000001-1000003 (1000004 retired); "Network
+> Risk" is renamed "Network Alert Level" (Sprint 4). This document records
+> Sprint 2 as delivered. Current behaviour: `docs/database-schema.md`,
+> `docs/API_CONTRACT.md`, `docs/sprint-2/threat-alert-titles.md`.
+
 Sprint 2 adds **signature-based threat detection** and **security alert display and state
 management** to the Assas appliance. Sprint 1 delivered passive discovery, capture, classification,
 pairing, the read-only inventory service, and the mobile and display applications; Sprint 2 is
@@ -215,6 +225,9 @@ records them as security alerts in SQLite. Tests: `appliance/test_alerts.py` (51
 - `alert_ingest_state` — `(st_dev, st_ino)` PK + `offset, size_at_eof, consumed, path` — the read
   checkpoint, written in the **same transaction** as the alert upserts.
 
+*Release 1: severity is now 1→High, 2→Medium, 3 or more→Low (no Critical), with the raw priority
+stored in `priority`; existing rows were converted once.*
+
 **Behaviour:** severity from rule priority (1→Critical … ≥4→Low); device linking
 (one→that device, both→source keeping the other IP, neither→NULL); dedup within a window (default
 300 s, `ASSAS_ALERT_DEDUP_WINDOW`, measured from `last_event_time`; NULL-device key = rule+src+dst);
@@ -249,6 +262,9 @@ State update:
   Resolved is final). The transition is one atomic, guarded write; an illegal or backward move is
   rejected (409) and never reverts a Resolved alert.
 
+*Release 1: the only state move is New→Resolved (`reviewed` is rejected with 422), the open count
+is New only, and `severity` is high/medium/low. See `docs/API_CONTRACT.md` → Threat Alerts.*
+
 Response is the mobile `SecurityAlert` contract with **locked casing**: `kind="threat"`,
 `state="new"`, `severity ∈ {critical,high,medium,low}`; plus `id`, `title`, `device_mac`,
 `device_name` (user_name→hostname→model→"Unknown device"), `time` (= `last_event_time`),
@@ -278,13 +294,17 @@ detection recurs after an alert has been resolved, it is recorded as a **new, in
 rather than reopening the resolved one. **Device signals from unresolved alerts** are also live:
 an unresolved alert raises its device's attention level, priority and severity accent.
 
+*Release 1: Review and the Reviewed state are removed (Resolve only); the details show
+"{device} · {first detection time}" under the title and the detection count, first and last
+detection, and the rule name (the rule ID stays hidden).*
+
 | Surface | This sprint | How |
 |---|---|---|
 | Alert list | shown | unresolved counter (New + Reviewed) in the header; All / Open / Resolved views; rows show title, severity, device, last event time and state; newest first. |
 | Alert details | shown | title, time, device (with navigation), state badge and **Review / Resolve** actions (New→Reviewed, New→Resolved, Reviewed→Resolved; Resolved is final). Details: plain-language explanation with the device role line, alert type, original rule name, severity, **Last seen** (= last event time), source/destination address. First-seen time, rule identifier and ports are kept in the database and service but not shown. See *Threat Alert titles and explanations* below. |
 | A device's own alerts | shown | shown in the device details screen. |
 | Home summary of open alerts | hidden | later sprint; shows "SOON". |
-| 7-inch display alert count | hidden | later sprint; shows "SOON". |
+| 7-inch display alert count | hidden | later sprint; shows "SOON". *(Release 1: shown — the count of unresolved alerts from `GET /alerts/open_count`.)* |
 
 The alert model carries the recurrence count, first/last event times, ports and rule identifier,
 read additively from the service response.
@@ -303,7 +323,10 @@ appliance session is headless). See `evidence/ui/README.md` and the per-criterio
 ### Threat Alert titles and explanations (2026-11-14)
 
 Sprint 2 decision (2026-11-11): Option 2. Threat Alert explanations ship in Sprint 2.
-- **Plain title per classtype** in the alert list (e.g. "Malware activity", "Network scan").
+- **Plain title per classtype** in the alert list (e.g. "Possible harmful software", "Network scan").
+  *(Release 1 text review, 2026-11-22: all titles and explanations reworded; 20 rules (by SID)
+  have their own text that overrides the classtype text, e.g. "Connection to an old chat
+  system".)*
 - The **original Suricata rule name** is kept and shown in the alert details ("Rule" row); the
   **rule ID stays hidden** (kept in the database and service).
 - **Explanation per classtype** in the details ("What happened"): what it means and what the user
@@ -312,8 +335,11 @@ Sprint 2 decision (2026-11-11): Option 2. Threat Alert explanations ship in Spri
   "This device was the target."; no line for unlinked or MAC-attributed alerts.
 - **Fallback "Security alert"** (and a generic explanation) for rules with no classtype, including
   the four ASSAS TEST rules, or a classtype not in the table; severity is unchanged.
+  *(Release 1: the fallback is "Network activity detected" with the original rule in the
+  explanation.)*
 - The wording lives in `docs/sprint-2/threat-alert-titles.md` (team-reviewed) and
-  `appliance/alert_text.py`; `appliance/test_alert_text.py` keeps the two in sync row for row.
+  `appliance/alert_text.py`; `appliance/test_alert_text.py` keeps the two in sync row for row
+  (classtype table and rule-specific table).
 - How: the ingester stores eve's `category` and maps it to the short classtype through
   `/etc/suricata/classification.config`, and stores the device role when it links the alert; the
   service adds `display_title` and `explanation` when the alert is read. Existing alerts keep
@@ -456,6 +482,39 @@ alerts. The names and reasons are in `appliance/suricata/disable.conf`.
   `assas-suricata`, `assas-alerts`, `assas-api` and `assas-discovery` are
   active.
 
+### Rule-scope tuning, round 5 (applied 2026-11-23)
+
+Applied on the device on 2026-11-23: enabled rules 53,147, removed exactly the
+50 listed SIDs, 2016503 has `flowbits:noalert`, `suricata -T` passed.
+
+Team decision: disable 50 more rules that only produce trivial alerts, and keep
+one flowbit helper enabled without alerts. The names and reasons are in
+`appliance/suricata/disable.conf` (Round 5 section) and
+`appliance/suricata/modify.conf`.
+
+- Group A: 48 ET rules with classtype `not-suspicious` that raise alerts. They
+  are informational only, not a threat, and of low value for home users.
+  2003481 sets flowbit `BE.Radmin.Auth.Challenge`, used only by 2003482; both
+  are disabled together.
+- Group B: 2200073 (SURICATA IPv4 invalid checksum) and 2200074 (SURICATA
+  TCPv4 invalid checksum): false positives from checksum offloading, millions
+  of hits in IoT-23 testing.
+- Kept enabled without alerts: 2016503 (ET INFO JAVA - Java Serialized Data
+  Download) sets flowbit `et.exploitkitlanding`, which is checked by 2014526
+  (ET EXPLOIT_KIT Exploit Kit Delivering JAR Archive to Client). Disabling it
+  would remove one of about 190 rules that set this flowbit, so it stays
+  enabled as a silent helper to keep full detection for 2014526:
+  `modify.conf` adds `flowbits:noalert`.
+  This makes 28 enabled helper rules with `noalert`.
+- Deployment: `modify.conf` is installed to `/etc/suricata/modify.conf`, and
+  `/etc/suricata/update.yaml` now has an explicit `modify-conf` entry next to
+  `disable-conf`.
+- Result after `suricata-update --offline -c /etc/suricata/update.yaml` on the
+  device: enabled rules **53,197 → 53,147 (−50)**, same counting method as
+  round 2 (2016503 stays enabled). The enabled-SID diff equals exactly the 50
+  listed SIDs, the 2016503 rule line contains `flowbits:noalert`, and
+  `suricata -T` passed.
+
 ### Severity test rules (applied 2026-11-10)
 
 Purpose: verify that the full pipeline handles all four severity levels
@@ -463,6 +522,8 @@ Purpose: verify that the full pipeline handles all four severity levels
 These are test rules, not attack simulation; real-attack detection is shown by
 the ET Open rules and the dataset evaluation.
 
+- *Release 1: replaced by three rules, SIDs 1000001-1000003 (ASSAS TEST High,
+  Medium, Low; priority 1-3; `rev:2`); 1000004 is retired.*
 - Four local rules, SIDs 1000001-1000004, priority 1-4 (Critical, High,
   Medium, Low). Each fires on an HTTP request to `/assas-test/<level>` on the
   appliance. The request is harmless (the server answers 404).

@@ -21,7 +21,7 @@ void main() {
       DeviceListScreen(state: state, filterRequest: request))));
     await tester.pump();
     expect(request.value, isNull);
-    expect(find.text('DEVICE INDEX · 1 / 2'), findsOneWidget);
+    expect(find.text('DEVICES · 1 of 2'), findsOneWidget);
     expect(find.text('New'), findsOneWidget);
     expect(find.text('Known'), findsNothing);
   });
@@ -60,7 +60,7 @@ void main() {
     // ellipsis) and nothing overflows during or after the change.
     await tester.tap(find.bySemanticsLabel(RegExp('^Filter devices')));
     await tester.pump(const Duration(milliseconds: 300));
-    const labels = ['All', 'Attention', 'Not attention', 'Trusted', 'Untrusted',
+    const labels = ['All', 'Attention', 'No attention needed', 'Trusted', 'Untrusted',
       'Online', 'Offline', 'Monitored', 'Not monitored'];
     for (final (z, s) in [(1.0, 0.85), (1.2, 1.0), (1.2, 1.3), (1.06, 1.3), (1.0, 0.85)]) {
       zoom.value = z;

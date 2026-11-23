@@ -4,9 +4,11 @@ import 'device.dart';
 /// Threat Alert = Suricata (Sprint 2). Anomaly Alert = Isolation Forest (Sprint 3).
 enum AlertKind { threat, anomaly }
 
-enum Severity { low, medium, high, critical }
+/// Release 1: Suricata priority 1 -> high, 2 -> medium, 3+ / missing -> low.
+enum Severity { low, medium, high }
 
-enum AlertState { newAlert, reviewed, resolved }
+/// Release 1 workflow: New -> Resolved only (Resolved is terminal).
+enum AlertState { newAlert, resolved }
 
 class SecurityAlert {
   final String id;
@@ -50,6 +52,11 @@ class SecurityAlert {
   final DateTime? firstTime;
   final DateTime? lastTime;
 
+  /// Whether THIS phone has read the alert (opened its details). A per-phone
+  /// marker kept by the appliance, not a state. Resolved alerts are read.
+  /// null = not known (an appliance without read markers, or demo data).
+  final bool? read;
+
   const SecurityAlert({
     required this.id,
     required this.kind,
@@ -71,9 +78,16 @@ class SecurityAlert {
     this.occurrenceCount = 1,
     this.firstTime,
     this.lastTime,
+    this.read,
   });
 
   bool get isUnresolved => state != AlertState.resolved;
+
+  /// Not opened yet on this phone: shows the unread dot and a bold title.
+  bool get isUnread => read == false;
+
+  /// First detection of this (possibly repeated) alert; [time] when unknown.
+  DateTime get firstDetected => firstTime ?? time;
 
   /// Device name for display: opaque machine identifiers collapse to
   /// 'Unknown device' (the raw name stays in [deviceName] / the API).
@@ -92,25 +106,21 @@ class SecurityAlert {
         Severity.low => 'Low',
         Severity.medium => 'Medium',
         Severity.high => 'High',
-        Severity.critical => 'Critical',
       };
 
   BadgeColors get severityColors => switch (severity) {
         Severity.low => BadgeColors.low,
         Severity.medium => BadgeColors.medium,
         Severity.high => BadgeColors.high,
-        Severity.critical => BadgeColors.critical,
       };
 
   String get stateLabel => switch (state) {
         AlertState.newAlert => 'New',
-        AlertState.reviewed => 'Reviewed',
         AlertState.resolved => 'Resolved',
       };
 
   BadgeColors get stateColors => switch (state) {
         AlertState.newAlert => BadgeColors.stateNew,
-        AlertState.reviewed => BadgeColors.stateReviewed,
         AlertState.resolved => BadgeColors.stateResolved,
       };
 
@@ -121,7 +131,7 @@ class SecurityAlert {
           ? 'This activity is unusual for this device. It is not a confirmed attack, but it may need your attention.'
           : null);
 
-  SecurityAlert copyWith({AlertState? state}) => SecurityAlert(
+  SecurityAlert copyWith({AlertState? state, bool? read}) => SecurityAlert(
         id: id,
         kind: kind,
         title: title,
@@ -142,16 +152,18 @@ class SecurityAlert {
         occurrenceCount: occurrenceCount,
         firstTime: firstTime,
         lastTime: lastTime,
+        read: read ?? this.read,
       );
 
   // ---------- From the real API (PROPOSED contract, endpoint not built yet) ----------
   // {
   //   "id": "a-17", "kind": "threat" | "anomaly", "title": "Port scan detected",
   //   "device_mac": "5b:8c:...", "device_name": "Work laptop",
-  //   "time": "2026-10-08T21:15:00", "severity": "low|medium|high|critical",
-  //   "state": "new|reviewed|resolved", "explanation": "...", "note": "...",
+  //   "time": "2026-10-08T21:15:00", "severity": "low|medium|high",
+  //   "state": "new|resolved", "explanation": "...", "note": "...",
   //   "source_ip": "...", "destination_ip": "...",
-  //   "display_title": "Network scan", "device_role": "source|target|null"
+  //   "display_title": "Network scan", "device_role": "source|target|null",
+  //   "read": true|false|null   (this phone; null = no read markers)
   // }
   // Threat alerts: `title` is the Suricata rule name and `display_title` the
   // plain-language title; an older appliance without display_title shows the
@@ -162,7 +174,7 @@ class SecurityAlert {
     return SecurityAlert(
       id: j['id'].toString(),
       kind: j['kind']?.toString() == 'anomaly' ? AlertKind.anomaly : AlertKind.threat,
-      title: (j['display_title'] ?? ruleName ?? 'Security alert').toString(),
+      title: (j['display_title'] ?? ruleName ?? 'Network activity detected').toString(),
       ruleName: ruleName,
       deviceRole: role == 'source' || role == 'target' ? role : null,
       deviceMac: j['device_mac']?.toString(),
@@ -180,25 +192,25 @@ class SecurityAlert {
       occurrenceCount: (j['occurrence_count'] as num?)?.toInt() ?? 1,
       firstTime: DateTime.tryParse(j['first_event_time']?.toString() ?? ''),
       lastTime: DateTime.tryParse(j['last_event_time']?.toString() ?? ''),
+      read: j['read'] is bool ? j['read'] as bool : null,
     );
   }
 
+  // An older appliance may still send 'critical' (priority 1): that is High now.
   static Severity severityFromApi(String? v) => switch (v?.toLowerCase()) {
-        'critical' => Severity.critical,
-        'high' => Severity.high,
+        'critical' || 'high' => Severity.high,
         'medium' => Severity.medium,
         _ => Severity.low,
       };
 
+  // Anything not resolved (including a retired 'reviewed') is New.
   static AlertState stateFromApi(String? v) => switch (v?.toLowerCase()) {
-        'reviewed' => AlertState.reviewed,
         'resolved' => AlertState.resolved,
         _ => AlertState.newAlert,
       };
 
   static String stateToApi(AlertState s) => switch (s) {
         AlertState.newAlert => 'new',
-        AlertState.reviewed => 'reviewed',
         AlertState.resolved => 'resolved',
       };
 }

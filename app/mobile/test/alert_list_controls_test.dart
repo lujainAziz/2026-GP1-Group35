@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// Unresolved alerts start unread on this phone; resolved ones are read.
 SecurityAlert _mk(String id, Severity sev, int sec,
         {AlertState state = AlertState.newAlert}) =>
     SecurityAlert(
@@ -21,6 +22,7 @@ SecurityAlert _mk(String id, Severity sev, int sec,
       time: DateTime(2026, 11, 7, 10).add(Duration(seconds: sec)),
       severity: sev,
       state: state,
+      read: state == AlertState.resolved,
     );
 
 /// Serves a fixed alert set; getAlerts respects the page limit (newest first).
@@ -74,12 +76,12 @@ void main() {
   testWidgets('list is newest-first; the sort control is not on this screen',
       (tester) async {
     await _pump(tester, [
-      _mk('crit', Severity.critical, 0),   // oldest
+      _mk('med', Severity.medium, 0),      // oldest
       _mk('low', Severity.low, 30),
       _mk('high', Severity.high, 60),      // newest
     ]);
     // Newest first, always (sort toggle moved to device details).
-    expect(_cardOrder(tester), ['high', 'low', 'crit']);
+    expect(_cardOrder(tester), ['high', 'low', 'med']);
     expect(find.text('Newest'), findsNothing);
     expect(find.text('Most severe'), findsNothing);
     // Tabs and the Filter control share one row.
@@ -91,16 +93,18 @@ void main() {
   testWidgets('severity filter (devices-style dropdown) shows only the selected severities',
       (tester) async {
     await _pump(tester, [
-      _mk('crit', Severity.critical, 0),
+      _mk('low', Severity.low, 0),
       _mk('med', Severity.medium, 30),
       _mk('high', Severity.high, 60),
     ]);
-    expect(_cardOrder(tester).toSet(), {'crit', 'med', 'high'});
-
-    // Open the filter dropdown and restrict to Critical + High.
+    expect(_cardOrder(tester).toSet(), {'low', 'med', 'high'});
+    // Release 1: only High / Medium / Low chips (no Critical).
     await tester.tap(find.byKey(const ValueKey('alertFilterButton')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('sevchip_critical')));
+    expect(find.byKey(const ValueKey('sevchip_critical')), findsNothing);
+
+    // Restrict to Low + High.
+    await tester.tap(find.byKey(const ValueKey('sevchip_low')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('sevchip_high')));
     await tester.pumpAndSettle();
@@ -110,7 +114,7 @@ void main() {
 
     final ids = _cardOrder(tester).toSet();
     expect(ids.contains('med'), isFalse); // medium not selected -> hidden
-    expect(ids.containsAll({'crit', 'high'}), isTrue);
+    expect(ids.containsAll({'low', 'high'}), isTrue);
     // The filter button shows the active count like the devices filter.
     expect(find.text('2 filters'), findsOneWidget);
   });
@@ -118,19 +122,19 @@ void main() {
   testWidgets('filter keeps "Load older" available so it reaches the full list',
       (tester) async {
     // 2000 newest are Medium (fills the first page -> alertsHaveMore), with a
-    // Critical one older than the page. Restricting to Critical empties the
+    // High one older than the page. Restricting to High empties the
     // loaded page, but the load-older affordance must remain so older matches
     // load.
     final many = [
       for (var i = 0; i < 2000; i++) _mk('m$i', Severity.medium, 10000 - i),
-      _mk('crit-old', Severity.critical, 0),
+      _mk('high-old', Severity.high, 0),
     ];
     final state = await _pump(tester, many);
     expect(state.alertsHaveMore, isTrue);
 
     await tester.tap(find.byKey(const ValueKey('alertFilterButton')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('sevchip_critical'))); // show only Critical
+    await tester.tap(find.byKey(const ValueKey('sevchip_high'))); // show only High
     await tester.pumpAndSettle();
     await tester.tapAt(const Offset(10, 1000));
     await tester.pumpAndSettle();
@@ -139,11 +143,11 @@ void main() {
     expect(find.text('No alerts match the filter'), findsOneWidget);
     expect(find.text('Load older alerts'), findsOneWidget);
 
-    // Loading older pulls in the critical one, which then matches the filter
+    // Loading older pulls in the High one, which then matches the filter
     // (the load is real-async, so drive it under runAsync).
     await tester.runAsync(() => state.loadMoreAlerts());
     await tester.pumpAndSettle();
-    expect(_cardOrder(tester), ['crit-old']);
+    expect(_cardOrder(tester), ['high-old']);
   });
 
   testWidgets('Filter button keeps one width inactive vs active, at normal and large font',
@@ -152,7 +156,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       await _loadFonts();
       final state = AppState(_Repo([
-        for (var i = 0; i < 6; i++) _mk('c$i', Severity.critical, 100 - i),
+        for (var i = 0; i < 6; i++) _mk('l$i', Severity.low, 100 - i),
         for (var i = 0; i < 5; i++) _mk('h$i', Severity.high, 60 - i),
       ]));
       addTearDown(state.dispose);
@@ -179,7 +183,7 @@ void main() {
       // Activate two severities.
       await tester.tap(pill);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('sevchip_critical')));
+      await tester.tap(find.byKey(const ValueKey('sevchip_low')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('sevchip_high')));
       await tester.pumpAndSettle();
@@ -203,7 +207,7 @@ void main() {
       await _loadFonts();
       final state = AppState(_Repo([
         for (var i = 0; i < 11; i++) _mk('o$i', Severity.high, 100 - i),
-        _mk('done', Severity.critical, 0, state: AlertState.resolved),
+        _mk('done', Severity.high, 0, state: AlertState.resolved),
       ]));
       addTearDown(state.dispose);
       addTearDown(tester.view.reset);
@@ -226,7 +230,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('sevchip_high')));
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('sevchip_critical')));
+        await tester.tap(find.byKey(const ValueKey('sevchip_low')));
         await tester.pumpAndSettle();
         await tester.tapAt(const Offset(8, 1300));
         await tester.pumpAndSettle();
@@ -251,16 +255,16 @@ void main() {
     }
   });
 
-  testWidgets('4 filters at the app smallest AND largest real font: one pinned row, all counts whole',
+  testWidgets('3 filters at the app smallest AND largest real font: one pinned row, all counts whole',
       (tester) async {
     // The app's actual extremes: zoom 1.0 x system 0.85 and zoom 1.2 x system 1.3.
     for (final (zoom, scale) in [(1.0, 0.85), (1.2, 1.3)]) {
       SharedPreferences.setMockInitialValues(
-          {'ui.alertSeverities': ['low', 'medium', 'high', 'critical']});
+          {'ui.alertSeverities': ['low', 'medium', 'high']});
       await _loadFonts();
       final state = AppState(_Repo([
         for (var i = 0; i < 287; i++) _mk('o$i', Severity.high, 1000 - i),
-        _mk('done', Severity.critical, 0, state: AlertState.resolved),
+        _mk('done', Severity.high, 0, state: AlertState.resolved),
       ]));
       addTearDown(state.dispose);
       addTearDown(tester.view.reset);
@@ -282,11 +286,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       final reason = 'zoom=$zoom scale=$scale';
 
-      expect(find.text('4 filters'), findsOneWidget, reason: reason);
+      expect(find.text('3 filters'), findsOneWidget, reason: reason);
       expect(tester.takeException(), isNull, reason: reason);
 
-      // All 288 / Open 287 / Resolved 1 all whole, with the button on one row.
-      for (final t in ['All', 'Open', 'Resolved', '288', '287']) {
+      // All 288 / Unread 287 (badge) / Resolved 1 all whole, button on one row.
+      for (final t in ['All', 'Unread', 'Resolved', '288', '287']) {
         expect(find.text(t).first, findsOneWidget, reason: '$reason: $t');
       }
       final resolved = tester.getRect(find.text('Resolved').first);
@@ -300,7 +304,7 @@ void main() {
     }
   });
 
-  testWidgets('375px, normal text: All 267 / Open 266 / Resolved 1 fit beside Filter',
+  testWidgets('375px, normal text: All 267 / Unread 266 / Resolved 1 fit beside Filter',
       (tester) async {
     // Web at 375 wide goes through DesignScale; the unstacked tabs row is at its
     // tightest here with three-digit counts.
@@ -308,7 +312,7 @@ void main() {
     await _loadFonts();
     final state = AppState(_Repo([
       for (var i = 0; i < 266; i++) _mk('o$i', Severity.high, 1000 - i),
-      _mk('done', Severity.critical, 0, state: AlertState.resolved),
+      _mk('done', Severity.high, 0, state: AlertState.resolved),
     ]));
     addTearDown(state.dispose);
     addTearDown(tester.view.reset);
@@ -329,7 +333,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.takeException(), isNull);
 
-    for (final t in ['All', 'Open', 'Resolved', '267', '266']) {
+    for (final t in ['All', 'Unread', 'Resolved', '267', '266']) {
       expect(find.text(t).first, findsOneWidget, reason: t);
     }
     // "Resolved" is whole: on-screen and left of the Filter button, not clipped.

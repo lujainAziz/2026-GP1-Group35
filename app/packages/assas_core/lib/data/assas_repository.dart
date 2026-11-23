@@ -46,7 +46,7 @@ abstract class AssasRepository {
   Future<List<SecurityAlert>?> getAlerts({int? limit});
   Future<void> setAlertState(String id, AlertState state);
 
-  /// Total OPEN alerts (New + Reviewed) as a DB aggregate — not the length of a
+  /// Total OPEN (New) alerts as a DB aggregate — not the length of a
   /// loaded page. null = not available yet.
   Future<int?> getOpenAlertCount();
 
@@ -57,6 +57,19 @@ abstract class AssasRepository {
   /// One alert by id, fetched directly (so it survives leaving the loaded page).
   /// null = not found / not available.
   Future<SecurityAlert?> getAlertById(String id);
+
+  /// Mark one alert read for this phone (opening its details does this). Not a
+  /// state change. Returns the updated alert; null = not available (unknown
+  /// alert, or an appliance without read markers).
+  Future<SecurityAlert?> markAlertRead(String id);
+
+  /// This phone's unread alerts that are still unresolved (the Unread tab),
+  /// newest first, up to [limit]. null = not available.
+  Future<List<SecurityAlert>?> getUnreadAlerts({int? limit});
+
+  /// Count of this phone's unread, unresolved alerts as a DB aggregate (the
+  /// Unread tab badge). null = not available.
+  Future<int?> getUnreadAlertCount();
 
   // ---------- Pairing (Sprint 1) ----------
   /// Phone: sends the code (and the phone's name), returns the session token.

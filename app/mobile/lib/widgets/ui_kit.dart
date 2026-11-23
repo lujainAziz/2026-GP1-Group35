@@ -390,7 +390,7 @@ class KickerRow extends StatelessWidget {
   }
 }
 
-/// Round status pill (New / Reviewed / Resolved).
+/// Round status pill (New / Resolved).
 class StatePill extends StatelessWidget {
   const StatePill(this.alert, {super.key, this.padding});
 
@@ -399,7 +399,7 @@ class StatePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Alert states arrive with alert management (Sprint 5).
+    // Alert states arrive with alert management (Sprint 2).
     if (!Released.alertManagement) return const SizedBox.shrink();
     return Container(
       padding: padding ?? const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -575,15 +575,24 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The title is never clipped: it may wrap to a second line, and when it
+    // does not fit beside the trailing control (e.g. the sort button at large
+    // text sizes) the control moves to its own line under the title.
+    final title = Text(text, style: UiText.section, maxLines: 2, overflow: TextOverflow.ellipsis);
     return Padding(
       padding: padding,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(child: Text(text, style: UiText.section, maxLines: 1)),
-          if (trailing != null) trailing!,
-        ],
-      ),
+      child: trailing == null
+          ? Row(children: [Expanded(child: title)])
+          : SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [title, trailing!],
+              ),
+            ),
     );
   }
 }
@@ -875,7 +884,31 @@ class TimelineAlertCard extends StatelessWidget {
                 children: [
                   AlertMetaRow(alert),
                   SizedBox(height: compact ? 3 : 4),
-                  Text(alert.title, style: compact ? UiText.recentTitle.copyWith(letterSpacing: 0) : UiText.alertCardTitle),
+                  // Unread on this phone: a dot and a bold title.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (alert.isUnread) ...[
+                        Padding(
+                          padding: EdgeInsets.only(top: compact ? 7 : 8),
+                          child: Container(
+                            key: const ValueKey('unreadDot'),
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(color: Ui.acc, shape: BoxShape.circle),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                      ],
+                      Expanded(
+                        child: Text(
+                          alert.title,
+                          style: (compact ? UiText.recentTitle.copyWith(letterSpacing: 0) : UiText.alertCardTitle)
+                              .copyWith(fontWeight: alert.isUnread ? FontWeight.w800 : FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
                   SizedBox(height: compact ? 3 : 4),
                   if (compact && Released.alertManagement)
                     Text(alert.stateLabel, style: UiText.pill.copyWith(color: stateColor(alert)))
