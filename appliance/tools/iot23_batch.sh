@@ -21,6 +21,12 @@
 #   IOT23_EVE_MODE      after ingest: alerts (keep alert lines gzipped, delete eve.json),
 #                       gzip (gzip the whole eve.json) or delete [alerts]
 #   IOT23_SHA256        1 records each pcap's sha256 [1]
+#   IOT23_EVE_FILTER_MB an eve.json larger than this is first cut down (streamed, grep) to
+#                       its lines containing "alert"; ingest and counts read only those.
+#                       Same results: both only use alert events. 0 = never [1024]
+#   IOT23_MEM_LIMIT_MB  virtual memory cap (ulimit -v) for the Python steps, so one
+#                       scenario fails with MemoryError instead of freezing the device.
+#                       0 = no cap [2048]
 #   IOT23_SUDO          prefix for suricata when the rules can't be read as assas, e.g. "sudo -n" []
 #   IOT23_SURICATA_CONF [/etc/suricata/assas.yaml]
 #   ASSAS_REAL_DB       schema source, opened read-only [/home/assas/assas/assas.db]
@@ -34,6 +40,8 @@ TABLE=${IOT23_TABLE:-$HERE/iot23_scenarios.txt}
 MIN_FREE_GB=${IOT23_MIN_FREE_GB:-5}
 EVE_MODE=${IOT23_EVE_MODE:-alerts}
 DO_SHA=${IOT23_SHA256:-1}
+EVE_FILTER_MB=${IOT23_EVE_FILTER_MB:-1024}
+MEM_LIMIT_MB=${IOT23_MEM_LIMIT_MB:-2048}
 SUDO=${IOT23_SUDO:-}
 read -r -a SUDO_CMD <<<"$SUDO"
 SURI_CONF=${IOT23_SURICATA_CONF:-/etc/suricata/assas.yaml}
@@ -55,6 +63,8 @@ while [ $# -gt 0 ]; do
 done
 
 case $EVE_MODE in alerts|gzip|delete) ;; *) echo "IOT23_EVE_MODE must be alerts, gzip or delete" >&2; exit 2 ;; esac
+case $EVE_FILTER_MB in ''|*[!0-9]*) echo "IOT23_EVE_FILTER_MB must be a whole number of MB" >&2; exit 2 ;; esac
+case $MEM_LIMIT_MB in ''|*[!0-9]*) echo "IOT23_MEM_LIMIT_MB must be a whole number of MB" >&2; exit 2 ;; esac
 [ -d "$DATA" ] || { echo "dataset folder not found: $DATA" >&2; exit 2; }
 [ -f "$REAL_DB" ] || { echo "schema source not found: $REAL_DB" >&2; exit 2; }
 case $OUT in /*) ;; *) echo "IOT23_OUT must be an absolute path" >&2; exit 2 ;; esac
@@ -77,6 +87,14 @@ disk_ok() {
     kb=$(free_kb)
     case $kb in ''|*[!0-9]*) echo "cannot read free space on $DISK_PATH" >&2; return 1 ;; esac
     [ "$kb" -ge $((MIN_FREE_GB * 1024 * 1024)) ]
+}
+
+# Python under the memory cap: past it Python raises MemoryError and exits non-zero.
+py_capped() {
+    (
+        [ "$MEM_LIMIT_MB" -gt 0 ] && ulimit -v $((MEM_LIMIT_MB * 1024))
+        exec "$PY" "$@"
+    )
 }
 
 wanted() {
@@ -136,7 +154,7 @@ run_suricata() { # pcap rundir log
 
 # Scenario state shared with write_result.
 S_KIND= S_SCEN= S_LABEL= S_DIR=
-S_PCAPS=() S_IPS=() S_MACS=() S_EVES=()
+S_PCAPS=() S_IPS=() S_MACS=() S_EVES=() S_RAW_EVES=()
 S_SURI_SECS=0 S_START=0
 
 write_result() { # status
@@ -147,7 +165,7 @@ write_result() { # status
     for x in "${S_IPS[@]}"; do args+=(--host-ip "$x"); done
     for x in "${S_MACS[@]}"; do args+=(--mac "$x"); done
     for x in "${S_EVES[@]}"; do args+=(--eve "$x"); done
-    "$PY" "$HELPER" "${args[@]}" >>"$S_DIR/run.log" 2>&1
+    py_capped "$HELPER" "${args[@]}" >>"$S_DIR/run.log" 2>&1
 }
 
 say() { echo "[$S_SCEN] $*" | tee -a "$S_DIR/run.log"; }
@@ -196,9 +214,9 @@ plan_scenario() { # kind scen label table_ips
 }
 
 run_scenario() { # kind scen label table_ips
-    local p ip mac i rc t0 devs=() conflicts
+    local p ip mac i rc t0 devs=() conflicts eve eve_mb
     S_KIND=$1 S_SCEN=$2 S_LABEL=$3 S_DIR=$OUT/$2
-    S_PCAPS=() S_IPS=() S_MACS=() S_EVES=() S_SURI_SECS=0 S_START=$SECONDS
+    S_PCAPS=() S_IPS=() S_MACS=() S_EVES=() S_RAW_EVES=() S_SURI_SECS=0 S_START=$SECONDS
 
     if [ -e "$S_DIR/DONE" ]; then
         echo "[$S_SCEN] done earlier, skipped"
@@ -258,8 +276,17 @@ run_scenario() { # kind scen label table_ips
             return 3
         fi
         [ $rc -eq 0 ] && [ -f "$S_DIR/run$i/eve.json" ] || { say "suricata exit $rc"; stop suricata_failed; return; }
-        S_EVES+=("$S_DIR/run$i/eve.json")
-        if ! "$PY" "$HERE/iot23_ingest_once.py" --db "$S_DIR/test.db" --eve "$S_DIR/run$i/eve.json" \
+        eve=$S_DIR/run$i/eve.json
+        S_RAW_EVES+=("$eve")
+        eve_mb=$(( $(stat -c %s "$eve") / 1024 / 1024 ))
+        if [ "$EVE_FILTER_MB" -gt 0 ] && [ "$eve_mb" -gt "$EVE_FILTER_MB" ]; then
+            say "eve.json is $eve_mb MB (> $EVE_FILTER_MB MB): ingest and counts read only its alert lines"
+            LC_ALL=C grep -F '"alert"' "$eve" >"$S_DIR/run$i/alert-lines.json"
+            [ $? -le 1 ] || { say "could not filter $eve"; stop filter_failed; return; }
+            eve=$S_DIR/run$i/alert-lines.json
+        fi
+        S_EVES+=("$eve")
+        if ! py_capped "$HERE/iot23_ingest_once.py" --db "$S_DIR/test.db" --eve "$eve" \
                 2>&1 | tee -a "$S_DIR/run.log" | sed "s/^/[$S_SCEN] /"; then
             stop ingest_failed
             return
@@ -267,7 +294,8 @@ run_scenario() { # kind scen label table_ips
     done
 
     write_result done || { say "could not write result.json"; return 1; }
-    for p in "${S_EVES[@]}"; do
+    for p in "${S_RAW_EVES[@]}"; do
+        rm -f -- "$(dirname "$p")/alert-lines.json"
         case $EVE_MODE in
             alerts) grep -F '"event_type":"alert"' "$p" | gzip >"${p%.json}-alerts.json.gz"; rm -f -- "$p" ;;
             gzip) gzip -f -- "$p" ;;
@@ -298,7 +326,8 @@ fi
     echo "== $(date -Is)"
     suricata -V 2>&1 | head -n 1
     ls -l --time-style=long-iso /var/lib/suricata/rules/suricata.rules 2>&1
-    echo "config: $SURI_CONF  eve mode: $EVE_MODE  min free: $MIN_FREE_GB GB"
+    echo "config: $SURI_CONF  eve mode: $EVE_MODE  min free: $MIN_FREE_GB GB" \
+         " eve filter above: $EVE_FILTER_MB MB  python memory cap: $MEM_LIMIT_MB MB"
 } >>"$OUT/run-info.txt"
 
 status=0

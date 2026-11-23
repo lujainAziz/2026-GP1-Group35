@@ -91,6 +91,10 @@ def main(argv=None):
             s = ingest_once(conn, args.eve, args.window)
         except (ValueError, sqlite3.Error) as exc:
             return fail(exc)
+        except MemoryError:
+            # Memory cap hit (iot23_batch.sh runs this under ulimit -v); the
+            # transaction is rolled back, so the test database is unchanged.
+            return fail(f"out of memory while ingesting {args.eve}")
     print(f"alert events read: {s['events']}  new alerts: {s['inserted']}  "
           f"merged into existing: {s['merged']}")
     print(f"test database now: {s['alerts_total']} alert(s), {s['linked_total']} linked to a device")

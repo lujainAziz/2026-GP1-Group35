@@ -1001,46 +1001,54 @@ def process_file(conn, path, window_seconds):
         if offset == size:
             return dev, ino, offset, size  # nothing new
 
+        # Stream line by line: memory stays bounded by the longest line, never
+        # the file (an offline eve.json can be several GB). Same rule as
+        # split_complete_lines: a trailing partial line (no newline yet) is
+        # left unconsumed so it is re-read when complete.
         f.seek(offset)
-        data = f.read()
-
-    complete, consumed = split_complete_lines(data)
-    new_offset = offset + consumed
-
-    with conn:  # ONE transaction: all upserts + the checkpoint
-        for raw in complete:
-            s = raw.strip()
-            if not s:
-                continue
-            try:
-                obj = json.loads(s)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                # json.loads(bytes) auto-detects encoding and raises
-                # UnicodeDecodeError (not JSONDecodeError) on malformed bytes;
-                # catch both so one bad line is skipped, not fatal. The line's
-                # bytes are still counted in `consumed`, so the offset advances
-                # past it and the daemon never stalls on it.
-                log.warning("skipping malformed eve line (bad JSON) in %s", path)
-                continue
-            try:
-                a = parse_alert_event(obj)
-            except (AttributeError, TypeError, ValueError, KeyError) as exc:
-                # Valid JSON but an unexpected shape (e.g. a bare null/list, or a
-                # non-object `alert`). Skip the record; DO NOT catch DB errors
-                # here, which must roll the transaction back and be retried.
-                log.warning("skipping structurally-invalid eve record in %s (%s)", path, type(exc).__name__)
-                continue
-            if a is None:
-                continue
-            ingest_alert(conn, a, window_seconds)
-        conn.execute(
-            "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(st_dev, st_ino) DO UPDATE SET offset=excluded.offset, "
-            "path=excluded.path, updated_at=excluded.updated_at",
-            (dev, ino, path, new_offset, datetime.now().replace(microsecond=0).isoformat(sep="T")),
-        )
+        new_offset = offset
+        with conn:  # ONE transaction: all upserts + the checkpoint
+            for raw in f:
+                if not raw.endswith(b"\n"):
+                    break
+                new_offset += len(raw)
+                _ingest_line(conn, raw, path, window_seconds)
+            conn.execute(
+                "INSERT INTO alert_ingest_state (st_dev, st_ino, path, offset, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(st_dev, st_ino) DO UPDATE SET offset=excluded.offset, "
+                "path=excluded.path, updated_at=excluded.updated_at",
+                (dev, ino, path, new_offset, datetime.now().replace(microsecond=0).isoformat(sep="T")),
+            )
     return dev, ino, new_offset, size
+
+
+def _ingest_line(conn, raw, path, window_seconds):
+    """Parse one eve line and ingest it if it is an alert; bad lines are skipped."""
+    s = raw.strip()
+    if not s:
+        return
+    try:
+        obj = json.loads(s)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # json.loads(bytes) auto-detects encoding and raises
+        # UnicodeDecodeError (not JSONDecodeError) on malformed bytes;
+        # catch both so one bad line is skipped, not fatal. The line's
+        # bytes are still counted in the offset, so the daemon never
+        # stalls on it.
+        log.warning("skipping malformed eve line (bad JSON) in %s", path)
+        return
+    try:
+        a = parse_alert_event(obj)
+    except (AttributeError, TypeError, ValueError, KeyError) as exc:
+        # Valid JSON but an unexpected shape (e.g. a bare null/list, or a
+        # non-object `alert`). Skip the record; DO NOT catch DB errors
+        # here, which must roll the transaction back and be retried.
+        log.warning("skipping structurally-invalid eve record in %s (%s)", path, type(exc).__name__)
+        return
+    if a is None:
+        return
+    ingest_alert(conn, a, window_seconds)
 
 
 def _resume_at_eof(conn, path, dev, ino, offset, size):

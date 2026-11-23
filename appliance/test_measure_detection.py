@@ -42,7 +42,7 @@ def test_measure_counts_per_sid(tmp_path):
                                         "2026-11-06T12:20:00", {"192.168.1.195"})
     assert counts == {2024001: 2, 2010935: 1}
     assert names[2024001] == "SIG 2024001"
-    assert len(matched) == 3
+    assert matched == 3
 
 
 def test_suricata_comm_matcher():

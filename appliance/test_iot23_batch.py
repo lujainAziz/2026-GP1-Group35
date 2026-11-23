@@ -230,3 +230,36 @@ def test_table_cli(tmp_path, capsys):
     t.write_text("benign CTU-C-1 - - 192.168.1.9,192.168.1.10\n")
     assert batch.main(["table", str(t)]) == 0
     assert capsys.readouterr().out == "benign\tCTU-C-1\t-\t192.168.1.9,192.168.1.10\n"
+
+
+def test_eve_stats_and_measure_stream_large_eve(tmp_path):
+    """Bounded memory on a large eve.json; the alert-line cut that iot23_batch.sh
+    makes above IOT23_EVE_FILTER_MB gives the same counts."""
+    import tracemalloc
+    import measure_detection as md
+
+    eve = tmp_path / "eve.json"
+    pad = "x" * 400
+    with open(eve, "w") as f:
+        for i in range(60_000):
+            if i % 600 == 0:
+                f.write(alert(1 + i % 7, sev=1 + i % 3) + "\n")
+            else:
+                f.write(json.dumps({"event_type": "flow", "src_ip": HOST, "pad": pad}) + "\n")
+    size = eve.stat().st_size
+    tracemalloc.start()
+    try:
+        full = batch.eve_stats([str(eve)], [HOST])
+        with open(tmp_path / "slice.jsonl", "wb") as save:
+            counts, _names, matched = md.measure([str(eve)], "", "9999", set(), save)
+        _cur, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < size // 5, f"peak {peak} bytes for a {size}-byte eve.json"
+    assert full[0] == 100 and matched == 100 and sum(counts.values()) == 100
+    assert (tmp_path / "slice.jsonl").read_bytes().count(b"\n") == 100
+
+    cut = tmp_path / "alert-lines.json"
+    with open(eve, "rb") as src, open(cut, "wb") as dst:
+        dst.writelines(line for line in src if b'"alert"' in line)
+    assert batch.eve_stats([str(cut)], [HOST]) == full

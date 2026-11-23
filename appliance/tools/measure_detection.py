@@ -17,6 +17,7 @@ optionally saves the matching raw lines for the evidence folder.
 import argparse
 import glob
 import json
+import os
 import sys
 from collections import Counter
 
@@ -33,10 +34,13 @@ def event_matches(obj, start, stop, addrs):
     return obj.get("src_ip") in addrs or obj.get("dest_ip") in addrs
 
 
-def measure(paths, start, stop, addrs):
+def measure(paths, start, stop, addrs, save=None):
+    """Stream the files: (per-sid counts, sid names, matched event count).
+    Matching raw lines go straight to the `save` binary handle, if any, so
+    memory does not grow with the number of matches."""
     counts = Counter()
     names = {}
-    matched_lines = []
+    matched = 0
     for path in paths:
         try:
             handle = open(path, "rb")
@@ -56,8 +60,10 @@ def measure(paths, start, stop, addrs):
                 sid = alert.get("signature_id")
                 counts[sid] += 1
                 names.setdefault(sid, alert.get("signature", ""))
-                matched_lines.append(raw)
-    return counts, names, matched_lines
+                matched += 1
+                if save is not None:
+                    save.write(raw)
+    return counts, names, matched
 
 
 def main():
@@ -71,16 +77,20 @@ def main():
     args = ap.parse_args()
 
     paths = sorted(glob.glob(glob.escape(args.eve) + "*"))
-    counts, names, lines = measure(paths, args.start, args.stop, set(args.addr))
+    if args.save:
+        # Matches are written while reading: never read the slice being written.
+        paths = [p for p in paths if os.path.abspath(p) != os.path.abspath(args.save)]
+        with open(args.save, "wb") as save:
+            counts, names, matched = measure(paths, args.start, args.stop, set(args.addr), save)
+    else:
+        counts, names, matched = measure(paths, args.start, args.stop, set(args.addr))
 
     print(f"window {args.start} .. {args.stop}  addresses={sorted(args.addr) or 'ANY'}")
     for sid, n in counts.most_common():
         print(f"  sid={sid:<9} events={n:<6} {names.get(sid, '')[:60]}")
     print(f"TOTAL raw matched alert events: {sum(counts.values())} across {len(counts)} signature(s)")
     if args.save:
-        with open(args.save, "wb") as f:
-            f.writelines(lines)
-        print(f"evidence slice saved: {args.save} ({len(lines)} lines)")
+        print(f"evidence slice saved: {args.save} ({matched} lines)")
     return 0
 
 

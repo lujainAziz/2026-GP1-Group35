@@ -248,3 +248,72 @@ def test_ingest_reports_incomplete_last_line(tmp_path, capsys):
     eve.write_text(json.dumps(ev("2018-12-21T15:50:14.000000+0000")) + "\n" + '{"event_type": "al')
     assert ingest.main(["--db", str(db), "--eve", str(eve)]) == 0
     assert "incomplete line" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- #
+# Large eve.json: bounded memory (the device froze on a 6.9 GB eve.json)
+# --------------------------------------------------------------------------- #
+PAD = "x" * 400
+
+
+def write_big_eve(path, lines=60_000, alert_every=600):
+    """~30 MB of mostly non-alert events with an alert every `alert_every` lines,
+    2 minutes apart over two sids (so the 5-minute dedup merges them), plus stats records that
+    contain the word "alert" like Suricata's do. Returns the alert count."""
+    n = 0
+    with open(path, "w") as f:
+        for i in range(lines):
+            if i % alert_every == 0:
+                m = 2 * n
+                ts = f"2018-12-21T{10 + m // 60:02d}:{m % 60:02d}:00.000000+0000"
+                f.write(json.dumps(ev(ts, sid=2024001 + n % 2)) + "\n")
+                n += 1
+            elif i % 5000 == 1:
+                f.write(json.dumps({"event_type": "stats", "stats": {"detect": {"alert": n}}}) + "\n")
+            else:
+                f.write(json.dumps({"event_type": "flow", "src_ip": INFECTED, "pad": PAD}) + "\n")
+    return n
+
+
+def alert_rows(db):
+    conn = sqlite3.connect(db)
+    try:
+        return conn.execute(
+            "SELECT rule_id, device_mac, device_role, severity, occurrence_count, "
+            "event_time, last_event_time, state FROM alerts ORDER BY alert_id").fetchall()
+    finally:
+        conn.close()
+
+
+@linux_file_ids
+def test_ingest_streams_large_eve_and_alert_lines_give_same_result(tmp_path, capsys):
+    import tracemalloc
+
+    (tmp_path / "full").mkdir()
+    (tmp_path / "cut").mkdir()
+    eve = tmp_path / "full" / "eve.json"
+    n = write_big_eve(eve)
+    size = eve.stat().st_size
+    assert size > 25_000_000
+
+    db_full = prepared_db(tmp_path / "full")
+    tracemalloc.start()
+    try:
+        assert ingest.main(["--db", str(db_full), "--eve", str(eve)]) == 0
+        _cur, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # The old whole-file read held the file twice (bytes + split list).
+    assert peak < size // 5, f"peak {peak} bytes for a {size}-byte eve.json"
+    out = capsys.readouterr().out
+    assert f"alert events read: {n} " in out
+
+    # What iot23_batch.sh does above IOT23_EVE_FILTER_MB (grep -F '"alert"').
+    cut = tmp_path / "cut" / "alert-lines.json"
+    with open(eve, "rb") as src, open(cut, "wb") as dst:
+        dst.writelines(line for line in src if b'"alert"' in line)
+    db_cut = prepared_db(tmp_path / "cut")
+    assert ingest.main(["--db", str(db_cut), "--eve", str(cut)]) == 0
+    rows = alert_rows(db_full)
+    assert rows and rows == alert_rows(db_cut)
+    assert sum(r[4] for r in rows) == n and len(rows) < n  # dedup merged some
