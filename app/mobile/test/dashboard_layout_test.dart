@@ -17,7 +17,7 @@ class _ManyDevicesRepository extends DemoRepository {
     devices = [
       for (var i = 1; i <= 170; i++)
         Device(
-          mac: '5b:8c:da:4d:${(i ~/ 256).toRadixString(16).padLeft(2, '0')}:${(i % 256).toRadixString(16).padLeft(2, '0')}',
+          mac: '5b:8c:da:01:${(i ~/ 256).toRadixString(16).padLeft(2, '0')}:${(i % 256).toRadixString(16).padLeft(2, '0')}',
           ip: '192.168.1.$i',
           hostname: 'Device $i',
           vendor: 'TP-Link',

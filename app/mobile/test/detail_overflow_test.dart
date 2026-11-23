@@ -19,7 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _mac = '02:5a:01:00:0e:8f';
+const _mac = '02:5a:01:00:00:01';
 const _ipv6 = '2001:0db8:dea6:2200:79ee:14d2:e191:965e';
 const _opaqueHost = 'a7f3e9c1b2d84f60a7f3e9c1b2d84f60'; // 32 hex -> machine id
 const _longTitle =

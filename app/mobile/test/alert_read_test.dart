@@ -21,7 +21,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _camera = '7c:6b:cb:00:01:5d'; // a demo device
+const _camera = '7c:6b:cb:00:00:11'; // a demo device
 
 SecurityAlert _mk(String id, {bool read = false, AlertState state = AlertState.newAlert, int sec = 0}) =>
     SecurityAlert(

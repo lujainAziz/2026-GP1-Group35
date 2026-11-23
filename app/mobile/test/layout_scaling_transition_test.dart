@@ -17,7 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _mac = '02:5a:01:00:0e:8f';
+const _mac = '02:5a:01:00:00:01';
 
 class _Repo extends DemoRepository {
   final Device _dev = const Device(
