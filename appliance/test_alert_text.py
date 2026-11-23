@@ -52,10 +52,10 @@ def test_table_matches_reviewed_doc():
 
 def test_rule_table_matches_reviewed_doc():
     groups = _doc_rule_groups()
-    assert len(groups) == 6
+    assert len(groups) == 10
     assert alert_text.RULE_GROUPS == groups
     sids = [s for g, _ in groups for s in g]
-    assert len(sids) == len(set(sids)) == len(alert_text.RULE_TEXT) == 20
+    assert len(sids) == len(set(sids)) == len(alert_text.RULE_TEXT) == 42
 
 
 def test_alert_text_lookup_and_fallback():
@@ -83,6 +83,30 @@ def test_rule_text_overrides_classtype():
     # The rule ID is never shown to the user.
     for sid, (title, explanation) in alert_text.RULE_TEXT.items():
         assert str(sid) not in title + explanation
+
+
+def test_iot23_review_rule_titles():
+    expected = {
+        2029028: "Signs of harmful software for smart devices",
+        2038659: "Request for a program built for smart devices",
+        2000348: "Connection to an old chat system",
+        2027504: "Web request from a simple tool",
+        2026897: "Contact with a link-tracking service",
+        2027339: "Device sent an attack aimed at routers",
+    }
+    for sid, title in expected.items():
+        assert alert_text.alert_text("trojan-activity", "ET X", sid)[0] == title
+
+
+def test_no_antivirus_advice():
+    # IoT-23 review: an antivirus scan does not fit cameras or routers.
+    advice = "Scan a computer or phone; restart, update and change the password of a smart device."
+    for classtype in ("trojan-activity", "domain-c2", "command-and-control",
+                      "targeted-activity", "coin-mining"):
+        assert advice in alert_text.CLASSTYPE_TEXT[classtype][1]
+    assert "s" + advice[1:] in alert_text.CLASSTYPE_TEXT["web-application-attack"][1]
+    for _title, explanation in list(alert_text.CLASSTYPE_TEXT.values()) + list(alert_text.RULE_TEXT.values()):
+        assert "antivirus" not in explanation
 
 
 def test_fallback_rule_info_is_the_name_only():
