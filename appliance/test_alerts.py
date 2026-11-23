@@ -721,6 +721,112 @@ def test_merge_keeps_chronological_first_last_out_of_order(tmp_path):
     assert row == (2, "2026-11-02T10:00:00", "2026-11-02T10:02:00")
 
 
+def _evt(ts, sid=5):
+    return alerts.parse_alert_event(json.loads(eve_alert(sid=sid, ts=ts + "+0300")))
+
+
+def _spans(conn):
+    return conn.execute(
+        "SELECT event_time, last_event_time, occurrence_count, state FROM alerts "
+        "ORDER BY event_time").fetchall()
+
+
+def test_out_of_order_event_merges_into_older_alert_window(tmp_path):
+    # A-27 (IoT-23 3-1): an event more than a window older than the NEWEST alert
+    # still merges into the older alert whose window covers it.
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:20:00"), "dev1", 300)  # new alert
+        # 18 min older than the newest; 2 min after the older alert
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:02:00"), "dev1", 300) == "merged"
+    assert _spans(conn) == [
+        ("2026-11-02T10:00:00", "2026-11-02T10:02:00", 2, "New"),
+        ("2026-11-02T10:20:00", "2026-11-02T10:20:00", 1, "New"),
+    ]
+
+
+def test_out_of_order_event_picks_the_closest_alert(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:08:00"), "dev1", 300)
+        # covered by both windows (10:00+5m and 10:08-5m); closer to 10:08
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:05:00"), "dev1", 300)
+    assert _spans(conn) == [
+        ("2026-11-02T10:00:00", "2026-11-02T10:00:00", 1, "New"),
+        ("2026-11-02T10:05:00", "2026-11-02T10:08:00", 2, "New"),
+    ]
+
+
+def test_out_of_order_event_outside_every_window_creates_new_alert(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:30:00"), "dev1", 300)
+        # 10 min after the first alert and 20 min before the second
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:10:00"), "dev1", 300) == "inserted"
+        # and one more than a window BEFORE the earliest alert
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T09:50:00"), "dev1", 300) == "inserted"
+    assert [r[2] for r in _spans(conn)] == [1, 1, 1, 1]
+
+
+def test_out_of_order_event_matching_only_a_resolved_alert_creates_new_alert(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:04:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:30:00"), "dev1", 300)  # newest, open
+        conn.execute("UPDATE alerts SET state='Resolved' WHERE event_time='2026-11-02T10:00:00'")
+        # late event inside the Resolved alert's span only
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:02:00"), "dev1", 300) == "inserted"
+    assert _spans(conn) == [
+        ("2026-11-02T10:00:00", "2026-11-02T10:04:00", 2, "Resolved"),   # untouched
+        ("2026-11-02T10:02:00", "2026-11-02T10:02:00", 1, "New"),
+        ("2026-11-02T10:30:00", "2026-11-02T10:30:00", 1, "New"),
+    ]
+
+
+def test_older_event_moves_first_event_time_earlier(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:10:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:12:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:30:00"), "dev1", 300)  # newest alert
+        # 4 min before the first alert's start, 26 min before the newest
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:06:00"), "dev1", 300) == "merged"
+    assert _spans(conn)[0] == ("2026-11-02T10:06:00", "2026-11-02T10:12:00", 3, "New")
+
+
+def test_out_of_order_merge_for_unlinked_alerts_uses_rule_and_ips(tmp_path):
+    conn = make_conn(tmp_path)
+
+    def evt(ts, src):
+        return alerts.parse_alert_event(json.loads(
+            eve_alert(sid=9, src=src, dst="198.51.100.1", ts=ts + "+0300")))
+    with conn:
+        alerts.upsert_alert(conn, evt("2026-11-02T10:00:00", "203.0.113.1"), None, 300)
+        alerts.upsert_alert(conn, evt("2026-11-02T10:20:00", "203.0.113.1"), None, 300)
+        assert alerts.upsert_alert(
+            conn, evt("2026-11-02T10:01:00", "203.0.113.1"), None, 300) == "merged"
+        assert alerts.upsert_alert(
+            conn, evt("2026-11-02T10:01:00", "203.0.113.2"), None, 300) == "inserted"
+    assert count(conn) == 3
+
+
+def test_merge_lookup_uses_an_index(tmp_path):
+    conn = make_conn(tmp_path)
+    for sql, args in (
+        ("device_mac=? AND rule_id IS ?", ("dev1", 5)),
+        ("device_mac IS NULL AND rule_id IS ? AND src_ip IS ? AND dst_ip IS ?", (5, "a", "b")),
+    ):
+        plan = " ".join(r[-1] for r in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT alert_id, event_time, last_event_time, state "
+            f"FROM alerts WHERE alert_type='Threat' AND {sql} "
+            "AND last_event_time >= ? AND event_time <= ?", args + ("x", "y")))
+        assert "SEARCH alerts USING INDEX" in plan, plan
+
+
 # --------------------------------------------------------------------------- #
 # MAC attribution for ADDRESS-LESS events (eve-log ethernet: yes)
 # --------------------------------------------------------------------------- #

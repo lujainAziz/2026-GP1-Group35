@@ -878,6 +878,69 @@ def _parse_iso(s):
     return datetime.fromisoformat(s) if s else None
 
 
+def _merge_target(conn, a, device_mac, event_time, window_seconds):
+    """Return (alert_id, first_dt, last_dt, event_dt) of the open alert this
+    event merges into, or None when it must start a new alert.
+
+    Only rows of the same key that can matter are read: an open alert whose
+    window covers the event, or a Resolved alert lying between such an alert and
+    the event, both overlap [event - window, event + window]. Timestamps are
+    stored as second-precision naive ISO text, so text order is time order.
+    """
+    et_dt = _parse_iso(event_time)
+    if et_dt is None:
+        return None
+    window = timedelta(seconds=window_seconds)
+    lo = (et_dt - window).isoformat(sep="T")
+    hi = (et_dt + window).isoformat(sep="T")
+    if device_mac is not None:
+        rows = conn.execute(
+            "SELECT alert_id, event_time, last_event_time, state FROM alerts "
+            "WHERE alert_type='Threat' AND device_mac=? AND rule_id IS ? "
+            "AND last_event_time >= ? AND event_time <= ?",
+            (device_mac, a["rule_id"], lo, hi),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT alert_id, event_time, last_event_time, state FROM alerts "
+            "WHERE alert_type='Threat' AND device_mac IS NULL AND rule_id IS ? "
+            "AND src_ip IS ? AND dst_ip IS ? "
+            "AND last_event_time >= ? AND event_time <= ?",
+            (a["rule_id"], a["src_ip"], a["dst_ip"], lo, hi),
+        ).fetchall()
+
+    open_, resolved = [], []
+    for alert_id, first_et, last_et, state in rows:
+        last_dt = _parse_iso(last_et)
+        if last_dt is None:
+            continue
+        first_dt = min(_parse_iso(first_et) or last_dt, last_dt)
+        entry = (alert_id, first_dt, last_dt)
+        (resolved if str(state).lower() == "resolved" else open_).append(entry)
+
+    def closed_off(c_id, c_first, c_last):
+        # A Resolved alert between the candidate and the event closes the stream.
+        for r_id, _r_first, r_last in resolved:
+            if et_dt >= c_last and (r_last, r_id) > (c_last, c_id) and r_last <= et_dt:
+                return True
+            if et_dt < c_first and et_dt <= r_last < c_first:
+                return True
+        return False
+
+    # Newest first, so on an equal gap min() keeps the newest alert (as before).
+    open_.sort(key=lambda c: (c[2], c[0]), reverse=True)
+    matches = [
+        (max(c_first - et_dt, et_dt - c_last, timedelta(0)), c_id, c_first, c_last)
+        for c_id, c_first, c_last in open_
+        if c_first - window <= et_dt <= c_last + window
+        and not closed_off(c_id, c_first, c_last)
+    ]
+    if not matches:
+        return None
+    _gap, c_id, c_first, c_last = min(matches, key=lambda m: m[0])
+    return c_id, c_first, c_last, et_dt
+
+
 def upsert_alert(conn, a, device_mac, window_seconds, device_role=None):
     """Insert a new Threat Alert, or merge into an existing one within the window.
 
@@ -887,43 +950,28 @@ def upsert_alert(conn, a, device_mac, window_seconds, device_role=None):
     event_time = a["event_time"] or local_naive_iso(
         datetime.now().isoformat(timespec="seconds")
     )
-    # PBI-22 criterion 7: 'Resolved' is a terminal state. The merge candidate is
-    # the SINGLE most-recent matching alert (by last_event_time), regardless of
-    # state; its state then decides. If that newest match is Resolved, the stream
-    # is closed and the event starts a fresh, independent alert (new id, state
-    # 'New') — even if an OLDER matching alert is still open and inside the
-    # window (we must not re-attach to it). Only a newest match that is open
-    # (New) and within the window absorbs the recurrence.
-    if device_mac is not None:
-        row = conn.execute(
-            "SELECT alert_id, event_time, last_event_time, state FROM alerts "
-            "WHERE alert_type='Threat' AND device_mac=? AND rule_id IS ? "
-            "ORDER BY last_event_time DESC LIMIT 1",
-            (device_mac, a["rule_id"]),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT alert_id, event_time, last_event_time, state FROM alerts "
-            "WHERE alert_type='Threat' AND device_mac IS NULL AND rule_id IS ? "
-            "AND src_ip IS ? AND dst_ip IS ? "
-            "ORDER BY last_event_time DESC LIMIT 1",
-            (a["rule_id"], a["src_ip"], a["dst_ip"]),
-        ).fetchone()
-
-    if row is not None and str(row[3]).lower() != "resolved":
-        alert_id, first_et, last_et = row[0], row[1], row[2]
-        et_dt, first_dt, last_dt = _parse_iso(event_time), _parse_iso(first_et), _parse_iso(last_et)
-        if et_dt and last_dt and abs(et_dt - last_dt) <= timedelta(seconds=window_seconds):
-            # Keep the chronological span even if events arrive out of order:
-            # first = earliest seen, last = latest seen.
-            new_first = min(first_dt or et_dt, et_dt).replace(microsecond=0).isoformat(sep="T")
-            new_last = max(last_dt, et_dt).replace(microsecond=0).isoformat(sep="T")
-            conn.execute(
-                "UPDATE alerts SET occurrence_count = occurrence_count + 1, "
-                "event_time=?, last_event_time=? WHERE alert_id=?",
-                (new_first, new_last, alert_id),
-            )
-            return "merged"
+    # An event merges into an open alert of the same key whose window covers it
+    # (first - window <= event <= last + window), even when it arrives out of
+    # order; of several, the one closest in time wins.
+    #
+    # PBI-22 criterion 7: 'Resolved' is a terminal state. A Resolved alert never
+    # absorbs an event, and it closes the stream: an open alert on the far side
+    # of a Resolved one (in time, as seen from the event) is not a candidate, so
+    # a recurrence after a Resolved alert starts a fresh, independent alert
+    # (new id, state 'New') even if an OLDER open alert is inside the window.
+    match = _merge_target(conn, a, device_mac, event_time, window_seconds)
+    if match is not None:
+        alert_id, first_dt, last_dt, et_dt = match
+        # Keep the chronological span even if events arrive out of order:
+        # first = earliest seen, last = latest seen.
+        new_first = min(first_dt, et_dt).replace(microsecond=0).isoformat(sep="T")
+        new_last = max(last_dt, et_dt).replace(microsecond=0).isoformat(sep="T")
+        conn.execute(
+            "UPDATE alerts SET occurrence_count = occurrence_count + 1, "
+            "event_time=?, last_event_time=? WHERE alert_id=?",
+            (new_first, new_last, alert_id),
+        )
+        return "merged"
 
     conn.execute(
         "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
