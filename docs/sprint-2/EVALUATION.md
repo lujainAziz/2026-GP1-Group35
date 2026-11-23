@@ -88,7 +88,19 @@ This setup is fixed before datasets are downloaded.
   Pi downloads nothing and only receives the mirrored copy on `eth1`.
 - **Wiring:** replay host → a switch port that is mirrored (SPAN) to the port Suricata watches, so
   replayed packets appear on `eth1`. (If no managed switch: replay onto the mirror source segment.)
-  Final host spec, OS, disk free, and switch mirror config recorded here once set up.
+  Final host spec, OS and disk free recorded here once set up.
+- **Switch port map and mirror settings** (TP-Link TL-SG105E, recorded 2026-11-23):
+
+  | Port | Connected to |
+  |---|---|
+  | 1 | Home router |
+  | 2 | Assas-Test access point |
+  | 3 | Pi management interface (`eth0`) |
+  | 4 | Pi capture interface (`eth1`) |
+  | 5 | Spare (for a wired laptop) |
+
+  Port Mirror: **enabled**; source **Port 2** (ingress + egress); destination **Port 4**. Only
+  traffic that passes through Port 2 is copied to `eth1`; what this covers was verified in §5.
 - To record per run: replay host + OS, `tcpreplay` version and exact command (incl. `--intf`,
   pps/`--mbps`, loop), switch mirror config, start/stop timestamps, the pcap(s) and their SHA-256,
   and the **ET Open rules date/version** in use.
@@ -321,3 +333,35 @@ output dir, so nothing earlier is overwritten):
 ASSAS_RES_OUTDIR=/home/assas/assas/docs/sprint-2/evidence/resources/clean2 \
   /home/assas/assas/appliance/tools/clean_resource_run.sh
 ```
+
+## 5. Capture scope verification (B4) — ☑ Done (2026-11-23)
+
+The project states its capture scope: traffic analysis is limited to communications visible
+through the mirrored port, and communications that do not traverse the monitored ports are outside
+that coverage. This planned check verified that stated scope on the switch setup recorded in §2.
+
+**Method:** ICMP pings from a laptop on Assas-Test to a phone, with a capture running on the Pi's
+capture interface. The packet counts are the ones tcpdump reports when the capture is stopped.
+```bash
+sudo tcpdump -i eth1 -nn icmp and host <laptop-address> and host <phone-address>
+```
+
+| Round | Setup | Pings sent / replies | Captured on `eth1` | Dropped | Visible? |
+|---|---|---|---|---|---|
+| 1 | Laptop on Assas-Test → phone on the home router Wi-Fi | 10 / 10 | 20 | 0 | Yes |
+| 2 | Laptop and phone both on Assas-Test (phone Wi-Fi screen confirmed) | 10 / 10 | 0 | — | No |
+| 3 | Repeat of round 2 | 30 / 29 | 0 | — | No |
+| 4 | Control, right after round 3: phone back on the home Wi-Fi | 30 / 30 | 60 of 60 | 0 | Yes |
+
+Round 4 shows the capture was working during rounds 2 and 3.
+
+**Result: consistent with the stated scope.** Traffic that crosses the access point uplink (Port 2)
+is visible: traffic between Assas-Test devices and the router, wired devices, home Wi-Fi devices or
+the internet. Traffic between two devices on the same access point is forwarded by the access point
+itself and does not reach the mirrored port, so it is outside the capture coverage.
+
+**Design reason:** Assas is out-of-band. It receives a copy of the traffic and is not in the
+forwarding path, so if the Pi fails, the home network keeps working.
+
+**Possible future improvement:** the Pi acting as the Wi-Fi access point could also see
+client-to-client traffic; this is a design change, not planned for Release 1.
