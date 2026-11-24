@@ -12,7 +12,7 @@ WorkingDirectory=/home/assas/assas/appliance
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /home/assas/assas/appliance/alerts.py
 
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 [Install]

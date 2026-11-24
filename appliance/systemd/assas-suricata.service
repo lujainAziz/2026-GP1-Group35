@@ -10,7 +10,7 @@ User=root
 # never drops or modifies traffic. Config and interface pinned explicitly.
 ExecStart=/usr/bin/suricata -c /etc/suricata/assas.yaml --af-packet=eth1
 
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 [Install]
