@@ -27,7 +27,8 @@ abstract final class FeatureRelease {
   // from GET /alerts/open_count, "No unresolved alerts" at 0, "Last known" /
   // "—" on failure (same as the display).
   static bool get alertsHome => true;
-  // Still deferred: the Home recent-alerts summary (PBI-24).
+  // Still deferred: the Home recent-alerts summary, part of the Home
+  // network-status summary (PBI-26, Sprint 5).
   static bool get alertsHomeRecent => false;
   // The 7-inch display's "Unresolved alerts" card (Sprint 2 feature, released in
   // Release 1): the DB count of New alerts from GET /alerts/open_count, read as a
