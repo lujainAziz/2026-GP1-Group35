@@ -14,7 +14,7 @@ English only (team decision 1).
 CLASSTYPE_TEXT = {
     "trojan-activity": (
         "Possible harmful software",
-        "This traffic matches the behavior of known harmful software. A device may be infected. Run an antivirus scan on it and keep its apps updated.",
+        "This traffic matches the behavior of known harmful software. A device may be infected. Scan a computer or phone; restart, update and change the password of a smart device. Keep the device's apps updated.",
     ),
     "bad-unknown": (
         "Suspicious traffic",
@@ -22,11 +22,11 @@ CLASSTYPE_TEXT = {
     ),
     "domain-c2": (
         "Contact with a known harmful server",
-        "A device tried to reach an internet address known to control harmful software. This can happen after clicking a bad link, or if the device is infected. Run an antivirus scan on it.",
+        "A device tried to reach an internet address known to control harmful software. This can happen after clicking a bad link, or if the device is infected. Scan a computer or phone; restart, update and change the password of a smart device.",
     ),
     "web-application-attack": (
         "Attempt to attack a website",
-        "Someone sent a request that tries to break into a website or a device's settings page. If this device was the target, update its software. If it sent the request, run an antivirus scan on it.",
+        "Someone sent a request that tries to break into a website or a device's settings page. If this device was the target, update its software. If it sent the request, scan a computer or phone; restart, update and change the password of a smart device.",
     ),
     "misc-activity": (
         "Notable activity (often harmless)",
@@ -34,7 +34,7 @@ CLASSTYPE_TEXT = {
     ),
     "command-and-control": (
         "Harmful software contacting its controller",
-        "This traffic matches how harmful software talks to the computer that controls it. The device is likely infected. Disconnect it from the network if you can, and run an antivirus scan.",
+        "This traffic matches how harmful software talks to the computer that controls it. The device is likely infected. Disconnect it from the network if you can. Scan a computer or phone; restart, update and change the password of a smart device.",
     ),
     "exploit-kit": (
         "Contact with a site that attacks devices",
@@ -58,7 +58,7 @@ CLASSTYPE_TEXT = {
     ),
     "targeted-activity": (
         "Contact linked to a hacking group",
-        "A device tried to reach an address linked to organized hacking groups. Run an antivirus scan on it.",
+        "A device tried to reach an address linked to organized hacking groups. Scan a computer or phone; restart, update and change the password of a smart device.",
     ),
     "attempted-user": (
         "Attempt to get into a device",
@@ -110,7 +110,7 @@ CLASSTYPE_TEXT = {
     ),
     "coin-mining": (
         "Cryptocurrency mining activity",
-        "This traffic matches cryptocurrency mining, which uses a device's power to earn digital money. If you did not set this up, the device may be infected. Run an antivirus scan on it.",
+        "This traffic matches cryptocurrency mining, which uses a device's power to earn digital money. If you did not set this up, the device may be infected. Scan a computer or phone; restart, update and change the password of a smart device.",
     ),
     "successful-admin": (
         "Someone may have taken full control of a device",
@@ -178,7 +178,7 @@ RULE_GROUPS = (
         "Possible remote control of a device",
         "A device sent back a reply that often appears when someone is running commands on it from another computer. Check the device right away and change its passwords.",
     )),
-    ((2002023, 2002024, 2002025, 2002027, 2002028, 2000355, 2000345), (
+    ((2002023, 2002024, 2002025, 2002027, 2002028, 2000355, 2000345, 2000348), (
         "Connection to an old chat system",
         "A device connected to an old chat system that people rarely use today. Harmful software on smart devices often uses it to receive commands. If this is a smart device, restart it, update it and change its password.",
     )),
@@ -186,7 +186,8 @@ RULE_GROUPS = (
         "Smart-device program downloaded",
         "A device downloaded a program file made for devices like cameras and routers. Harmful software often spreads to smart devices this way. If you did not install anything, restart the device, update it and change its password.",
     )),
-    ((2038656, 2032924, 2025126, 2025123, 2025125, 2038657), (
+    ((2038656, 2032924, 2025126, 2025123, 2025125, 2038657,
+      2032925, 2038652, 2038653, 2038654, 2038655, 2038658, 2038659, 2025122, 2025124, 2025127, 2025128, 2025129, 2025130, 2025131), (
         "Request for a program built for smart devices",
         "A device asked for a program file built for smart devices, such as cameras and routers. This is a common sign of an attempt to infect a smart device. Restart the device, update it and change its password.",
     )),
@@ -197,6 +198,22 @@ RULE_GROUPS = (
     ((2010935, 2010937), (
         "Attempt to reach a device's database feature",
         "Someone tried to reach a database feature on a device. Scans do this to find weak devices. If you did not run a security scan, check the device.",
+    )),
+    ((2025890, 2029016, 2029028), (
+        "Signs of harmful software for smart devices",
+        "A device sent a web request that identifies itself the way known harmful software for cameras and routers does. If this device sent it, it may be infected: restart it, update it and change its password. If it was the target, update its software.",
+    )),
+    ((2027504, 2034567), (
+        "Web request from a simple tool",
+        "A device sent a web request that names a simple tool or script instead of a normal app or browser. Many programs do this, but harmful software on smart devices does too. No action is needed unless it keeps happening.",
+    )),
+    ((2026897,), (
+        "Contact with a link-tracking service",
+        "A device reached a service that records the internet address of anyone who opens its links. Scam messages sometimes use it. If you did not expect this, do not open links from messages you do not trust.",
+    )),
+    ((2027339,), (
+        "Device sent an attack aimed at routers",
+        "A device sent a request that tries to use a known weakness in many routers and cameras. Infected smart devices do this to spread. Restart this device, update it and change its password.",
     )),
 )
 

@@ -299,23 +299,23 @@ def test_link_device_appliance_self_ip_is_never_a_link_target(tmp_path, monkeypa
     # linked to the iPhone (source wins); it must link the .104 device.
     conn = make_conn(tmp_path)
     conn.execute("INSERT INTO devices(mac,ip,last_ipv4) "
-                 "VALUES('02:5a:02:00:0f:6a','fe80::1cd4:efff:fedf:c46a','192.168.8.102')")
+                 "VALUES('02:5a:02:00:00:02','fe80::5a:2ff:fe00:2','192.168.8.102')")
     conn.execute("INSERT INTO devices(mac,ip,last_ipv4) "
-                 "VALUES('dc:97:ba:00:09:ce','192.168.8.104','192.168.8.104')")
+                 "VALUES('dc:97:ba:00:00:0c','192.168.8.104','192.168.8.104')")
     conn.execute("INSERT INTO devices(mac,ip,last_ipv4) "
-                 "VALUES('02:5a:04:00:11:d0','192.168.8.104','192.168.8.104')")
+                 "VALUES('02:5a:04:00:00:04','192.168.8.104','192.168.8.104')")
     conn.commit()
     add_addr_table(conn, [
-        ("02:5a:04:00:11:d0", "192.168.8.104", "ipv4", "arp",
+        ("02:5a:04:00:00:04", "192.168.8.104", "ipv4", "arp",
          "2026-11-09T08:00:00", "2026-11-10T21:00:00"),
     ])
     t = "2026-11-10T20:30:00"
     # without the exclusion this is the mislink observed on the device
-    assert alerts.link_device(conn, "192.168.8.102", "192.168.8.104", t) == "02:5a:02:00:0f:6a"
+    assert alerts.link_device(conn, "192.168.8.102", "192.168.8.104", t) == "02:5a:02:00:00:02"
     _set_excluded_ips(monkeypatch, "192.168.8.102", "192.168.8.255", "192.168.8.1")
-    assert alerts.link_device(conn, "192.168.8.102", "192.168.8.104", t) == "02:5a:04:00:11:d0"
+    assert alerts.link_device(conn, "192.168.8.102", "192.168.8.104", t) == "02:5a:04:00:00:04"
     # and in the reverse direction
-    assert alerts.link_device(conn, "192.168.8.104", "192.168.8.102", t) == "02:5a:04:00:11:d0"
+    assert alerts.link_device(conn, "192.168.8.104", "192.168.8.102", t) == "02:5a:04:00:00:04"
 
 
 def test_link_device_gateway_multicast_broadcast_sides_stay_unlinked(tmp_path, monkeypatch):
@@ -721,6 +721,112 @@ def test_merge_keeps_chronological_first_last_out_of_order(tmp_path):
     assert row == (2, "2026-11-02T10:00:00", "2026-11-02T10:02:00")
 
 
+def _evt(ts, sid=5):
+    return alerts.parse_alert_event(json.loads(eve_alert(sid=sid, ts=ts + "+0300")))
+
+
+def _spans(conn):
+    return conn.execute(
+        "SELECT event_time, last_event_time, occurrence_count, state FROM alerts "
+        "ORDER BY event_time").fetchall()
+
+
+def test_out_of_order_event_merges_into_older_alert_window(tmp_path):
+    # A-27 (IoT-23 3-1): an event more than a window older than the NEWEST alert
+    # still merges into the older alert whose window covers it.
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:20:00"), "dev1", 300)  # new alert
+        # 18 min older than the newest; 2 min after the older alert
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:02:00"), "dev1", 300) == "merged"
+    assert _spans(conn) == [
+        ("2026-11-02T10:00:00", "2026-11-02T10:02:00", 2, "New"),
+        ("2026-11-02T10:20:00", "2026-11-02T10:20:00", 1, "New"),
+    ]
+
+
+def test_out_of_order_event_picks_the_closest_alert(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:08:00"), "dev1", 300)
+        # covered by both windows (10:00+5m and 10:08-5m); closer to 10:08
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:05:00"), "dev1", 300)
+    assert _spans(conn) == [
+        ("2026-11-02T10:00:00", "2026-11-02T10:00:00", 1, "New"),
+        ("2026-11-02T10:05:00", "2026-11-02T10:08:00", 2, "New"),
+    ]
+
+
+def test_out_of_order_event_outside_every_window_creates_new_alert(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:30:00"), "dev1", 300)
+        # 10 min after the first alert and 20 min before the second
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:10:00"), "dev1", 300) == "inserted"
+        # and one more than a window BEFORE the earliest alert
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T09:50:00"), "dev1", 300) == "inserted"
+    assert [r[2] for r in _spans(conn)] == [1, 1, 1, 1]
+
+
+def test_out_of_order_event_matching_only_a_resolved_alert_creates_new_alert(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:00:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:04:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:30:00"), "dev1", 300)  # newest, open
+        conn.execute("UPDATE alerts SET state='Resolved' WHERE event_time='2026-11-02T10:00:00'")
+        # late event inside the Resolved alert's span only
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:02:00"), "dev1", 300) == "inserted"
+    assert _spans(conn) == [
+        ("2026-11-02T10:00:00", "2026-11-02T10:04:00", 2, "Resolved"),   # untouched
+        ("2026-11-02T10:02:00", "2026-11-02T10:02:00", 1, "New"),
+        ("2026-11-02T10:30:00", "2026-11-02T10:30:00", 1, "New"),
+    ]
+
+
+def test_older_event_moves_first_event_time_earlier(tmp_path):
+    conn = make_conn(tmp_path)
+    with conn:
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:10:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:12:00"), "dev1", 300)
+        alerts.upsert_alert(conn, _evt("2026-11-02T10:30:00"), "dev1", 300)  # newest alert
+        # 4 min before the first alert's start, 26 min before the newest
+        assert alerts.upsert_alert(conn, _evt("2026-11-02T10:06:00"), "dev1", 300) == "merged"
+    assert _spans(conn)[0] == ("2026-11-02T10:06:00", "2026-11-02T10:12:00", 3, "New")
+
+
+def test_out_of_order_merge_for_unlinked_alerts_uses_rule_and_ips(tmp_path):
+    conn = make_conn(tmp_path)
+
+    def evt(ts, src):
+        return alerts.parse_alert_event(json.loads(
+            eve_alert(sid=9, src=src, dst="198.51.100.1", ts=ts + "+0300")))
+    with conn:
+        alerts.upsert_alert(conn, evt("2026-11-02T10:00:00", "203.0.113.1"), None, 300)
+        alerts.upsert_alert(conn, evt("2026-11-02T10:20:00", "203.0.113.1"), None, 300)
+        assert alerts.upsert_alert(
+            conn, evt("2026-11-02T10:01:00", "203.0.113.1"), None, 300) == "merged"
+        assert alerts.upsert_alert(
+            conn, evt("2026-11-02T10:01:00", "203.0.113.2"), None, 300) == "inserted"
+    assert count(conn) == 3
+
+
+def test_merge_lookup_uses_an_index(tmp_path):
+    conn = make_conn(tmp_path)
+    for sql, args in (
+        ("device_mac=? AND rule_id IS ?", ("dev1", 5)),
+        ("device_mac IS NULL AND rule_id IS ? AND src_ip IS ? AND dst_ip IS ?", (5, "a", "b")),
+    ):
+        plan = " ".join(r[-1] for r in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT alert_id, event_time, last_event_time, state "
+            f"FROM alerts WHERE alert_type='Threat' AND {sql} "
+            "AND last_event_time >= ? AND event_time <= ?", args + ("x", "y")))
+        assert "SEARCH alerts USING INDEX" in plan, plan
+
+
 # --------------------------------------------------------------------------- #
 # MAC attribution for ADDRESS-LESS events (eve-log ethernet: yes)
 # --------------------------------------------------------------------------- #
@@ -729,8 +835,8 @@ GW_IP = "192.168.100.1"
 
 def _mac_conn(tmp_path):
     conn = make_conn(tmp_path)
-    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('02:5a:01:00:0e:8f','192.168.100.238')")
-    conn.execute(f"INSERT INTO devices(mac,last_ipv4) VALUES('fc:1b:d1:00:08:6c','{GW_IP}')")  # gateway
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('02:5a:01:00:00:01','192.168.100.238')")
+    conn.execute(f"INSERT INTO devices(mac,last_ipv4) VALUES('fc:1b:d1:00:00:0b','{GW_IP}')")  # gateway
     conn.commit()
     return conn
 
@@ -738,10 +844,10 @@ def _mac_conn(tmp_path):
 def test_parse_alert_event_extracts_ether():
     o = json.loads(eve_alert(sig="SURICATA IPv6 truncated packet", sid=2200013, sev=3))
     o.pop("src_ip", None); o.pop("dest_ip", None)
-    o["ether"] = {"src_mac": "02:5A:01:00:0E:8F", "dest_mac": "FC:1B:D1:00:08:6C"}
+    o["ether"] = {"src_mac": "02:5A:01:00:00:01", "dest_mac": "FC:1B:D1:00:00:0B"}
     a = alerts.parse_alert_event(o)
-    assert a["ether_src"] == "02:5a:01:00:0e:8f"   # lowercased
-    assert a["ether_dst"] == "fc:1b:d1:00:08:6c"
+    assert a["ether_src"] == "02:5a:01:00:00:01"   # lowercased
+    assert a["ether_dst"] == "fc:1b:d1:00:00:0b"
     assert a["src_ip"] is None and a["dst_ip"] is None
 
 
@@ -749,45 +855,45 @@ def test_mac_link_both_directions(tmp_path):
     conn = _mac_conn(tmp_path)
     # outbound: device -> gateway
     assert alerts.link_device_by_mac(
-        conn, "02:5a:01:00:0e:8f", "fc:1b:d1:00:08:6c", gateway_macs={"fc:1b:d1:00:08:6c"}) == "02:5a:01:00:0e:8f"
+        conn, "02:5a:01:00:00:01", "fc:1b:d1:00:00:0b", gateway_macs={"fc:1b:d1:00:00:0b"}) == "02:5a:01:00:00:01"
     # inbound: gateway -> device
     assert alerts.link_device_by_mac(
-        conn, "fc:1b:d1:00:08:6c", "02:5a:01:00:0e:8f", gateway_macs={"fc:1b:d1:00:08:6c"}) == "02:5a:01:00:0e:8f"
+        conn, "fc:1b:d1:00:00:0b", "02:5a:01:00:00:01", gateway_macs={"fc:1b:d1:00:00:0b"}) == "02:5a:01:00:00:01"
 
 
 def test_mac_link_gateway_and_multicast_excluded(tmp_path):
     conn = _mac_conn(tmp_path)
     # gateway -> multicast: no candidate at all
     assert alerts.link_device_by_mac(
-        conn, "fc:1b:d1:00:08:6c", "33:33:00:00:00:01", gateway_macs={"fc:1b:d1:00:08:6c"}) is None
+        conn, "fc:1b:d1:00:00:0b", "33:33:00:00:00:01", gateway_macs={"fc:1b:d1:00:00:0b"}) is None
     # broadcast source is never a candidate
     assert alerts.link_device_by_mac(
-        conn, "ff:ff:ff:ff:ff:ff", "02:5a:01:00:0e:8f", gateway_macs={"fc:1b:d1:00:08:6c"}) == "02:5a:01:00:0e:8f"
+        conn, "ff:ff:ff:ff:ff:ff", "02:5a:01:00:00:01", gateway_macs={"fc:1b:d1:00:00:0b"}) == "02:5a:01:00:00:01"
 
 
 def test_mac_link_unknown_device_stays_null(tmp_path):
     conn = _mac_conn(tmp_path)
     assert alerts.link_device_by_mac(
-        conn, "aa:aa:aa:aa:aa:01", "fc:1b:d1:00:08:6c", gateway_macs={"fc:1b:d1:00:08:6c"}) is None
+        conn, "aa:aa:aa:aa:aa:01", "fc:1b:d1:00:00:0b", gateway_macs={"fc:1b:d1:00:00:0b"}) is None
 
 
 def test_mac_link_two_devices_is_ambiguous(tmp_path):
     conn = _mac_conn(tmp_path)
-    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('02:5a:03:00:10:f3','192.168.100.239')")
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('02:5a:03:00:00:03','192.168.100.239')")
     conn.commit()
     assert alerts.link_device_by_mac(
-        conn, "02:5a:01:00:0e:8f", "02:5a:03:00:10:f3", gateway_macs={"fc:1b:d1:00:08:6c"}) is None
+        conn, "02:5a:01:00:00:01", "02:5a:03:00:00:03", gateway_macs={"fc:1b:d1:00:00:0b"}) is None
 
 
 def test_mac_link_appliance_interfaces_excluded(tmp_path, monkeypatch):
     conn = _mac_conn(tmp_path)
-    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('9c:69:d3:00:07:f7','192.168.100.236')")
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('9c:69:d3:00:00:0d','192.168.100.236')")
     conn.commit()
-    monkeypatch.setattr(alerts, "_LOCAL_MACS", {"9c:69:d3:00:07:f7"})
+    monkeypatch.setattr(alerts, "_LOCAL_MACS", {"9c:69:d3:00:00:0d"})
     assert alerts.link_device_by_mac(
-        conn, "9c:69:d3:00:07:f7", "02:5a:01:00:0e:8f", gateway_macs={"fc:1b:d1:00:08:6c"}) == "02:5a:01:00:0e:8f"
+        conn, "9c:69:d3:00:00:0d", "02:5a:01:00:00:01", gateway_macs={"fc:1b:d1:00:00:0b"}) == "02:5a:01:00:00:01"
     assert alerts.link_device_by_mac(
-        conn, "9c:69:d3:00:07:f7", "fc:1b:d1:00:08:6c", gateway_macs={"fc:1b:d1:00:08:6c"}) is None
+        conn, "9c:69:d3:00:00:0d", "fc:1b:d1:00:00:0b", gateway_macs={"fc:1b:d1:00:00:0b"}) is None
 
 
 def test_mac_never_overrides_ip_linking(tmp_path, monkeypatch):
@@ -797,12 +903,12 @@ def test_mac_never_overrides_ip_linking(tmp_path, monkeypatch):
     conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('old:dev','10.0.0.9')")
     conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('new:dev','10.0.0.9')")
     conn.commit()
-    monkeypatch.setitem(alerts._gateway_cache, "macs", {"fc:1b:d1:00:08:6c"})
+    monkeypatch.setitem(alerts._gateway_cache, "macs", {"fc:1b:d1:00:00:0b"})
     monkeypatch.setitem(alerts._gateway_cache, "known", True)
     monkeypatch.setitem(alerts._gateway_cache, "ts", 9e18)
     eve = tmp_path / "eve.json"
     o = json.loads(eve_alert(sid=7777, src="10.0.0.9", dst="198.51.100.8"))
-    o["ether"] = {"src_mac": "02:5a:01:00:0e:8f", "dest_mac": "fc:1b:d1:00:08:6c"}
+    o["ether"] = {"src_mac": "02:5a:01:00:00:01", "dest_mac": "fc:1b:d1:00:00:0b"}
     write(eve, json.dumps(o) + "\n")
     alerts.process_file(conn, str(eve), 300)
     row = conn.execute("SELECT device_mac FROM alerts WHERE rule_id=7777").fetchone()
@@ -814,7 +920,7 @@ def test_mac_linked_ingest_creates_new_row_and_preserves_old_null_row(tmp_path, 
     # insert time, merges with its own kind, and never touches the historical
     # NULL-keyed row of the same rule.
     conn = _mac_conn(tmp_path)
-    monkeypatch.setitem(alerts._gateway_cache, "macs", {"fc:1b:d1:00:08:6c"})
+    monkeypatch.setitem(alerts._gateway_cache, "macs", {"fc:1b:d1:00:00:0b"})
     monkeypatch.setitem(alerts._gateway_cache, "known", True)
     monkeypatch.setitem(alerts._gateway_cache, "ts", 9e18)
     with conn:
@@ -827,7 +933,7 @@ def test_mac_linked_ingest_creates_new_row_and_preserves_old_null_row(tmp_path, 
     def no_addr_event(ts):
         o = json.loads(eve_alert(sig="SURICATA IPv6 truncated packet", sid=2200013, sev=3, ts=ts))
         o.pop("src_ip", None); o.pop("dest_ip", None)
-        o["ether"] = {"src_mac": "02:5a:01:00:0e:8f", "dest_mac": "fc:1b:d1:00:08:6c"}
+        o["ether"] = {"src_mac": "02:5a:01:00:00:01", "dest_mac": "fc:1b:d1:00:00:0b"}
         return json.dumps(o) + "\n"
     write(eve, no_addr_event("2026-11-05T04:00:00+0300"),
                no_addr_event("2026-11-05T04:01:00+0300"))
@@ -836,7 +942,7 @@ def test_mac_linked_ingest_creates_new_row_and_preserves_old_null_row(tmp_path, 
         "SELECT device_mac, occurrence_count FROM alerts WHERE rule_id=2200013 "
         "ORDER BY alert_id").fetchall()
     assert rows[0] == (None, 64)                       # old NULL row untouched
-    assert rows[1] == ("02:5a:01:00:0e:8f", 2)         # new linked row, merged
+    assert rows[1] == ("02:5a:01:00:00:01", 2)         # new linked row, merged
 
 
 # --------------------------------------------------------------------------- #
@@ -844,7 +950,7 @@ def test_mac_linked_ingest_creates_new_row_and_preserves_old_null_row(tmp_path, 
 # --------------------------------------------------------------------------- #
 ROUTE4 = "default via 192.168.100.1 dev eth0 proto dhcp src 192.168.100.236 metric 100\n"
 ROUTE6 = "default via fe80::aabb:ccff:fedd:1 dev eth0 proto ra metric 100 pref medium\n"
-NEIGH4 = ("192.168.100.1 dev eth0 lladdr fc:1b:d1:00:08:6c REACHABLE\n"
+NEIGH4 = ("192.168.100.1 dev eth0 lladdr fc:1b:d1:00:00:0b REACHABLE\n"
           "192.168.100.50 dev eth0 lladdr aa:aa:aa:aa:aa:50 STALE\n")
 NEIGH6 = ("fe80::aabb:ccff:fedd:1 dev eth0 lladdr de:ad:be:ef:00:01 router REACHABLE\n"
           "2001:db8::9 dev eth0 lladdr aa:aa:aa:aa:aa:60 STALE\n")
@@ -853,7 +959,7 @@ NEIGH6 = ("fe80::aabb:ccff:fedd:1 dev eth0 lladdr de:ad:be:ef:00:01 router REACH
 def test_parse_default_routes_and_neighbor_mac():
     assert alerts.parse_default_routes(ROUTE4) == [("192.168.100.1", "eth0")]
     assert alerts.parse_default_routes(ROUTE6) == [("fe80::aabb:ccff:fedd:1", "eth0")]
-    assert alerts.parse_neighbor_mac(NEIGH4, "192.168.100.1", "eth0") == "fc:1b:d1:00:08:6c"
+    assert alerts.parse_neighbor_mac(NEIGH4, "192.168.100.1", "eth0") == "fc:1b:d1:00:00:0b"
     assert alerts.parse_neighbor_mac(NEIGH6, "fe80::aabb:ccff:fedd:1", "eth0") == "de:ad:be:ef:00:01"
     # unproven neighbor states are not gateway evidence
     assert alerts.parse_neighbor_mac(
@@ -881,7 +987,7 @@ def test_gateway_macs_resolved_without_inventory(tmp_path, monkeypatch):
     conn = make_conn(tmp_path)  # no gateway rows at all
     _fake_ip_cmd(monkeypatch)
     macs = alerts._resolve_gateway_macs(conn)
-    assert macs == {"fc:1b:d1:00:08:6c", "de:ad:be:ef:00:01"}
+    assert macs == {"fc:1b:d1:00:00:0b", "de:ad:be:ef:00:01"}
 
 
 def test_ipv6_gateway_mac_excluded_from_linking(tmp_path, monkeypatch):
@@ -889,14 +995,14 @@ def test_ipv6_gateway_mac_excluded_from_linking(tmp_path, monkeypatch):
     # though that MAC exists in the inventory as a device row.
     conn = make_conn(tmp_path)
     conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('de:ad:be:ef:00:01','192.168.100.254')")
-    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('02:5a:01:00:0e:8f','192.168.100.238')")
+    conn.execute("INSERT INTO devices(mac,last_ipv4) VALUES('02:5a:01:00:00:01','192.168.100.238')")
     conn.commit()
     _fake_ip_cmd(monkeypatch)
     monkeypatch.setitem(alerts._gateway_cache, "ts", 0.0)
     monkeypatch.setitem(alerts._gateway_cache, "known", False)
     # v6-gateway -> device: still links the device, never the v6 gateway
     assert alerts.link_device_by_mac(
-        conn, "de:ad:be:ef:00:01", "02:5a:01:00:0e:8f") == "02:5a:01:00:0e:8f"
+        conn, "de:ad:be:ef:00:01", "02:5a:01:00:00:01") == "02:5a:01:00:00:01"
     # v6-gateway -> multicast: no candidate
     assert alerts.link_device_by_mac(conn, "de:ad:be:ef:00:01", "33:33:00:00:00:01") is None
 
@@ -909,13 +1015,13 @@ def test_gateway_undetermined_suspends_mac_linking(tmp_path, monkeypatch):
     monkeypatch.setitem(alerts._gateway_cache, "macs", set())
     monkeypatch.setitem(alerts._gateway_cache, "known", False)
     monkeypatch.setitem(alerts._gateway_cache, "ts", 0.0)
-    assert alerts.link_device_by_mac(conn, "02:5a:01:00:0e:8f", "33:33:00:00:00:01") is None
+    assert alerts.link_device_by_mac(conn, "02:5a:01:00:00:01", "33:33:00:00:00:01") is None
 
 
 def test_gateway_cache_retries_failures_and_refreshes(tmp_path, monkeypatch):
     conn = make_conn(tmp_path)
     calls = {"n": 0}
-    results = [set(), {"fc:1b:d1:00:08:6c"}]
+    results = [set(), {"fc:1b:d1:00:00:0b"}]
     def fake_resolve(c):
         calls["n"] += 1
         return results[min(calls["n"] - 1, 1)]
@@ -928,7 +1034,7 @@ def test_gateway_cache_retries_failures_and_refreshes(tmp_path, monkeypatch):
     assert (macs, known) == (set(), False)            # first attempt fails
     # failure is NOT cached for the long TTL: retried after the short interval
     macs, known = alerts.gateway_macs_now(conn, now=t0 + alerts.GATEWAY_RETRY_SECONDS + 1)
-    assert (macs, known) == ({"fc:1b:d1:00:08:6c"}, True)
+    assert (macs, known) == ({"fc:1b:d1:00:00:0b"}, True)
     # a success is reused within the refresh TTL (no third resolution call)
     alerts.gateway_macs_now(conn, now=t0 + alerts.GATEWAY_RETRY_SECONDS + 10)
     assert calls["n"] == 2
@@ -1043,15 +1149,15 @@ def test_ingest_stores_classtype_category_and_role(tmp_path, classification):
 
 def test_mac_linked_alert_has_no_role(tmp_path, monkeypatch, classification):
     conn = _mac_conn(tmp_path)
-    monkeypatch.setitem(alerts._gateway_cache, "macs", {"fc:1b:d1:00:08:6c"})
+    monkeypatch.setitem(alerts._gateway_cache, "macs", {"fc:1b:d1:00:00:0b"})
     monkeypatch.setitem(alerts._gateway_cache, "known", True)
     monkeypatch.setitem(alerts._gateway_cache, "ts", 9e18)
     o = json.loads(eve_alert(sig="SURICATA IPv6 truncated packet", sid=2200013, sev=3))
-    o["ether"] = {"src_mac": "02:5a:01:00:0e:8f", "dest_mac": "fc:1b:d1:00:08:6c"}
+    o["ether"] = {"src_mac": "02:5a:01:00:00:01", "dest_mac": "fc:1b:d1:00:00:0b"}
     with conn:
         alerts.ingest_alert(conn, alerts.parse_alert_event(o), 300)
     row = conn.execute("SELECT device_mac, device_role FROM alerts").fetchone()
-    assert row == ("02:5a:01:00:0e:8f", None)
+    assert row == ("02:5a:01:00:00:01", None)
 
 
 def test_relink_sets_device_role(tmp_path):

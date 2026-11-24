@@ -195,7 +195,7 @@ Query params:
 Example element:
 ```json
 {
-  "mac": "02:5a:05:00:12:06",
+  "mac": "02:5a:05:00:00:05",
   "ip": "192.168.1.5",
   "hostname": null,
   "device_type": "Mobile (Apple)",
@@ -233,7 +233,7 @@ Full detail for one device, including the classification explanation. `mac` acce
 Example:
 ```json
 {
-  "mac": "02:5a:05:00:12:06",
+  "mac": "02:5a:05:00:00:05",
   "ip": "192.168.1.5",
   "hostname": null,
   "device_type": "Mobile (Apple)",

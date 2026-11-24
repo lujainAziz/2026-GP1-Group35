@@ -39,12 +39,14 @@ The broader cybersecurity components, including Suricata integration, Isolation 
 
 ASSAS uses a Raspberry Pi 5 connected to a managed switch configured for port mirroring (SPAN).
 
+Traffic analysis is limited to communications visible through the mirrored port. Communications that do not traverse the monitored port, such as traffic between two devices on the same access point, are outside that coverage.
+
 The appliance uses separate network interfaces for management and traffic capture.
 
 **Current monitoring architecture:**
 
 ```text
-Local Network
+Local Network (traffic through the mirrored port)
      |
 Managed Switch (SPAN)
      |

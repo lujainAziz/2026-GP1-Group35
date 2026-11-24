@@ -207,6 +207,7 @@ async def lifespan(_app: "FastAPI"):
     ensure_last_monitored_seen_column()
     ensure_settings_table()
     ensure_alert_reads_table()
+    ensure_appliance_identity()
     yield
 
 
@@ -280,17 +281,65 @@ def get_connection():
         conn.close()
 
 
-def appliance_identity(source=None):
-    """Persistent public identifier; never a session credential."""
-    path = source.execute("PRAGMA database_list").fetchone()[2] if source is not None else DB_PATH
-    conn = sqlite3.connect(f"file:{path}?mode=rw", uri=True, timeout=5)
+_IDENTITY_DDL = (
+    "CREATE TABLE IF NOT EXISTS appliance_identity"
+    " (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)"
+)
+
+
+def _create_appliance_identity(path: str) -> None:
+    """The only write for the identity. INSERT OR IGNORE keeps the first value,
+    so racing creators (or a second startup) can never replace it."""
+    conn = sqlite3.connect(f"file:{path}?mode=rw", uri=True, timeout=5.0)
     try:
-        conn.execute("CREATE TABLE IF NOT EXISTS appliance_identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute(_IDENTITY_DDL)
         conn.execute("INSERT OR IGNORE INTO appliance_identity VALUES (1, ?)", (str(uuid.uuid4()),))
         conn.commit()
-        return conn.execute("SELECT value FROM appliance_identity WHERE id=1").fetchone()[0]
     finally:
         conn.close()
+
+
+def _read_appliance_identity(conn=None, path: Optional[str] = None) -> Optional[str]:
+    """The stored identity, or None if not created yet. Reads `conn`, or opens
+    a mode=ro connection on `path`."""
+    own = conn is None
+    if own:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+    try:
+        row = conn.execute("SELECT value FROM appliance_identity WHERE id=1").fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc):
+            raise
+        return None
+    finally:
+        if own:
+            conn.close()
+    return row[0] if row else None
+
+
+def ensure_appliance_identity() -> None:
+    """Startup: create the identity row once, so request paths only read it.
+    A no-op if the DB file does not exist yet (appliance_identity() then
+    creates it on first need)."""
+    try:
+        _create_appliance_identity(DB_PATH)
+    except sqlite3.OperationalError:
+        return
+
+
+def appliance_identity(source=None):
+    """Persistent public identifier; never a session credential.
+
+    Read-only on the normal path: the row is created at startup. Only a DB that
+    appeared after startup gets it created here, once (first need)."""
+    path = source.execute("PRAGMA database_list").fetchone()[2] if source is not None else DB_PATH
+    value = _read_appliance_identity(source, path)
+    if value is None:
+        _create_appliance_identity(path)
+        # Fresh connection: `source` may still hold a read snapshot from before.
+        value = _read_appliance_identity(path=path)
+    return value
 
 
 def normalize_mac(mac: str) -> str:
@@ -751,9 +800,14 @@ def healthz(conn: sqlite3.Connection = Depends(get_connection)):
         beat = None  # Compatibility with an older discovery service.
     heartbeat_age = max(0, time.time() - beat[0]) if beat else seconds_since_write
     daemon_stale = heartbeat_age is None or heartbeat_age > HEARTBEAT_STALE_SECONDS
+    try:
+        # A read: the identity exists from startup (first-need create otherwise).
+        appliance_id = appliance_identity(conn)
+    except sqlite3.OperationalError as exc:
+        raise HTTPException(status_code=503, detail=f"Device database is not available yet: {exc}")
     return {
         "status": "ok",
-        "appliance_id": appliance_identity(conn),
+        "appliance_id": appliance_id,
         "db_available": True,
         "last_write": last_write,
         "seconds_since_write": seconds_since_write,

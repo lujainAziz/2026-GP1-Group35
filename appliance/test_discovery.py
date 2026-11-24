@@ -153,7 +153,7 @@ class RandomizedMacTests(unittest.TestCase):
         # A real (non-randomized) MAC with a NULL source is a genuine OUI
         # vendor and must NOT be relabelled inferred.
         self.assertEqual(
-            display_vendor("28:39:5e:00:0a:0c", "Samsung Electronics", None),
+            display_vendor("28:39:5e:00:00:0e", "Samsung Electronics", None),
             "Samsung Electronics",
         )
 
@@ -270,9 +270,9 @@ class BackfillMigrationTests(unittest.TestCase):
     def test_global_mac_real_vendor_preserved(self):
         # A legitimate OUI vendor on a globally administered MAC must never be
         # cleared by the new placeholder cleanup.
-        self._insert("28:39:5e:00:0a:0c", "Samsung Electronics", None)
+        self._insert("28:39:5e:00:00:0e", "Samsung Electronics", None)
         discovery.init_db()
-        self.assertEqual(self._vendor("28:39:5e:00:0a:0c"), "Samsung Electronics")
+        self.assertEqual(self._vendor("28:39:5e:00:00:0e"), "Samsung Electronics")
 
 
 class ObservedStatusAgingTests(unittest.TestCase):
@@ -498,14 +498,14 @@ class ProbeTriggerTests(unittest.TestCase):
         self.assertEqual(sum(1 for key in discovery.probe_attempts if key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE'), 1)
 
     def test_existing_generic_unknown_type_schedules(self):
-        mac = "02:5a:0a:00:18:00"
+        mac = "02:5a:0a:00:00:07"
         self._insert(mac, "Generic / Unknown")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
 
     def test_existing_classified_and_named_device_not_scheduled(self):
         # Classified AND already has a usable hostname -> no enrichment at all.
-        mac = "02:5a:0a:00:18:11"
+        mac = "02:5a:0a:00:00:08"
         self._insert(mac, "Computer", hostname="OFFICE-PC")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertNotIn(mac, discovery.mdns_probed)
@@ -553,7 +553,7 @@ class DisplayDeviceTypeTests(unittest.TestCase):
 
     def test_real_mac_unknown_stays_generic(self):
         self.assertEqual(
-            display_device_type(None, "28:39:5e:00:0a:0c", None, None, None),
+            display_device_type(None, "28:39:5e:00:00:0e", None, None, None),
             "Generic / Unknown",
         )
 
@@ -626,7 +626,7 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(score, discovery.SCORES["dhcp_vendor"])
 
     def test_mitv_model_beats_android_hostname(self):
-        # Real case 60:35:73:00:0b:7b: an Android-TV A-record hostname (OS token)
+        # Real case 60:35:73:00:00:0f: an Android-TV A-record hostname (OS token)
         # plus a TV model. The model (95) must win over the android OS hint (40),
         # so the device is a Smart TV, not "Mobile (Android)".
         self._insert("aa:00:00:00:00:13",
@@ -645,7 +645,7 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(score, discovery.SCORES["os_hint"])
 
     def test_zflip3_hostname_rescores_to_mobile(self):
-        # Real case 02:5a:06:00:13:de: the phone family in the hostname is
+        # Real case 02:5a:06:00:00:06: the phone family in the hostname is
         # form-factor evidence, so it stays Mobile (Android).
         self._insert("aa:00:00:00:00:15", hostname="Z-Flip3-alkhas-b-noura")
         discovery.rescore_stored_evidence(verbose=False)
@@ -783,7 +783,7 @@ class ReevaluateStaleClassificationTests(unittest.TestCase):
     # -- corrections (both guards satisfied) --------------------------------
 
     def test_huawei_tablet_corrected_from_stale_mobile(self):
-        # Real row 02:5a:0e:00:1c:a5: stored Mobile (Android)@90 from the old
+        # Real row 02:5a:0e:00:00:09: stored Mobile (Android)@90 from the old
         # "android" rule; stored hostname is the DHCP name, vendor_class carries
         # the known Huawei tablet code.
         self._insert("02:00:00:00:00:0b", hostname="DBY-W09",
@@ -1047,7 +1047,7 @@ class NbnsProbeTriggerTests(unittest.TestCase):
 
     def test_existing_classified_and_named_not_scheduled(self):
         # Classified AND already named -> no NBNS enrichment.
-        mac = "02:5a:0a:00:18:11"
+        mac = "02:5a:0a:00:00:08"
         self._insert(mac, "Computer", hostname="OFFICE-PC")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertNotIn(mac, discovery.nbns_probed)
@@ -1236,7 +1236,7 @@ class AndroidTvClassificationTests(unittest.TestCase):
         ))
 
     def test_android_tv_model_beats_android_hostname(self):
-        mac = "60:35:73:00:0b:7b"
+        mac = "60:35:73:00:00:0f"
         pkt = self._mdns(mac, "192.168.100.50", [
             DNSRR(rrname="android-aesp0.local", type="A", rdata="192.168.100.50"),
             DNSRR(rrname="x._device-info._tcp.local", type="TXT",
