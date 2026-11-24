@@ -66,7 +66,7 @@ explanations, alert state management (Reviewed/Resolved), notifications, and rem
    - Other high-volume event types (flow, dns, http, tls, etc.) are disabled to limit CPU and disk
      usage.
 5. A systemd service `appliance/systemd/assas-suricata.service` is added, consistent with the
-   existing services (`Restart=on-failure`, `RestartSec=5`,
+   existing services (`Restart=on-failure` at the time, `Restart=always` since 2026-11-24; `RestartSec=5`;
    `After=network-online.target assas-capture.service` so the interface is in promiscuous mode
    first). It runs Suricata in af-packet IDS mode on `eth1` with the Assas configuration.
 

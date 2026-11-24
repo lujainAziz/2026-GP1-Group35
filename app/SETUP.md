@@ -96,13 +96,21 @@ current session, run the autostart line from the graphical session.
 - **Crash test:** `pkill -x assas_app` killed the app; 5 seconds later
   `assas_app` was running again with a new process ID. Pass.
 - **Service kill test:** `assas-alerts`, `assas-api`, `assas-discovery` and
-  `assas-suricata` have `Restart=on-failure`. `kill -9` of each service's
+  `assas-suricata` had `Restart=on-failure` at the time of this test (now
+  `Restart=always`, see below). `kill -9` of each service's
   MainPID: 60 seconds later all four were active again, `NRestarts` 0 -> 1 for
   each, all four back active in the same second, so back within seconds (the
   exact restart time was not measured). `assas-capture` has `Restart=no`, which
   is correct: it is `Type=oneshot` with `RemainAfterExit=yes` and no main
   process, and only sets the capture interface to promiscuous mode at boot. It
   was not part of the kill test and stayed active. Pass.
+- **Change 2026-11-24:** `assas-alerts`, `assas-api`, `assas-discovery` and
+  `assas-suricata` now use `Restart=always` (`RestartSec=5` unchanged). With
+  `on-failure`, a service that exits with code 0, or is stopped by `SIGTERM`
+  outside `systemctl`, is not restarted; an earlier test saw `assas-discovery`
+  exit after a socket warning and stay down. `sudo systemctl stop <unit>` still
+  stops the service. `assas-capture` and `assas-suricata-rotate`
+  (`Type=oneshot`) are unchanged.
 
 NFR-03 (display app and service auto-restart): verified.
 

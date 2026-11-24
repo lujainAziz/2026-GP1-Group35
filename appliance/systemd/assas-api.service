@@ -9,7 +9,7 @@ User=assas
 WorkingDirectory=/home/assas/assas/appliance
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/assas/assas/.venv/bin/uvicorn api:app --host 0.0.0.0 --port 8000
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 [Install]
