@@ -4,10 +4,12 @@
 // details (never the rule ID), and the renamed "Network Alert Level" card
 // (still Soon, Sprint 4).
 import 'package:assas_core/assas_core.dart';
+import 'package:assas_design/release_status.dart';
 import 'package:assas_mobile/screens/alerts/alert_details_screen.dart';
 import 'package:assas_mobile/screens/dashboard/dashboard_screen.dart';
 import 'package:assas_mobile/state/app_state.dart';
 import 'package:assas_mobile/theme/assas_ui.dart';
+import 'package:assas_mobile/widgets/ui_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -88,6 +90,27 @@ void main() {
     expect(find.text('NETWORK RISK'), findsNothing);
     expect(find.text('Soon'), findsOneWidget);
     expect(find.text('Network Alert Level arrives in Sprint 4'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Home recent-alerts placeholder carries SOON · SPRINT 5 (PBI-26)', (tester) async {
+    expect(FeatureRelease.alertsHomeRecent, isFalse);
+    final s = await _state(tester);
+    addTearDown(tester.view.reset);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(400, 1400);
+    await tester.pumpWidget(MaterialApp(
+      theme: MobileTheme.light,
+      home: Scaffold(body: DashboardScreen(state: s, onOpenDevices: () {}, onOpenAlerts: () {})),
+    ));
+    await tester.pump(const Duration(milliseconds: 300));
+    final recent = find.widgetWithText(EmptyDashed, 'See the Alerts tab');
+    await tester.scrollUntilVisible(recent, 200, scrollable: find.byType(Scrollable).first);
+    expect(recent, findsOneWidget);
+    expect(find.descendant(of: recent, matching: find.text(
+        'A summary of recent alerts on the home screen is coming later. '
+        'Go to the Alerts tab for the full list.')), findsOneWidget);
+    expect(find.descendant(of: recent, matching: find.text('SOON · SPRINT 5')), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 }

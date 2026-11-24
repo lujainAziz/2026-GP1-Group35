@@ -165,7 +165,7 @@ void main() {
       // 7-inch display "Unresolved alerts" card (Sprint 2 feature, Release 1).
       expect(FeatureRelease.alertDisplay, isTrue);
       // Home "Unresolved alerts" card (Release 1); the Home recent summary
-      // (PBI-24) stays hidden.
+      // (PBI-26, Sprint 5) stays hidden.
       expect(FeatureRelease.alertsHome, isTrue);
       expect(FeatureRelease.alertsHomeRecent, isFalse);
       // Everything else stays hidden until its own sprint:
