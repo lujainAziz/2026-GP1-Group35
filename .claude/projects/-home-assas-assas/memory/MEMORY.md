@@ -1,1 +1,0 @@
-- [Evidence-calibrated claims](feedback_calibrated_claims.md) — label hypotheses as hypotheses; state what a metric does/doesn't prove (kernel_drops ≠ whole SPAN path).
