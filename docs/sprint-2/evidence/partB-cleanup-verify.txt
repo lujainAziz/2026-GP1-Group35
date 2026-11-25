@@ -1,0 +1,7 @@
+# Post-cleanup independent verification (read-only; counts/offsets only, no addresses) — 2026-11-03T18:15:02+00:00
+cleanup reset: 651 alerts + 2 checkpoints deleted (backup assas-precleanup-20261103-181205.db sha fcfc73e6…)
+alert rows=331  SUM(occurrence_count)=2843  retained-log alert events=2843
+SUM(occurrence) == source events: True (diff 0) -> no duplication, no loss vs logs
+live checkpoint offset/size = 29821468/29821468  caught_up=True
+rotated eve consumed=1, offset==size_at_eof (fully read)
+restart-safety (occurrence+checkpoint delta across a restart): pending the sudo sub-batch

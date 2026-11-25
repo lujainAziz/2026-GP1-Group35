@@ -13,9 +13,17 @@ Environment=ASSAS_DISCOVERY_IFACE=eth0
 Environment=ASSAS_CAPTURE_IFACE=eth1
 Environment=ASSAS_UPNP_ENRICH=1
 
+# Optional TP-Link AP association polling. Placeholders only: real values go
+# in the device-only drop-in /etc/systemd/system/assas-discovery.service.d/ap.conf
+# (never committed). The AP gets its IP by DHCP, so set its MAC and leave
+# ASSAS_AP_URL unset; discovery looks the IP up in the neighbour table each poll.
+# Environment=ASSAS_AP_MAC=02:00:00:00:00:01
+# Environment=ASSAS_AP_PASSWORD=change-me
+# Environment=ASSAS_AP_URL=http://192.0.2.10
+
 ExecStart=/usr/bin/python3 /home/assas/assas/appliance/discovery.py
 
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 [Install]

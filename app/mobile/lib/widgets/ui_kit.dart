@@ -2,7 +2,9 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:assas_core/assas_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:assas_design/widgets/ui_kit.dart' show surfCard;
 
 export 'package:assas_design/widgets/ui_kit.dart' show glassCard, surfCard;
@@ -197,24 +199,30 @@ class Glass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = BorderRadius.circular(radius);
+    final surface = Container(
+      height: height,
+      width: width,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: r,
+        border: Border.all(color: border ?? Ui.line),
+      ),
+      child: child,
+    );
     return DecoratedBox(
       decoration: BoxDecoration(borderRadius: r, boxShadow: shadows),
       child: ClipRRect(
         borderRadius: r,
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: blur / 2, sigmaY: blur / 2),
-          child: Container(
-            height: height,
-            width: width,
-            padding: padding,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: r,
-              border: Border.all(color: border ?? Ui.line),
-            ),
-            child: child,
-          ),
-        ),
+        // No backdrop blur on web: under the app-wide DesignScale transform and
+        // TopFade's ShaderMask it paints faint, shifted copies of the text
+        // behind it ("ghost text"). The fill colour alone keeps the look.
+        child: kIsWeb
+            ? surface
+            : BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: blur / 2, sigmaY: blur / 2),
+                child: surface,
+              ),
       ),
     );
   }
@@ -382,7 +390,7 @@ class KickerRow extends StatelessWidget {
   }
 }
 
-/// Round status pill (New / Reviewed / Resolved).
+/// Round status pill (New / Resolved).
 class StatePill extends StatelessWidget {
   const StatePill(this.alert, {super.key, this.padding});
 
@@ -391,7 +399,7 @@ class StatePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Alert states arrive with alert management (Sprint 5).
+    // Alert states arrive with alert management (Sprint 2).
     if (!Released.alertManagement) return const SizedBox.shrink();
     return Container(
       padding: padding ?? const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -567,15 +575,24 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The title is never clipped: it may wrap to a second line, and when it
+    // does not fit beside the trailing control (e.g. the sort button at large
+    // text sizes) the control moves to its own line under the title.
+    final title = Text(text, style: UiText.section, maxLines: 2, overflow: TextOverflow.ellipsis);
     return Padding(
       padding: padding,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(child: Text(text, style: UiText.section, maxLines: 1)),
-          if (trailing != null) trailing!,
-        ],
-      ),
+      child: trailing == null
+          ? Row(children: [Expanded(child: title)])
+          : SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [title, trailing!],
+              ),
+            ),
     );
   }
 }
@@ -594,6 +611,7 @@ class PillButton extends StatelessWidget {
     this.borderColor,
     this.textColor,
     this.background,
+    this.reserveLabel,
   });
 
   final String label;
@@ -606,6 +624,12 @@ class PillButton extends StatelessWidget {
   final Color? borderColor;
   final Color? textColor;
   final Color? background;
+
+  /// When set, the button reserves the width of this label (the longest the
+  /// button can show) so it keeps ONE width as [label] toggles — no jump when a
+  /// stateful button flips its text (e.g. "Mark as trusted" ⇄ "Remove trust").
+  /// Scales with the font and the label is centred within it.
+  final String? reserveLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -624,32 +648,74 @@ class PillButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(UiRadius.button),
             border: Border.all(color: borderColor ?? Ui.acc, width: 1.5),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (busy) ...[
-                UiSpinner(size: 16, color: fg),
-                const SizedBox(width: 10),
-              ] else if (icon != null) ...[
-                IconTheme(data: IconThemeData(color: fg), child: icon!),
-                const SizedBox(width: 10),
+          child: _sized(
+            context,
+            fg,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (busy) ...[
+                  UiSpinner(size: 16, color: fg),
+                  const SizedBox(width: 10),
+                ] else if (icon != null) ...[
+                  IconTheme(data: IconThemeData(color: fg), child: icon!),
+                  const SizedBox(width: 10),
+                ],
+                Text(busy ? (busyLabel ?? label) : label, style: UiText.button.copyWith(color: fg)),
               ],
-              Text(busy ? (busyLabel ?? label) : label, style: UiText.button.copyWith(color: fg)),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  // Reserve the widest label's width (icon/spinner + gap + text) so the button
+  // keeps one width across its states; the content is centred within it.
+  Widget _sized(BuildContext context, Color fg, Widget content) {
+    if (reserveLabel == null) return content;
+    final tp = TextPainter(
+      text: TextSpan(text: reserveLabel, style: UiText.button.copyWith(color: fg)),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final lead = (busy || icon != null) ? 16.0 + 10.0 : 0.0; // spinner/icon + gap
+    return SizedBox(
+      width: lead + tp.width,
+      child: Center(widthFactor: 1, child: content),
+    );
+  }
 }
 
 /// Card with a rail and dotted rows (Signal details / device specs).
+/// Insert zero-width spaces after `:`/`.` so long addresses (esp. IPv6) wrap at
+/// group boundaries instead of being clipped or broken mid-group. Display only;
+/// copy uses the raw value.
+String breakAddress(String v) => v.replaceAllMapped(RegExp(r'[:./]'), (m) => '${m[0]}​');
+
+/// Inserts invisible break opportunities (ZWSP) after a name's natural
+/// separators so a long single token ("emulator (sdk_gphone64_x86_64)") wraps
+/// at `_`/`-`/`(`/`.` instead of breaking mid-word. The visible text is
+/// unchanged.
+String breakName(String v) => v.replaceAllMapped(RegExp(r'[_\-(.]'), (m) => '${m[0]}​');
+
 class SpecList extends StatelessWidget {
-  const SpecList({super.key, required this.rows, required this.railColor});
+  const SpecList({
+    super.key,
+    required this.rows,
+    required this.railColor,
+    this.copyable = const <String>{},
+    this.onCopy,
+  });
 
   /// (label, value, value color)
   final List<(String, String, Color)> rows;
   final Color railColor;
+
+  /// Labels whose value can be tapped to copy (e.g. IP addresses). The copied
+  /// text is the raw value; [onCopy] lets the screen show its own feedback.
+  final Set<String> copyable;
+  final void Function(String value)? onCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -689,13 +755,26 @@ class SpecList extends StatelessWidget {
                           Text(r.$1.toUpperCase(), style: UiText.specLabel.copyWith(color: Ui.mute)),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Text(
-                              r.$2,
-                              textAlign: TextAlign.right,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: UiText.specValue.copyWith(color: r.$3),
-                            ),
+                            child: Builder(builder: (context) {
+                              final canCopy = copyable.contains(r.$1);
+                              final text = Text(
+                                canCopy ? breakAddress(r.$2) : r.$2,
+                                textAlign: TextAlign.right,
+                                // addresses may wrap to a few lines; no clipping
+                                maxLines: canCopy ? 4 : 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: UiText.specValue.copyWith(color: r.$3),
+                              );
+                              if (!canCopy) return text;
+                              return Pressable(
+                                semanticLabel: 'Copy ${r.$1}',
+                                onTap: () {
+                                  Clipboard.setData(ClipboardData(text: r.$2));
+                                  onCopy?.call(r.$2);
+                                },
+                                child: text,
+                              );
+                            }),
                           ),
                         ],
                       ),
@@ -805,7 +884,31 @@ class TimelineAlertCard extends StatelessWidget {
                 children: [
                   AlertMetaRow(alert),
                   SizedBox(height: compact ? 3 : 4),
-                  Text(alert.title, style: compact ? UiText.recentTitle.copyWith(letterSpacing: 0) : UiText.alertCardTitle),
+                  // Unread on this phone: a dot and a bold title.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (alert.isUnread) ...[
+                        Padding(
+                          padding: EdgeInsets.only(top: compact ? 7 : 8),
+                          child: Container(
+                            key: const ValueKey('unreadDot'),
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(color: Ui.acc, shape: BoxShape.circle),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                      ],
+                      Expanded(
+                        child: Text(
+                          alert.title,
+                          style: (compact ? UiText.recentTitle.copyWith(letterSpacing: 0) : UiText.alertCardTitle)
+                              .copyWith(fontWeight: alert.isUnread ? FontWeight.w800 : FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
                   SizedBox(height: compact ? 3 : 4),
                   if (compact && Released.alertManagement)
                     Text(alert.stateLabel, style: UiText.pill.copyWith(color: stateColor(alert)))
@@ -816,7 +919,7 @@ class TimelineAlertCard extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            alert.deviceName,
+                            alert.displayDeviceName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: UiText.secondary.copyWith(color: Ui.mute),

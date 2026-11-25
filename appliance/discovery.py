@@ -16,7 +16,11 @@ their own and can each be disabled without affecting the others:
     ASSAS_SKIP_INITIAL_DISCOVERY=1 skips the initial scan;
     ASSAS_DISCOVERY_REFRESH_SECONDS=0 disables the periodic refresh.
   - TP-Link AP admin polling: only runs if ASSAS_AP_PASSWORD or
-    ASSAS_AP_CLIENTS is set.
+    ASSAS_AP_CLIENTS is set.  The AP is reached at ASSAS_AP_URL when set;
+    otherwise its current IPv4 is looked up by ASSAS_AP_MAC in the
+    neighbour table (/proc/net/arp, `ip -4 neigh`, then the last IPv4
+    discovery recorded) on every poll, since the AP takes its IP by DHCP.
+    If neither yields an address, that poll is skipped with a warning.
   - UPnP/SSDP probing: only runs if ASSAS_UPNP_ENRICH=1.
   - Active nmap port probe: a one-time fallback for devices that remain
     unclassified after ASSAS_ACTIVE_PROBE_DELAY_SECONDS. Only runs if
@@ -59,6 +63,13 @@ from datetime import datetime, timedelta
 from service_fingerprints import parse_nmap_identity
 
 from scapy.all import sniff, Ether, IP, IPv6, ARP, UDP, TCP, DHCP, DNS, DNSQR
+try:  # IPv6 Neighbor Discovery layers (ownership evidence for device_addresses)
+    from scapy.layers.inet6 import (
+        ICMPv6ND_NA, ICMPv6ND_NS, ICMPv6ND_RA,
+        ICMPv6NDOptDstLLAddr, ICMPv6NDOptSrcLLAddr, ICMPv6NDOptPrefixInfo)
+except ImportError:  # scapy built without inet6: passive NDP evidence disabled
+    ICMPv6ND_NA = ICMPv6ND_NS = ICMPv6ND_RA = None
+    ICMPv6NDOptDstLLAddr = ICMPv6NDOptSrcLLAddr = ICMPv6NDOptPrefixInfo = None
 from scapy.layers.netbios import (
     NBNSHeader, NBNSQueryResponse, NBNSRegistrationRequest,
     NBNSNodeStatusRequest, NBNSNodeStatusResponse,
@@ -97,11 +108,15 @@ SRC_MODEL_DATABASE = "device model identifier (model database)"
 
 # ASSAS-Test client membership source.  The TL-WR802N is the authoritative
 # source for which wireless stations are actually associated to the SSID.
-AP_URL = os.getenv("ASSAS_AP_URL", "http://192.168.100.2").rstrip("/")
+# ASSAS_AP_URL pins the AP address.  Without it, the AP's current IPv4 is
+# looked up by ASSAS_AP_MAC on every poll, because the AP takes its address
+# by DHCP and it changes with the upstream router.  No real address defaults
+# live in the repo; real values belong in a device-only systemd drop-in.
+AP_URL = os.getenv("ASSAS_AP_URL", "").strip().rstrip("/")
 AP_USER = os.getenv("ASSAS_AP_USER", "admin")
 AP_PASSWORD = os.getenv("ASSAS_AP_PASSWORD")
 AP_SSID = os.getenv("ASSAS_AP_SSID", "Assas-Test")
-AP_MAC = os.getenv("ASSAS_AP_MAC", "b8:fb:b3:cb:b3:56").lower()
+AP_MAC = os.getenv("ASSAS_AP_MAC", "").strip().lower()
 AP_POLL_SECONDS = max(3, int(os.getenv("ASSAS_AP_POLL_SECONDS", "5")))
 
 def _parse_manual_client_macs(value):
@@ -126,6 +141,9 @@ CACHE_WRITE_INTERVAL = 60
 # separate from SPAN traffic visibility: an ARP response means "present on the
 # subnet", not "observed on the mirrored port". Set refresh to 0 to disable.
 DISCOVERY_REFRESH_SECONDS = max(0, int(os.getenv("ASSAS_DISCOVERY_REFRESH_SECONDS", "45")))
+# How often the appliance's own addresses and the monitored subnets are re-read
+# (a late DHCP lease, a move to another network). 0 disables the reload.
+NETWORK_CONTEXT_REFRESH_SECONDS = max(0, int(os.getenv("ASSAS_NETWORK_CONTEXT_REFRESH_SECONDS", "300")))
 DISCOVERY_STALE_SECONDS = max(60, int(os.getenv("ASSAS_DISCOVERY_STALE_SECONDS", "120")))
 
 # Skip even the one-time startup ARP scan. Combined with
@@ -198,10 +216,13 @@ discovery_ipv4 = None
 ap_membership_lock = threading.Lock()
 last_ap_membership = set()
 last_ap_error = None
-_tplink_auth_cache = {"mode": None, "headers": None, "station_url": None, "time": None}
+_tplink_auth_cache = {
+    "mode": None, "headers": None, "station_url": None, "time": None, "base_url": None,
+}
 TPLINK_AUTH_TTL_SECONDS = max(60, int(os.getenv("ASSAS_AP_AUTH_TTL_SECONDS", "600")))
 
 import model_db
+import addr_scope
 
 # Higher score = stronger classification evidence.
 from classification import (
@@ -465,6 +486,17 @@ def _split_dns_labels(name):
     return labels
 
 
+def _is_opaque_identifier(value):
+    """True for an opaque hex or UUID-style name, hyphens removed, with or
+    without ".local" (e.g. 7b19f703-93a5-4369-af88-f8d5c77abf61, the random
+    name browsers publish over mDNS for WebRTC). Not a device's own hostname.
+    """
+    low = (value or "").strip().lower()
+    if low.endswith(".local"):
+        low = low[:-6]
+    return re.fullmatch(r"[0-9a-f]{16,}", low.replace("-", "")) is not None
+
+
 def _usable_mdns_name(value):
     """Accept only a literal, human-readable mDNS-derived name, else None.
 
@@ -484,7 +516,7 @@ def _usable_mdns_name(value):
         return None                       # reverse-DNS
     if not re.search(r"[A-Za-z]", value):
         return None                       # numeric / IP-like (no letters)
-    if re.fullmatch(r"[0-9a-f]{16,}", low):
+    if _is_opaque_identifier(value):
         return None                       # opaque hex/UUID identifier
     if is_generic_friendly_name(value):
         return None
@@ -848,6 +880,26 @@ def init_db():
         if family:
             conn.execute(f"UPDATE devices SET {family}=COALESCE({family}, ?) WHERE mac=?", (ip, mac))
 
+    # Multi-address ownership evidence (PBI-14 attribution). One row per
+    # (mac, addr): a device's full set of observed local addresses with the
+    # evidence source and first/last sighting. A new address never replaces a
+    # previous one (unlike the single last_* columns above). Consumed read-only
+    # by the alert ingester to link alerts by event time.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS device_addresses (
+            mac        TEXT NOT NULL,
+            addr       TEXT NOT NULL,
+            family     TEXT NOT NULL,
+            source     TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen  TEXT NOT NULL,
+            PRIMARY KEY (mac, addr)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_device_addresses_addr ON device_addresses(addr)"
+    )
+
     # One-time (but idempotent) cleanup of fake vendor text previously stored
     # for randomized MACs (e.g. "(locally administered / randomized MAC)",
     # arp-scan's own "(Unknown: locally administered)" with DUP suffixes,
@@ -997,6 +1049,7 @@ def load_gateway():
             if "via" in parts:
                 gw = parts[parts.index("via") + 1]
                 infra_hints[gw] = "Router"
+                gateway_ips.add(gw)
                 print(f"[*] Gateway detected: {gw}")
 
             if DISCOVERY_INTERFACE is None and "dev" in parts:
@@ -1010,14 +1063,39 @@ def load_gateway():
         print(f"[!] Could not determine default route: {exc}")
 
 
-def load_network_context():
-    """Learn ASSAS's own addresses and the subnet attached to discovery."""
-    global discovery_ipv4
-    local_macs.clear()
-    local_ips.clear()
-    monitored_networks.clear()
-    discovery_ipv4 = None
+# Last successfully read parts of the network context. A read that fails keeps
+# the previous value of its part, so a transient `ip` failure never empties the
+# context; _swap_network_context() then publishes the union.
+_net_ctx = {
+    "macs": set(),
+    "v4_ips": set(),
+    "v4_nets": [],
+    "discovery_ipv4": None,
+    "v6_ips": set(),
+    "v6_nets": [],
+}
 
+
+def _swap_network_context():
+    """Publish _net_ctx into the shared sets/list IN PLACE (other threads hold
+    references). Sets grow first, then shrink, so a current address is never
+    momentarily missing (that would let the appliance be recorded as a device);
+    the network list is replaced in one slice assignment."""
+    global discovery_ipv4
+    macs = _net_ctx["macs"]
+    if macs:  # an unreadable /sys must not forget the appliance's own MACs
+        local_macs.update(macs)
+        local_macs.intersection_update(macs)
+    ips = _net_ctx["v4_ips"] | _net_ctx["v6_ips"]
+    local_ips.update(ips)
+    local_ips.intersection_update(ips)
+    monitored_networks[:] = list(_net_ctx["v4_nets"]) + list(_net_ctx["v6_nets"])
+    discovery_ipv4 = _net_ctx["discovery_ipv4"]
+
+
+def load_network_context():
+    """Learn ASSAS's own addresses and the IPv4 subnet attached to discovery."""
+    macs = set()
     net_root = "/sys/class/net"
     if os.path.isdir(net_root):
         for iface in os.listdir(net_root):
@@ -1026,9 +1104,10 @@ def load_network_context():
                 with open(path, "r", encoding="ascii") as f:
                     mac = f.read().strip().lower()
                 if mac:
-                    local_macs.add(mac)
+                    macs.add(mac)
             except OSError:
                 pass
+    _net_ctx["macs"] = macs
 
     try:
         out = subprocess.check_output(
@@ -1036,12 +1115,14 @@ def load_network_context():
             text=True,
             timeout=5,
         )
+        ips = set()
         for line in out.splitlines():
             match = re.search(r"\binet\s+(\d+(?:\.\d+){3})/(\d+)\b", line)
             if match:
-                local_ips.add(match.group(1))
+                ips.add(match.group(1))
+        _net_ctx["v4_ips"] = ips
     except Exception as exc:
-        print(f"[!] Could not read local IPv4 addresses: {exc}")
+        print(f"[!] Could not read local IPv4 addresses (keeping the last known): {exc}")
 
     if DISCOVERY_INTERFACE:
         try:
@@ -1050,22 +1131,26 @@ def load_network_context():
                 text=True,
                 timeout=5,
             )
+            nets, first_ip = [], None
             for line in out.splitlines():
                 match = re.search(r"\binet\s+(\d+(?:\.\d+){3}/\d+)\b", line)
                 if match:
                     iface_cidr = match.group(1)
-                    if discovery_ipv4 is None:
-                        discovery_ipv4 = iface_cidr.split("/", 1)[0]
-                    monitored_networks.append(
-                        ipaddress.ip_network(iface_cidr, strict=False)
-                    )
-            if monitored_networks:
+                    if first_ip is None:
+                        first_ip = iface_cidr.split("/", 1)[0]
+                    nets.append(ipaddress.ip_network(iface_cidr, strict=False))
+            if nets != _net_ctx["v4_nets"]:
                 print(
-                    "[*] Discovery subnet: "
-                    + ", ".join(str(n) for n in monitored_networks)
+                    "[*] Discovery subnet: " + ", ".join(str(n) for n in nets)
+                    if nets else
+                    "[!] Discovery interface has no IPv4 subnet yet: no IPv4 address "
+                    "is recorded until it has one (retried periodically)"
                 )
+            _net_ctx["v4_nets"] = nets
+            _net_ctx["discovery_ipv4"] = first_ip
         except Exception as exc:
-            print(f"[!] Could not determine discovery subnet: {exc}")
+            print(f"[!] Could not determine discovery subnet (keeping the last known): {exc}")
+    _swap_network_context()
 
 
 def load_ipv6_context():
@@ -1075,12 +1160,30 @@ def load_ipv6_context():
         out = subprocess.check_output(
             ["ip", "-6", "-o", "addr", "show", "dev", DISCOVERY_INTERFACE],
             text=True, timeout=5)
+        ips, nets = set(), []
         for cidr in re.findall(r"\binet6\s+([0-9a-fA-F:]+/\d+)", out):
             interface = ipaddress.ip_interface(cidr)
-            local_ips.add(str(interface.ip))
-            monitored_networks.append(interface.network)
+            ips.add(str(interface.ip))
+            nets.append(interface.network)
+        _net_ctx["v6_ips"], _net_ctx["v6_nets"] = ips, nets
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        print(f"[!] Could not read local IPv6 context: {exc}")
+        print(f"[!] Could not read local IPv6 context (keeping the last known): {exc}")
+    _swap_network_context()
+
+
+def network_context_loop():
+    """Re-read the appliance's addresses and the monitored subnets so a late
+    DHCP lease or a move to another network is picked up without a restart.
+    Until a subnet is known, addresses are not recorded (fail closed)."""
+    if NETWORK_CONTEXT_REFRESH_SECONDS <= 0:
+        return
+    while True:
+        time.sleep(NETWORK_CONTEXT_REFRESH_SECONDS)
+        try:
+            load_network_context()
+            load_ipv6_context()
+        except Exception as exc:  # never kill the loop
+            print(f"[!] Network context reload failed: {exc}")
 
 
 def purge_self_records():
@@ -1200,11 +1303,95 @@ def _parse_tplink_station_page(text):
             if mac:
                 station_macs.add(mac)
 
-    station_macs.discard(_normalize_mac(AP_MAC))
+    if AP_MAC:
+        station_macs.discard(_normalize_mac(AP_MAC))
     return station_macs, page_is_station_page
 
 
-def _tplink_authenticate():
+AP_ADDRESS_UNRESOLVED = "AP address not found"
+
+
+def parse_ipv4_neighbors(text):
+    """Return {mac: ipv4} from /proc/net/arp or `ip -4 neigh show` output.
+
+    Only complete entries are kept: /proc/net/arp flag 0x0 and ip-neigh
+    INCOMPLETE/FAILED lines have no proven MAC.
+    """
+    neighbors = {}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[0] != "IP" and parts[2].startswith("0x"):
+            # /proc/net/arp: IP HWtype Flags HWaddr Mask Device
+            if parts[2] == "0x0":
+                continue
+            ip, raw_mac = parts[0], parts[3]
+        elif "lladdr" in parts:
+            # ip neigh: <ip> dev <if> lladdr <mac> <STATE>
+            idx = parts.index("lladdr")
+            if "INCOMPLETE" in parts or "FAILED" in parts or idx + 1 >= len(parts):
+                continue
+            ip, raw_mac = parts[0], parts[idx + 1]
+        else:
+            continue
+        mac = _normalize_mac(raw_mac)
+        if not mac or mac == "00:00:00:00:00:00":
+            continue
+        try:
+            if ipaddress.ip_address(ip).version != 4:
+                continue
+        except ValueError:
+            continue
+        neighbors[mac] = ip
+    return neighbors
+
+
+def _read_kernel_ipv4_neighbors():
+    try:
+        with open("/proc/net/arp", encoding="utf-8") as fh:
+            found = parse_ipv4_neighbors(fh.read())
+        if found:
+            return found
+    except OSError:
+        pass
+    try:
+        out = subprocess.check_output(["ip", "-4", "neigh", "show"],
+                                      text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    return parse_ipv4_neighbors(out)
+
+
+def _stored_ipv4_for_mac(mac):
+    """Last IPv4 discovery recorded for this MAC (arp-scan / ARP observer)."""
+    try:
+        with db_lock:
+            conn = connect_db()
+            row = conn.execute(
+                "SELECT last_ipv4 FROM devices WHERE mac=?", (mac,)
+            ).fetchone()
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row and row[0] else None
+
+
+def find_ap_ipv4():
+    """Current IPv4 of the AP, found by ASSAS_AP_MAC; None if unknown."""
+    mac = _normalize_mac(AP_MAC)
+    if not mac:
+        return None
+    return _read_kernel_ipv4_neighbors().get(mac) or _stored_ipv4_for_mac(mac)
+
+
+def resolve_ap_url():
+    """ASSAS_AP_URL if set, else http://<IPv4 found by ASSAS_AP_MAC>, else None."""
+    if AP_URL:
+        return AP_URL
+    ip = find_ap_ipv4()
+    return f"http://{ip}" if ip else None
+
+
+def _tplink_authenticate(ap_url):
     """Full TP-Link login sequence: try md5-cookie, plain-cookie, then HTTP Basic.
 
     Returns (mode, headers, station_url) on success, or (None, None, None).
@@ -1214,7 +1401,7 @@ def _tplink_authenticate():
     if not AP_PASSWORD:
         return None, None, None
 
-    login_url = f"{AP_URL}/userRpm/LoginRpm.htm?Save=Save"
+    login_url = f"{ap_url}/userRpm/LoginRpm.htm?Save=Save"
     variants = [
         ("md5-cookie", hashlib.md5(AP_PASSWORD.encode("utf-8")).hexdigest()),
         ("plain-cookie", AP_PASSWORD),
@@ -1224,7 +1411,7 @@ def _tplink_authenticate():
         cookie = _tplink_auth_cookie(password_value)
         headers = {
             "Cookie": cookie,
-            "Referer": AP_URL + "/",
+            "Referer": ap_url + "/",
             "User-Agent": "ASSAS/1.0 TP-Link station reader",
         }
         try:
@@ -1232,9 +1419,9 @@ def _tplink_authenticate():
             token = _extract_tplink_session_token(login_text)
             if not token:
                 # Some firmware families allow the station page directly.
-                station_url = f"{AP_URL}/userRpm/WlanStationRpm.htm?Page=1"
+                station_url = f"{ap_url}/userRpm/WlanStationRpm.htm?Page=1"
             else:
-                station_url = f"{AP_URL}/{token}/userRpm/WlanStationRpm.htm?Page=1"
+                station_url = f"{ap_url}/{token}/userRpm/WlanStationRpm.htm?Page=1"
 
             station_headers = dict(headers)
             station_headers["Referer"] = station_url
@@ -1250,7 +1437,7 @@ def _tplink_authenticate():
         basic = base64.b64encode(
             f"{AP_USER}:{AP_PASSWORD}".encode("utf-8")
         ).decode("ascii")
-        station_url = f"{AP_URL}/userRpm/WlanStationRpm.htm?Page=1"
+        station_url = f"{ap_url}/userRpm/WlanStationRpm.htm?Page=1"
         headers = {
             "Authorization": "Basic " + basic,
             "Referer": station_url,
@@ -1277,8 +1464,21 @@ def _fetch_tplink_clients_with_password():
     if not AP_PASSWORD:
         return None, "ASSAS_AP_PASSWORD is not set"
 
+    ap_url = resolve_ap_url()
+    if not ap_url:
+        # Skip this cycle only; discovery keeps running without AP membership.
+        print(
+            "[!] AP polling skipped this cycle: AP address not found "
+            "(set ASSAS_AP_URL, or ASSAS_AP_MAC with the AP visible in the "
+            "neighbour table)"
+        )
+        return None, AP_ADDRESS_UNRESOLVED
+
     now = time.monotonic()
     cache = _tplink_auth_cache
+    if cache["base_url"] != ap_url:
+        # The AP moved (new DHCP lease); a session for the old address is useless.
+        cache["time"] = None
     cache_fresh = cache["time"] is not None and (now - cache["time"]) < TPLINK_AUTH_TTL_SECONDS
 
     if cache_fresh:
@@ -1292,11 +1492,12 @@ def _fetch_tplink_clients_with_password():
         # Cached session no longer works -- fall through to a full re-auth.
         cache["time"] = None
 
-    mode, headers, station_url = _tplink_authenticate()
+    mode, headers, station_url = _tplink_authenticate(ap_url)
     if mode is None:
         return None, "authentication failed"
 
-    cache.update(mode=mode, headers=headers, station_url=station_url, time=now)
+    cache.update(mode=mode, headers=headers, station_url=station_url, time=now,
+                 base_url=ap_url)
     try:
         text = _http_get_text(station_url, headers=headers, timeout=3.0)
         clients, ok = _parse_tplink_station_page(text)
@@ -1332,7 +1533,8 @@ def apply_ap_membership(clients, source):
     global last_ap_membership
     clients = {_normalize_mac(m) for m in clients}
     clients.discard(None)
-    clients.discard(_normalize_mac(AP_MAC))
+    if AP_MAC:
+        clients.discard(_normalize_mac(AP_MAC))
     now = datetime.now().isoformat(timespec="seconds")
 
     with ap_membership_lock:
@@ -1393,7 +1595,8 @@ def refresh_ap_membership(verbose=False):
     global last_ap_error
     clients, source, error = fetch_ap_clients()
     if clients is None:
-        if verbose or error != last_ap_error:
+        # The unresolved-address case already printed its per-cycle warning.
+        if error != AP_ADDRESS_UNRESOLVED and (verbose or error != last_ap_error):
             print(f"[!] AP membership unavailable: {error}")
         last_ap_error = error
         return False
@@ -2006,7 +2209,13 @@ def is_self_device(mac=None, ip=None):
 
 
 def local_monitored_ip(ip):
-    """Return an IP only when it belongs to the local discovery subnet."""
+    """Return an IP only when it belongs to the local discovery subnet.
+
+    Fails CLOSED: with no known subnet (e.g. the discovery interface had no
+    address yet) nothing but link-local passes. Failing open let internet
+    servers' addresses, which arrive behind the router's MAC, be recorded as
+    the router's own addresses.
+    """
     if not ip or ip == "0.0.0.0":
         return None
 
@@ -2017,7 +2226,7 @@ def local_monitored_ip(ip):
 
     if addr.version == 6 and addr.is_link_local:
         return ip
-    if monitored_networks and not any(
+    if not any(
         addr.version == network.version and addr in network for network in monitored_networks
     ):
         return None
@@ -2047,6 +2256,196 @@ def _ip_family_column(ip):
     if addr.is_link_local:
         return "last_ipv6_ll"
     return "last_ipv6_global"
+
+
+# --------------------------------------------------------------------------- #
+# Multi-address ownership evidence (PBI-14 attribution).
+# Ownership is proven, never assumed from a frame: routed internet traffic
+# carries the router's MAC, so an off-link address is never recorded under any
+# MAC, and a single MAC may not accumulate unlimited global IPv6 addresses.
+# --------------------------------------------------------------------------- #
+# Cap of distinct RECENT global-IPv6 addresses recorded per MAC (router-like
+# fan-out guard). Counted over a sliding window so historical rotated-out
+# addresses are kept but never block a device's new addresses permanently.
+DEVICE_ADDR_GLOBAL_CAP = int(os.getenv("ASSAS_ADDR_FANOUT_CAP", "16"))
+DEVICE_ADDR_FANOUT_WINDOW_HOURS = int(os.getenv("ASSAS_ADDR_FANOUT_WINDOW_HOURS", "48"))
+_ULA_NET = ipaddress.ip_network("fc00::/7")
+_fanout_warned = set()
+
+# On-link IPv6 prefixes learned from Router Advertisements seen on the SPAN
+# (prefix-information options with the on-link flag, sent from a link-local
+# source as RFC 4861 requires). This is how the monitored LAN's global prefix
+# is known on the address-less SPAN interface, in addition to the discovery
+# interface's own prefixes (load_ipv6_context). Used ONLY to classify an
+# address as on-link for evidence recording — never as ownership proof.
+RA_PREFIX_CAP = 8
+ra_networks = []
+
+# Gateway context: IPs from the default route (load_gateway) and the MACs that
+# currently hold them (refreshed with the NDP poll). NDP assertions are not
+# accepted for the gateway's MAC: with Proxy NDP a router legitimately answers
+# neighbor solicitations for other hosts' addresses, so an NA from the router
+# must not attribute those addresses to it. The router's own addresses still
+# enter via ARP and guarded observed traffic.
+gateway_ips = set()
+gateway_macs = set()
+
+
+def normalize_address(ip):
+    """Canonical (storage/lookup) address form and family.
+
+    IPv6 is stored exploded lowercase (the form Suricata writes in eve.json);
+    IPv4 dotted. Returns (normalized, family) or (None, None) when unparseable.
+    family is 'ipv4', 'ipv6' (global/ULA) or 'ipv6-ll' (link-local).
+    """
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return None, None
+    if addr.version == 4:
+        return str(addr), "ipv4"
+    return addr.exploded.lower(), ("ipv6-ll" if addr.is_link_local else "ipv6")
+
+
+def address_is_local(ip, networks=None):
+    """True only for an address on the MONITORED link — usable as evidence.
+
+    Merely being private (RFC 1918) or ULA does not prove the address is on
+    the monitored segment, so those ranges are NOT accepted blanket-wise:
+    IPv4, global IPv6 and ULA must fall inside the monitored networks (the
+    discovery interface's own subnets/prefixes plus on-link prefixes learned
+    from Router Advertisements on the SPAN). Only IPv6 link-local is on-link by
+    definition. Off-link/external addresses return False — this prevents
+    internet server addresses (which arrive under the router's MAC) from ever
+    being recorded as device evidence.
+    """
+    nets = list(monitored_networks) + list(ra_networks) if networks is None else networks
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return False
+    if addr.is_loopback or addr.is_multicast or addr.is_unspecified:
+        return False
+    if addr.version == 6:
+        if addr.is_link_local:
+            return True
+        return any(n.version == 6 and addr in n for n in nets)
+    return any(n.version == 4 and addr in n for n in nets)
+
+
+def record_device_address(cur, mac, ip, source, now_iso, networks=None):
+    """Upsert one (mac, addr) evidence row inside the caller's transaction.
+
+    Guards: the address must be local (see address_is_local); at most
+    DEVICE_ADDR_GLOBAL_CAP distinct global-IPv6 rows per MAC (excess is logged
+    once and skipped). first_seen is kept; last_seen is bumped; an
+    authoritative source (ndp/arp/dhcp) may replace a traffic-derived one
+    ('span'/'discovery'), never the reverse. Returns True when recorded.
+    """
+    norm, family = normalize_address(ip)
+    if not norm or not address_is_local(norm, networks):
+        return False
+    if family == "ipv6":
+        known = cur.execute(
+            "SELECT 1 FROM device_addresses WHERE mac=? AND addr=?", (mac, norm)
+        ).fetchone()
+        if not known:
+            # Cap counts RECENT addresses only: history is kept, but a device
+            # whose privacy addresses rotated out must not be blocked forever.
+            count = cur.execute(
+                "SELECT COUNT(*) FROM device_addresses "
+                "WHERE mac=? AND family='ipv6' "
+                f"AND datetime(last_seen) >= datetime(?, '-{DEVICE_ADDR_FANOUT_WINDOW_HOURS} hours')",
+                (mac, now_iso),
+            ).fetchone()[0]
+            if count >= DEVICE_ADDR_GLOBAL_CAP:
+                if mac not in _fanout_warned:
+                    _fanout_warned.add(mac)
+                    print(f"[!] address fan-out cap reached for {mac}; "
+                          f"not recording further global IPv6 evidence")
+                return False
+    cur.execute(
+        "INSERT INTO device_addresses (mac, addr, family, source, first_seen, last_seen) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(mac, addr) DO UPDATE SET "
+        "last_seen = excluded.last_seen, "
+        "source = CASE WHEN device_addresses.source IN ('span','discovery') "
+        "AND excluded.source IN ('ndp','arp','dhcp') "
+        "THEN excluded.source ELSE device_addresses.source END",
+        (mac, norm, family, source, now_iso, now_iso),
+    )
+    return True
+
+
+def parse_ndp_neighbors(output):
+    """Parse `ip -6 neigh show` output into usable (mac, addr) pairs.
+
+    Entries in INCOMPLETE/FAILED/NONE states are discarded: an unanswered or
+    failed solicitation proves nothing about address ownership.
+    """
+    pairs = []
+    for line in output.splitlines():
+        parts = line.split()
+        if not parts or "lladdr" not in parts:
+            continue
+        state = parts[-1].upper()
+        if state in ("INCOMPLETE", "FAILED", "NONE"):
+            continue
+        try:
+            addr = parts[0]
+            mac = parts[parts.index("lladdr") + 1].lower()
+        except (ValueError, IndexError):
+            continue
+        pairs.append((mac, addr))
+    return pairs
+
+
+def refresh_gateway_macs(conn):
+    """Resolve the current MAC(s) holding the default-gateway IP(s)."""
+    if not gateway_ips:
+        return
+    try:
+        placeholders = ",".join("?" for _ in gateway_ips)
+        rows = conn.execute(
+            f"SELECT DISTINCT mac FROM devices WHERE last_ipv4 IN ({placeholders}) "
+            f"OR ip IN ({placeholders})",
+            (*gateway_ips, *gateway_ips),
+        ).fetchall()
+        gateway_macs.clear()
+        gateway_macs.update(r[0].lower() for r in rows if r[0])
+    except sqlite3.Error:
+        pass  # keep the previous set
+
+
+def poll_ndp_neighbors():
+    """Record the kernel NDP cache as ownership evidence (source='ndp').
+
+    The gateway's MAC is excluded (Proxy NDP: a router may answer for other
+    hosts' addresses); unproven INCOMPLETE/FAILED entries are dropped by the
+    parser.
+    """
+    try:
+        out = subprocess.check_output(["ip", "-6", "neigh", "show"],
+                                      text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[!] NDP neighbor poll failed: {exc}")
+        return
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    try:
+        with db_lock:
+            conn = connect_db()
+            refresh_gateway_macs(conn)
+            cur = conn.cursor()
+            for mac, addr in parse_ndp_neighbors(out):
+                if mac in gateway_macs:
+                    continue
+                if not is_valid_host_mac(mac) or is_self_device(mac=mac, ip=addr):
+                    continue
+                record_device_address(cur, mac, addr, "ndp", now_iso)
+            conn.commit()
+            conn.close()
+    except sqlite3.Error as exc:
+        print(f"[!] NDP evidence could not be recorded: {exc}")
 
 
 def is_valid_host_mac(mac):
@@ -2226,6 +2625,8 @@ def hostname_quality(value):
     low = value.lower()
     if "assas access point" in low:
         return 200
+    if _is_opaque_identifier(value):
+        return 1                      # any real name (e.g. DHCP option 12) replaces it
     score = 60
     if _looks_specific_model_code(value):
         score += 30
@@ -2375,13 +2776,19 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                   model=None, model_score=0, model_source=None, dhcp_sig=None,
                   vendor_class=None, upnp_location=None,
                   candidate=None, seen_on_span=False, seen_in_discovery=False,
-                  mark_current=False, monitored_evidence=None):
+                  mark_current=False, monitored_evidence=None, addr_source=None):
     """Merge device identity while keeping discovery/traffic/AP state separate."""
     mac = mac.lower()
     if not is_valid_host_mac(mac):
         return
     if is_self_device(mac=mac, ip=ip):
         return
+    # Only an address on the monitored link is stored for a device (ip and the
+    # last_* columns) — the same guard the address evidence uses. Internet
+    # servers' addresses arrive behind the router's MAC and must never become
+    # the router's addresses (an alert would then be linked to the router).
+    if ip and not address_is_local(ip):
+        ip = None
 
     # Only frames addressed to one device prove its traffic crosses the
     # mirrored port; broadcasts are flooded to every port. Callers that do not
@@ -2725,6 +3132,19 @@ def update_device(mac, ip=None, vendor=None, vendor_source=None, hostname=None,
                 f"UPDATE devices SET {ip_family_column} = ? WHERE mac = ?",
                 (ip, mac),
             )
+            # Multi-address ownership evidence (same transaction). Additive:
+            # the address set grows, previous addresses are never replaced.
+            # record_device_address applies the locality + fan-out guards.
+            try:
+                record_device_address(
+                    cur, mac, ip,
+                    addr_source or ("span" if seen_on_span else "discovery"),
+                    now.isoformat(timespec="seconds"),
+                )
+            except sqlite3.Error:
+                raise
+            except Exception as exc:  # evidence bookkeeping never breaks identity writes
+                print(f"[!] address evidence skipped for {mac}: {exc}")
 
         conn.commit()
         conn.close()
@@ -2954,6 +3374,7 @@ def apply_discovery_snapshot(devices, initial=False):
             seen_on_span=False,
             seen_in_discovery=True,
             mark_current=False,
+            addr_source="arp",
         )
 
     if not initial:
@@ -3016,6 +3437,7 @@ def handle_discovery_arp(packet):
         seen_on_span=False,
         seen_in_discovery=True,
         mark_current=False,
+        addr_source="arp",
     )
 
 
@@ -3037,12 +3459,21 @@ def discovery_arp_observer_loop():
 
 
 def housekeeping():
+    ndp_tick = 0
     while True:
         time.sleep(5)
         # Pick up an active_probes change saved via the API without a restart.
         # This loop always runs (unlike the optional refresh loop), so it is the
         # reliable place to reconcile runtime gates with the persisted setting.
         reload_runtime_settings()
+        # Kernel NDP cache as secondary IPv6 ownership evidence (every ~60 s).
+        ndp_tick += 1
+        if ndp_tick >= 12:
+            ndp_tick = 0
+            try:
+                poll_ndp_neighbors()
+            except Exception as exc:
+                print(f"[!] NDP poll error: {exc}")
         if DELETE_AFTER_DAYS <= 0:
             continue
         stale = (datetime.now() - timedelta(days=DELETE_AFTER_DAYS)).isoformat(
@@ -3130,6 +3561,89 @@ def handle_dhcp(packet):
     return hostname, dhcp_sig, vendor_class, candidate
 
 
+def ndp_evidence_pairs(packet):
+    """Validated (mac, addr) ownership assertions from one NS/NA packet.
+
+    NDP is strong — not absolute — evidence, so a pair is returned only when
+    the message is internally consistent:
+      - Neighbor Advertisement: the target must be a usable unicast address and
+        the target link-layer option must be PRESENT and EQUAL to the Ethernet
+        source; a missing or mismatching option (possible spoof/relay) yields
+        nothing.
+      - Neighbor Solicitation: the sender asserts its OWN source address; the
+        source link-layer option must be present and equal to the Ethernet
+        source. DAD probes (source ::) carry no proof and are ignored.
+    Gateway-MAC filtering (Proxy NDP) is applied by the callers.
+    """
+    if ICMPv6ND_NA is None or IPv6 not in packet or Ether not in packet:
+        return []
+    ether_src = packet[Ether].src.lower()
+    if ICMPv6ND_NA in packet:
+        tgt = packet[ICMPv6ND_NA].tgt
+        try:
+            tgt_addr = ipaddress.ip_address(tgt)
+        except ValueError:
+            return []
+        if tgt_addr.is_multicast or tgt_addr.is_unspecified:
+            return []
+        if ICMPv6NDOptDstLLAddr not in packet:
+            return []
+        if packet[ICMPv6NDOptDstLLAddr].lladdr.lower() != ether_src:
+            return []
+        return [(ether_src, tgt)]
+    if ICMPv6ND_NS in packet:
+        src = packet[IPv6].src
+        if src == "::" or ICMPv6NDOptSrcLLAddr not in packet:
+            return []
+        if packet[ICMPv6NDOptSrcLLAddr].lladdr.lower() != ether_src:
+            return []
+        return [(ether_src, src)]
+    return []
+
+
+def learn_ra_prefixes(packet):
+    """Learn on-link IPv6 prefixes from Router Advertisements on the SPAN.
+
+    This is where the monitored LAN's global prefix becomes known on the
+    address-less capture interface. Accepted only when the RA comes from a
+    link-local source (RFC 4861 requirement) and the prefix-information option
+    carries the on-link flag; bounded by RA_PREFIX_CAP. Classification context
+    only — never ownership evidence.
+    """
+    if ICMPv6ND_RA is None or ICMPv6ND_RA not in packet or IPv6 not in packet:
+        return
+    try:
+        src = ipaddress.ip_address(packet[IPv6].src)
+    except ValueError:
+        return
+    if not src.is_link_local:
+        return
+    opt = packet.getlayer(ICMPv6NDOptPrefixInfo)
+    while opt is not None:
+        if getattr(opt, "L", 0):
+            try:
+                net = ipaddress.ip_network(f"{opt.prefix}/{opt.prefixlen}", strict=False)
+            except ValueError:
+                net = None
+            if (net and net.version == 6 and not net.is_link_local
+                    and net not in ra_networks and len(ra_networks) < RA_PREFIX_CAP):
+                ra_networks.append(net)
+                print(f"[*] On-link IPv6 prefix learned from RA: {net}")
+        opt = opt.payload.getlayer(ICMPv6NDOptPrefixInfo)
+
+
+def handle_ndp(packet):
+    """Record validated NDP assertions, excluding the gateway MAC (Proxy NDP)."""
+    learn_ra_prefixes(packet)
+    for mac, addr in ndp_evidence_pairs(packet):
+        if mac in gateway_macs:
+            continue  # a router may answer for other hosts; never attribute to it
+        if not is_valid_host_mac(mac) or is_self_device(mac=mac, ip=addr):
+            continue
+        update_device(mac, ip=addr, seen_on_span=False, seen_in_discovery=False,
+                      mark_current=False, addr_source="ndp")
+
+
 def handle(packet):
     if Ether not in packet:
         return
@@ -3137,6 +3651,13 @@ def handle(packet):
     mac = packet[Ether].src.lower()
     if not is_valid_host_mac(mac) or is_self_device(mac=mac):
         return
+
+    # NDP runs before the routed-traffic early-return below: a DAD/ND packet's
+    # IPv6 source (often ::) is not the evidence carrier, its payload is.
+    try:
+        handle_ndp(packet)
+    except Exception:
+        pass  # evidence bookkeeping must never break sniffing
 
     observed_ip = None
     hostname = None
@@ -3495,6 +4016,7 @@ def handle(packet):
         seen_in_discovery=False,
         mark_current=False,
         monitored_evidence=not (int(ether_dst.split(":", 1)[0], 16) & 0x01),
+        addr_source=("dhcp" if dhcp_sig else None),
     )
     # Optional enrichment may be triggered by traffic for any local device; this
     # does not change subnet discovery or Assas-Test association state.
@@ -3765,6 +4287,76 @@ def cleanup_stale_mdns_query_classifications(verbose=True):
             "(_apple-mobdev2/_airplay/_raop query -> not querier identity)"
         )
     return n
+
+
+MIGRATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS migrations ("
+    " name TEXT PRIMARY KEY,"
+    " applied_at TEXT NOT NULL"
+    ")"
+)
+CLEAR_OFFLINK_ADDRESSES = "2026-11-clear-offlink-device-addresses"
+# Columns that may hold an internet address recorded before the guard above
+# (last_ipv6_ll only ever holds link-local addresses).
+_OFFLINK_CLEAR_COLUMNS = ("ip", "last_ipv4", "last_ipv6_global")
+
+
+def clear_offlink_device_addresses():
+    """One-time cleanup (marker in `migrations`): remove internet addresses that
+    an earlier discovery stored in devices.ip / last_ipv4 / last_ipv6_global
+    (typically on the router's row).
+
+    A value is cleared only when it is NOT LAN-scoped (addr_scope) AND the
+    device has no ownership evidence for it in device_addresses. The rule does
+    not depend on the current network, so private addresses from a previous
+    network are kept, and a LAN device's real global IPv6 (recorded as
+    evidence) is kept. One transaction; returns the number of values cleared,
+    or None when it already ran.
+    """
+    with db_lock:
+        conn = connect_db()
+        try:
+            conn.execute(MIGRATIONS_DDL)
+            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if conn.execute("SELECT 1 FROM migrations WHERE name=?",
+                                (CLEAR_OFFLINK_ADDRESSES,)).fetchone():
+                    conn.rollback()
+                    return None
+                try:
+                    evidence = {(m, a) for m, a in conn.execute(
+                        "SELECT mac, addr FROM device_addresses").fetchall()}
+                except sqlite3.OperationalError:
+                    evidence = set()
+                cleared = 0
+                cols = ", ".join(_OFFLINK_CLEAR_COLUMNS)
+                for row in conn.execute(f"SELECT mac, {cols} FROM devices").fetchall():
+                    mac = row[0]
+                    for column, value in zip(_OFFLINK_CLEAR_COLUMNS, row[1:]):
+                        if not value or addr_scope.is_lan_scoped(value):
+                            continue
+                        norm, _family = normalize_address(value)
+                        if norm and (mac, norm) in evidence:
+                            continue
+                        # column is from the fixed tuple above (safe to interpolate)
+                        conn.execute(
+                            f"UPDATE devices SET {column}=NULL WHERE mac=? AND {column}=?",
+                            (mac, value),
+                        )
+                        cleared += 1
+                conn.execute(
+                    "INSERT INTO migrations (name, applied_at) VALUES (?, ?)",
+                    (CLEAR_OFFLINK_ADDRESSES, datetime.now().isoformat(timespec="seconds")),
+                )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        finally:
+            conn.close()
+    print(f"[*] Cleared {cleared} off-link address value(s) from the device inventory (one-time)")
+    return cleared
 
 
 def migrate_classification_rules():
@@ -4102,6 +4694,7 @@ def main():
     load_gateway()
     load_network_context()
     load_ipv6_context()
+    clear_offlink_device_addresses()
     purge_self_records()
     cleanup_stale_mdns_query_classifications()
     migrate_classification_rules()
@@ -4135,7 +4728,13 @@ def main():
         )
 
     if AP_PASSWORD:
-        print(f"[*] Optional AP association polling: {AP_URL} / SSID {AP_SSID}")
+        if AP_URL:
+            ap_target = AP_URL
+        elif AP_MAC:
+            ap_target = "address looked up by ASSAS_AP_MAC each poll"
+        else:
+            ap_target = "no address (set ASSAS_AP_URL or ASSAS_AP_MAC)"
+        print(f"[*] Optional AP association polling: {ap_target} / SSID {AP_SSID}")
     elif MANUAL_AP_CLIENTS:
         print(
             f"[*] Optional AP association: manual ASSAS_AP_CLIENTS fallback "
@@ -4166,6 +4765,10 @@ def main():
     show_inventory(show_all=False, show_history=False)
 
     threading.Thread(target=housekeeping, daemon=True).start()
+    if NETWORK_CONTEXT_REFRESH_SECONDS > 0:
+        threading.Thread(target=network_context_loop, daemon=True).start()
+        print(f"[*] Network context (own addresses, subnets) reloaded every "
+              f"{NETWORK_CONTEXT_REFRESH_SECONDS}s")
     if DISCOVERY_REFRESH_SECONDS > 0:
         threading.Thread(target=discovery_refresh_loop, daemon=True).start()
         print(

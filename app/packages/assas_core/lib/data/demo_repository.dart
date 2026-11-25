@@ -24,38 +24,38 @@ class DemoRepository implements AssasRepository {
 
     _devices = [
       Device(
-        mac: '7c:9e:bd:4a:21:0f', ip: '192.168.1.23', hostname: 'Living room TV',
+        mac: '7c:9e:bd:00:00:10', ip: '192.168.1.23', hostname: 'Living room TV',
         vendor: 'Samsung', deviceType: 'Smart TV',
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
       Device(
-        mac: '7c:6b:cb:5a:21:5d', ip: '192.168.1.41', hostname: 'Front door camera',
+        mac: '7c:6b:cb:00:00:11', ip: '192.168.1.41', hostname: 'Front door camera',
         vendor: 'Hikvision', deviceType: 'Camera',
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
       Device(
-        mac: '5f:4a:cb:5a:66:0f', ip: '192.168.1.57', hostname: null,
+        mac: '5f:4a:cb:00:00:12', ip: '192.168.1.57', hostname: null,
         vendor: 'Espressif', deviceType: null,
         presence: Presence.online, trusted: false, lastSeen: now,
       ),
       Device(
-        mac: '5b:8c:da:4d:34:5a', ip: '192.168.1.12', hostname: 'Work laptop',
+        mac: '5b:8c:da:00:00:13', ip: '192.168.1.12', hostname: 'Work laptop',
         vendor: 'Dell', deviceType: 'Laptop',
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
       Device(
-        mac: '50:c7:bf:12:9a:33', ip: '192.168.1.66', hostname: 'Smart plug',
+        mac: '50:c7:bf:00:00:14', ip: '192.168.1.66', hostname: 'Smart plug',
         vendor: 'TP-Link', deviceType: 'Smart plug',
         presence: Presence.online, trusted: true, lastSeen: now,
       ),
       Device(
-        mac: 'a4:83:e7:2c:10:b8', ip: '192.168.1.30', hostname: "Nona's iPhone",
+        mac: 'a4:83:e7:00:00:15', ip: '192.168.1.30', hostname: "Nona's iPhone",
         vendor: 'Apple', deviceType: 'Mobile',
         presence: Presence.offline, trusted: true,
         lastSeen: now.subtract(const Duration(hours: 3)),
       ),
       Device(
-        mac: '3c:2a:f4:77:05:e1', ip: '192.168.1.50', hostname: 'Office printer',
+        mac: '3c:2a:f4:00:00:16', ip: '192.168.1.50', hostname: 'Office printer',
         vendor: 'HP', deviceType: 'Printer',
         presence: Presence.offline, trusted: true,
         lastSeen: now.subtract(const Duration(days: 1)),
@@ -65,35 +65,35 @@ class DemoRepository implements AssasRepository {
     _alerts = [
       SecurityAlert(
         id: 'demo-1', kind: AlertKind.anomaly, title: 'Unusual activity',
-        deviceMac: '7c:6b:cb:5a:21:5d', deviceName: 'Front door camera',
+        deviceMac: '7c:6b:cb:00:00:11', deviceName: 'Front door camera',
         time: today.add(const Duration(hours: 22, minutes: 42)),
-        severity: Severity.high, state: AlertState.newAlert,
+        severity: Severity.high, state: AlertState.newAlert, read: false,
         explanation:
             'Your front door camera sent much more data than it normally does in a single connection, and the connection lasted longer than usual.',
       ),
       SecurityAlert(
         id: 'demo-2', kind: AlertKind.threat, title: 'Port scan detected',
-        deviceMac: '5b:8c:da:4d:34:5a', deviceName: 'Work laptop',
+        deviceMac: '5b:8c:da:00:00:13', deviceName: 'Work laptop',
         time: today.add(const Duration(hours: 21, minutes: 15)),
-        severity: Severity.medium, state: AlertState.reviewed,
+        severity: Severity.medium, state: AlertState.newAlert, read: true,
         explanation:
-            'Another device tried to connect to many different ports on your work laptop in a short time. This is often how attackers look for open services.',
+            'Another device tried to connect to many different ports on your work laptop in a short time. This is often how attackers look for services they can reach.',
         sourceIp: '192.168.1.57', destinationIp: '192.168.1.12',
       ),
       SecurityAlert(
         id: 'demo-3', kind: AlertKind.threat, title: 'Malware server contacted',
-        deviceMac: '50:c7:bf:12:9a:33', deviceName: 'Smart plug',
+        deviceMac: '50:c7:bf:00:00:14', deviceName: 'Smart plug',
         time: yesterday.add(const Duration(hours: 18, minutes: 5)),
-        severity: Severity.critical, state: AlertState.resolved,
+        severity: Severity.high, state: AlertState.resolved, read: true,
         explanation:
             'Your smart plug connected to an internet address that is known to be used by malware.',
-        sourceIp: '192.168.1.66', destinationIp: '185.220.101.4',
+        sourceIp: '192.168.1.66', destinationIp: '203.0.113.4',
       ),
       SecurityAlert(
         id: 'demo-4', kind: AlertKind.anomaly, title: 'Unusual activity',
-        deviceMac: '7c:9e:bd:4a:21:0f', deviceName: 'Living room TV',
+        deviceMac: '7c:9e:bd:00:00:10', deviceName: 'Living room TV',
         time: yesterday.add(const Duration(hours: 16, minutes: 30)),
-        severity: Severity.low, state: AlertState.resolved,
+        severity: Severity.low, state: AlertState.resolved, read: true,
         explanation:
             'Your living room TV connected at a time when it is usually not active.',
       ),
@@ -159,19 +159,69 @@ class DemoRepository implements AssasRepository {
   }
 
   @override
-  Future<List<SecurityAlert>?> getAlerts() async {
+  Future<List<SecurityAlert>?> getAlerts({int? limit}) async {
     await _delay();
     final list = List<SecurityAlert>.from(_alerts)
       ..sort((a, b) => b.time.compareTo(a.time));
-    return list;
+    return limit != null && list.length > limit ? list.sublist(0, limit) : list;
   }
 
   @override
   Future<void> setAlertState(String id, AlertState state) async {
     await _delay();
     _alerts = [
-      for (final a in _alerts) a.id == id ? a.copyWith(state: state) : a,
+      for (final a in _alerts)
+        a.id == id
+            // Resolved alerts count as read.
+            ? a.copyWith(state: state, read: state == AlertState.resolved ? true : null)
+            : a,
     ];
+  }
+
+  @override
+  Future<SecurityAlert?> markAlertRead(String id) async {
+    await _delay();
+    SecurityAlert? out;
+    _alerts = [
+      for (final a in _alerts)
+        if (a.id == id) out = a.copyWith(read: true) else a,
+    ];
+    return out;
+  }
+
+  // Derived from getAlerts() so a subclass serving its own alert list (tests)
+  // gets a matching Unread tab and badge.
+  @override
+  Future<List<SecurityAlert>?> getUnreadAlerts({int? limit}) async {
+    final list = (await getAlerts())?.where((a) => a.isUnread && a.isUnresolved).toList();
+    return list != null && limit != null && list.length > limit ? list.sublist(0, limit) : list;
+  }
+
+  @override
+  Future<int?> getUnreadAlertCount() async =>
+      (await getAlerts())?.where((a) => a.isUnread && a.isUnresolved).length;
+
+  @override
+  Future<int?> getOpenAlertCount() async {
+    await _delay();
+    return _alerts.where((a) => a.isUnresolved).length; // New
+  }
+
+  @override
+  Future<List<SecurityAlert>?> getDeviceAlerts(String mac, {int? limit}) async {
+    await _delay();
+    final list = _alerts.where((a) => a.deviceMac == mac).toList()
+      ..sort((a, b) => b.time.compareTo(a.time));
+    return limit != null && list.length > limit ? list.sublist(0, limit) : list;
+  }
+
+  @override
+  Future<SecurityAlert?> getAlertById(String id) async {
+    await _delay();
+    for (final a in _alerts) {
+      if (a.id == id) return a;
+    }
+    return null;
   }
 
   /// Demo: any 6-character code (letters/numbers) is accepted.

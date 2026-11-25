@@ -30,7 +30,10 @@ void main() {
     expect(repo.calls, 1);
     state.stopPolling();
     state.startPolling();
-    await Future<void>.delayed(Duration.zero);
+    // The restart issues a fresh getDevices at once (calls == 2) without waiting
+    // on the cancelled refresh; wait past the demo getAlerts delay (250 ms, now
+    // in the refresh path since Sprint 2 enabled alerts) for loadedOnce.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     expect(repo.calls, 2);
     expect(state.loadedOnce, isTrue);
     state.dispose();

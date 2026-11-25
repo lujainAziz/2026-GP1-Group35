@@ -1,0 +1,33 @@
+# Sprint 2 final live verification (redacted: no IPs/MACs) — 2026-11-02T19:46:12.253263Z
+source: live API GET /alerts (localhost); ET Open 2026-11-02
+
+total alerts: 68
+by kind: {'threat': 68}
+by state: {'new': 68}
+by severity: {'medium': 68}
+distinct rule_ids (signatures): 21
+linked to a device (device_mac set): 56
+unlinked (device_mac NULL): 12
+newest-first by last_event_time: True
+
+# Dedup: occurrence_count>1 with first<last (rule_id + counts + times only)
+  id=68 rule=2046657 occ=6 first=2026-11-02T22:45:19 last=2026-11-02T22:45:19 first<last=False
+  id=67 rule=2046656 occ=2 first=2026-11-02T22:45:18 last=2026-11-02T22:45:18 first<last=False
+  id=1 rule=2200013 occ=204 first=2026-11-02T15:40:44 last=2026-11-02T22:45:09 first<last=True
+  id=66 rule=2210054 occ=4 first=2026-11-02T22:39:28 last=2026-11-02T22:39:57 first<last=True
+  id=63 rule=2046656 occ=4 first=2026-11-02T22:28:45 last=2026-11-02T22:29:53 first<last=True
+  id=64 rule=2046657 occ=6 first=2026-11-02T22:28:45 last=2026-11-02T22:28:57 first<last=True
+  max occurrence_count: 204
+
+# NULL-device grouping keyed by rule+src+dst: same rule, different endpoints => NOT merged
+  NULL-device alerts: 12 | rule_ids with >1 distinct NULL-device alert (distinct src/dst): [2210045, 2210030]
+
+# Auth (live)
+  localhost GET /alerts: 200
+  LAN-IP no-token GET /alerts: 401
+  LAN-IP no-token GET /alerts/1: 401
+  LAN-IP no-token GET /devices/<example-mac>/alerts: 401
+
+# single + per-device endpoints (live)
+  GET /alerts/{id}: True threat new
+  GET /devices/<mac>/alerts: 47 rows, all that mac: True

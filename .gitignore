@@ -17,3 +17,8 @@ assas_monitor.log
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
+
+# Sprint 2 evidence is a required deliverable: keep logs/pcaps under this tree
+# even though *.log and *.pcap are ignored globally above (last match wins).
+!docs/sprint-2/evidence/
+!docs/sprint-2/evidence/**

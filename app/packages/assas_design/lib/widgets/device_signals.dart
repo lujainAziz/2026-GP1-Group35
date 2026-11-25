@@ -8,16 +8,15 @@ import 'ui_icons.dart';
 // Read-only: everything here is computed from data the screens already have.
 
 Color sevColor(Severity s) => switch (s) {
-      Severity.critical => Ui.crit,
-      Severity.high => Ui.high,
-      Severity.medium => Ui.med,
-      Severity.low => Ui.low,
+      // Release 1 severity scale: red / orange / amber (no green: Low is still an alert).
+      Severity.high => Ui.crit, // former Critical red
+      Severity.medium => Ui.high, // former High orange
+      Severity.low => Ui.med, // former Medium amber
     };
 
-int sevRank(Severity s) => s.index + 1; // low 1 ... critical 4
+int sevRank(Severity s) => s.index + 1; // low 1 ... high 3
 
 String sevUpper(Severity s) => switch (s) {
-      Severity.critical => 'CRITICAL',
       Severity.high => 'HIGH',
       Severity.medium => 'MEDIUM',
       Severity.low => 'LOW',
@@ -25,7 +24,7 @@ String sevUpper(Severity s) => switch (s) {
 
 String kindUpper(SecurityAlert a) => a.kind == AlertKind.threat ? 'THREAT' : 'ANOMALY';
 
-/// Status pill colors: New = accent, Reviewed / Resolved = muted.
+/// Status pill colors: New = accent, Resolved = muted.
 Color stateColor(SecurityAlert a) => a.state == AlertState.newAlert ? Ui.acc : Ui.mute;
 Color stateBg(SecurityAlert a) =>
     a.state == AlertState.newAlert ? Ui.fade(Ui.acc, 0.20) : Ui.fade(Ui.mute, 0.16);
@@ -69,7 +68,7 @@ class DeviceSignal {
   String get icon => UiIcons.forDevice(device);
 
   String get verdict => hasAlert
-      ? '${sevUpper(alertSev!)} ALERT OPEN'
+      ? 'UNRESOLVED ${sevUpper(alertSev!)} ALERT'
       : unrec
           ? 'NOT RECOGNIZED YET'
           : !online
@@ -93,11 +92,14 @@ class DeviceSignal {
 class ConnectionLook {
   ConnectionLook._();
 
+  // User-facing connection is Connected / Disconnected, with Outdated when the
+  // last data could not be refreshed. This describes the app<->appliance link
+  // only; Online/Offline is reserved for each device's own presence.
   static String text(ConnectionStatus c) => switch (c) {
         ConnectionStatus.checking => 'CONNECTING',
         ConnectionStatus.live => 'CONNECTED',
-        ConnectionStatus.stale => 'OUTDATED DATA',
-        ConnectionStatus.unreachable => 'OFFLINE',
+        ConnectionStatus.stale => 'OUTDATED',
+        ConnectionStatus.unreachable => 'DISCONNECTED',
       };
 
   static Color color(ConnectionStatus c) => switch (c) {
@@ -109,6 +111,8 @@ class ConnectionLook {
 
   /// "SYNCED NOW" while fresh, otherwise how long ago the last sync was.
   static String synced(ConnectionStatus c, DateTime? last) {
+    // When the data is stale, say so plainly instead of a fresh "synced" phrase.
+    if (c == ConnectionStatus.stale) return 'OUTDATED';
     if (last == null) return c == ConnectionStatus.live ? 'SYNCING…' : 'NOT SYNCED YET';
     final age = DateTime.now().difference(last);
     if (c == ConnectionStatus.live && age.inSeconds < 15) return 'SYNCED NOW';

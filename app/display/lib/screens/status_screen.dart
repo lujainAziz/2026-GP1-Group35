@@ -15,7 +15,7 @@ import 'package:assas_design/widgets/assas_eye.dart';
 import 'package:assas_design/release_status.dart';
 
 /// Glanceable status for the 7-inch screen (1024 x 600):
-/// network risk level, devices online, unresolved alerts, system status,
+/// network alert level, devices online, unresolved alerts, system status,
 /// and the rotating pairing QR code.
 class StatusScreen extends StatefulWidget {
   const StatusScreen({super.key, this.repo});
@@ -32,8 +32,11 @@ class _StatusScreenState extends State<StatusScreen> {
   List<Device> _devices = const [];
   int? _online;
   int? _total;
+  // Unresolved (New) alerts, the DB aggregate from GET /alerts/open_count.
+  // null = never loaded / not available (shows "—").
   int? _unresolved;
-  bool _alertsAvailable = false;
+  // The last poll failed: _unresolved is the last known count (shown dimmed).
+  bool _unresolvedLastKnown = false;
   DateTime? _lastSync;
   Timer? _timer;
   bool _refreshing = false;
@@ -92,7 +95,7 @@ class _StatusScreenState extends State<StatusScreen> {
     var status = await _repo.checkHealth();
     RiskInfo? risk = _risk;
     int? online = _online, total = _total, unresolved = _unresolved;
-    bool alertsAvailable = _alertsAvailable;
+    bool unresolvedLastKnown = _unresolvedLastKnown;
 
     try {
       final devices = await _repo.getDevices();
@@ -103,12 +106,16 @@ class _StatusScreenState extends State<StatusScreen> {
     } catch (_) {
       if (status == ConnectionStatus.live) status = ConnectionStatus.stale;
     }
-    if (FeatureRelease.alerts) {
+    if (FeatureRelease.alertDisplay) {
+    // The true total from the database (never the length of a downloaded page).
+    // null = the appliance has no such endpoint (404). On failure keep the last
+    // known count, flagged so the card dims it; with none yet it shows "—".
     try {
-      final alerts = await _repo.getAlerts();
-      alertsAvailable = alerts != null;
-      unresolved = alerts?.where((a) => a.isUnresolved).length;
-    } catch (_) {}
+      unresolved = await _repo.getOpenAlertCount();
+      unresolvedLastKnown = false;
+    } catch (_) {
+      unresolvedLastKnown = unresolved != null;
+    }
     }
     if (FeatureRelease.risk) {
     try {
@@ -123,7 +130,7 @@ class _StatusScreenState extends State<StatusScreen> {
       _online = online;
       _total = total;
       _unresolved = unresolved;
-      _alertsAvailable = alertsAvailable;
+      _unresolvedLastKnown = unresolvedLastKnown;
     });
     } finally {
       _refreshing = false;
@@ -213,14 +220,16 @@ class _StatusScreenState extends State<StatusScreen> {
       Expanded(flex: 10, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(padding: const EdgeInsets.fromLTRB(18, 0, 0, 20),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('NETWORK RISK', style: UiText.kicker.copyWith(color: Ui.mute)),
+            Text('NETWORK ALERT LEVEL', style: UiText.kicker.copyWith(color: Ui.mute)),
             const SizedBox(height: 10),
-            FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
-              child: Text(FeatureRelease.risk ? (_risk?.level ?? '—') : 'Soon', style: UiText.riskWord.copyWith(color: riskColor))),
-            const SizedBox(height: 8),
-            Text(!FeatureRelease.risk ? 'Network risk arrives in Sprint 4' : _risk == null ? 'Risk level is not available yet' : 'Current network risk assessment',
-              style: UiText.secondary.copyWith(color: Ui.mute)),
-            if (!FeatureRelease.risk) ...[const SizedBox(height: 10), const SoonTag(4)],
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Expanded(child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+                child: Text(FeatureRelease.risk ? (_risk?.level ?? '—') : 'Soon', style: UiText.riskWord.copyWith(color: riskColor)))),
+              const SizedBox(width: 12),
+              ConstrainedBox(constraints: const BoxConstraints(maxWidth: 130),
+                child: Text(!FeatureRelease.risk ? 'Network Alert Level arrives in Sprint 4' : _risk == null ? 'Alert level is not available yet' : 'Highest severity among open alerts',
+                  textAlign: TextAlign.right, style: UiText.secondary.copyWith(height: 1.35, color: Ui.mute))),
+            ]),
           ])),
         Expanded(child: Container(padding: const EdgeInsets.all(18), decoration: surfCard(UiRadius.onlineCard),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -243,16 +252,50 @@ class _StatusScreenState extends State<StatusScreen> {
         const SizedBox(height: 12),
         Container(padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
           decoration: surfCard(UiRadius.card, color: Ui.mix(Ui.high, .16, Ui.surf)),
-          child: Row(children: [
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Unresolved\nalerts', style: UiText.sans(15, 600)),
-              if (!FeatureRelease.alerts) ...[const SizedBox(height: 8), const SoonTag(2)],
-            ])),
-            Text(!FeatureRelease.alerts ? 'SOON' : _alertsAvailable ? '${_unresolved ?? '—'}' : '—',
-              style: !FeatureRelease.alerts ? UiText.mono(13, 700, em: .1, color: Ui.mute)
-                  : UiText.statNumber.copyWith(color: Ui.high)),
-          ])),
+          child: _unresolvedCard()),
       ])),
+    ]);
+  }
+
+  /// "Unresolved alerts": the count of New alerts. 0 is muted with "No
+  /// unresolved alerts" (never "All clear": the card must not suggest the
+  /// network is safe). After a failed poll the last known count stays, dimmed,
+  /// with "Last known"; with no count yet it shows "—".
+  Widget _unresolvedCard() {
+    if (!FeatureRelease.alertDisplay) {
+      return Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Unresolved\nalerts', style: UiText.sans(15, 600)),
+          const SizedBox(height: 8),
+          const SoonTag(2),
+        ])),
+        Text('SOON', style: UiText.mono(13, 700, em: .1, color: Ui.mute)),
+      ]);
+    }
+    final n = _unresolved;
+    final note = n == null
+        ? null
+        : _unresolvedLastKnown
+            ? 'Last known'
+            : n == 0
+                ? 'No unresolved alerts'
+                : null;
+    final color = n == null || n == 0
+        ? Ui.mute
+        : _unresolvedLastKnown
+            ? Ui.fade(Ui.high, .45)
+            : Ui.high;
+    return Row(children: [
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Unresolved\nalerts', style: UiText.sans(15, 600)),
+        if (note != null) ...[
+          const SizedBox(height: 6),
+          Text(note, key: const ValueKey('unresolvedNote'),
+              style: UiText.mono(10, 600, em: .06, color: Ui.mute)),
+        ],
+      ])),
+      Text(n == null ? '—' : '$n', key: const ValueKey('unresolvedCount'),
+          style: UiText.statNumber.copyWith(color: color)),
     ]);
   }
 }

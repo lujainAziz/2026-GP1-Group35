@@ -30,8 +30,9 @@ class _MainShellState extends State<MainShell> {
   late final AppState _state = AppState(repository);
   int _index = 0;
 
-  /// Filter the Devices tab should switch to when opened from the dashboard.
-  final _deviceFilter = ValueNotifier<DeviceFilter?>(null);
+  /// Filter (set of poles) the Devices tab should switch to when opened from
+  /// the dashboard. Empty set = All.
+  final _deviceFilter = ValueNotifier<Set<FilterPole>?>(null);
 
   @override
   void initState() {
@@ -61,7 +62,7 @@ class _MainShellState extends State<MainShell> {
     await SessionStore.clear();
     repository.setAuthToken(null);
     if (!mounted) return;
-    showToast(context, 'Session ended. Pair again.');
+    showToast(context, 'This phone is no longer paired. Pair it again to continue.');
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const PairingScreen()),
       (_) => false,
@@ -73,7 +74,7 @@ class _MainShellState extends State<MainShell> {
     UiMemory.setTab(index);
   }
 
-  void _openDevices(DeviceFilter filter) {
+  void _openDevices(Set<FilterPole> filter) {
     _deviceFilter.value = filter;
     _goTo(1);
   }
@@ -84,8 +85,8 @@ class _MainShellState extends State<MainShell> {
     final tabs = [
       DashboardScreen(
         state: _state,
-        onOpenDevices: () => _openDevices(DeviceFilter.all),
-        onOpenUnrecognized: () => _openDevices(DeviceFilter.unrecognized),
+        onOpenDevices: () => _openDevices(const {}),
+        onOpenUnrecognized: () => _openDevices(const {FilterPole.untrusted}),
         onOpenAlerts: () => _goTo(2),
       ),
       DeviceListScreen(state: _state, filterRequest: _deviceFilter),

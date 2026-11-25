@@ -1,0 +1,29 @@
+# ASSAS Suricata log rotation (Sprint 2, PBI-13).
+#
+# Deployed over /etc/logrotate.d/suricata, REPLACING the stock stanza. The stock
+# stanza used `copytruncate` and globbed /var/log/suricata/*.json, which would
+# corrupt the alert ingester's offset-based resume and clash as a duplicate
+# entry.
+#
+# IMPORTANT: eve.json is deliberately NOT managed here. Its rotation (rename +
+# SIGHUP reopen) and retention are owned entirely by the alert ingester
+# (appliance/alerts.py): the ingester renames eve.json, signals Suricata to
+# reopen (man suricata: "SIGHUP ... close and re-open all log files"), and its
+# reaper deletes a rotated eve file ONLY after the persisted checkpoint marks it
+# fully consumed. logrotate must never delete an unread eve file, so it is not
+# listed here at all.
+
+# Engine/diagnostic logs — NOT consumed by the alert ingester, so ordinary
+# count-based rotation with compression is safe.
+/var/log/suricata/stats.log /var/log/suricata/suricata.log {
+    weekly
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        systemctl kill -s HUP assas-suricata.service 2>/dev/null || true
+    endscript
+}

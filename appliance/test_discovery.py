@@ -1,5 +1,6 @@
 import contextlib
 import io
+import ipaddress
 import os
 import socket
 import sqlite3
@@ -144,7 +145,7 @@ class RandomizedMacTests(unittest.TestCase):
         # column existed, or a device self-report -- must read "(inferred)",
         # not as if it came from the OUI table.
         self.assertEqual(
-            display_vendor("72:a3:36:be:90:06", "Apple Inc.", None),
+            display_vendor("02:00:00:00:00:04", "Apple Inc.", None),
             "Apple Inc. (inferred)",
         )
 
@@ -152,7 +153,7 @@ class RandomizedMacTests(unittest.TestCase):
         # A real (non-randomized) MAC with a NULL source is a genuine OUI
         # vendor and must NOT be relabelled inferred.
         self.assertEqual(
-            display_vendor("28:39:5e:d7:44:0c", "Samsung Electronics", None),
+            display_vendor("28:39:5e:00:00:0e", "Samsung Electronics", None),
             "Samsung Electronics",
         )
 
@@ -237,9 +238,9 @@ class BackfillMigrationTests(unittest.TestCase):
         # UPnP "manufacturer=" field) while using a randomized MAC. The
         # locally-administered bit alone must not be treated as proof the
         # stored vendor is fake placeholder text.
-        self._insert("62:84:4b:77:f4:e5", "Skyworth BJ", None)
+        self._insert("02:00:00:00:00:05", "Skyworth BJ", None)
         discovery.init_db()
-        self.assertEqual(self._vendor("62:84:4b:77:f4:e5"), "Skyworth BJ")
+        self.assertEqual(self._vendor("02:00:00:00:00:05"), "Skyworth BJ")
 
     def test_inferred_vendor_survives_backfill(self):
         # Critical: item 6 stores real inferred vendors in this same column
@@ -257,9 +258,9 @@ class BackfillMigrationTests(unittest.TestCase):
         # The confirmed bug: a globally administered MAC (the RE laptop) with a
         # missing-OUI placeholder carrying a DUP annotation must be reset. The
         # locally-administered-only cleanup never reaches a global MAC.
-        self._insert("dc:97:ba:fc:34:ce", "(Unknown) (DUP: 2)", None)
+        self._insert("00:00:5e:00:53:02", "(Unknown) (DUP: 2)", None)
         discovery.init_db()
-        self.assertIsNone(self._vendor("dc:97:ba:fc:34:ce"))
+        self.assertIsNone(self._vendor("00:00:5e:00:53:02"))
 
     def test_global_mac_plain_unknown_is_nulled(self):
         self._insert("dc:97:ba:11:22:33", "(Unknown)", None)
@@ -269,9 +270,9 @@ class BackfillMigrationTests(unittest.TestCase):
     def test_global_mac_real_vendor_preserved(self):
         # A legitimate OUI vendor on a globally administered MAC must never be
         # cleared by the new placeholder cleanup.
-        self._insert("28:39:5e:d7:44:0c", "Samsung Electronics", None)
+        self._insert("28:39:5e:00:00:0e", "Samsung Electronics", None)
         discovery.init_db()
-        self.assertEqual(self._vendor("28:39:5e:d7:44:0c"), "Samsung Electronics")
+        self.assertEqual(self._vendor("28:39:5e:00:00:0e"), "Samsung Electronics")
 
 
 class ObservedStatusAgingTests(unittest.TestCase):
@@ -439,6 +440,11 @@ class ProbeTriggerTests(unittest.TestCase):
     not only brand-new ones (the target unknowns are already in the DB)."""
 
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.100.0/24",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -482,7 +488,7 @@ class ProbeTriggerTests(unittest.TestCase):
         conn.close()
 
     def test_existing_unclassified_null_type_schedules_once(self):
-        mac = "72:e4:6b:44:a6:f5"
+        mac = "02:00:00:00:00:06"
         self._insert(mac, None)
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
@@ -492,14 +498,14 @@ class ProbeTriggerTests(unittest.TestCase):
         self.assertEqual(sum(1 for key in discovery.probe_attempts if key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE'), 1)
 
     def test_existing_generic_unknown_type_schedules(self):
-        mac = "72:e4:6b:44:a6:00"
+        mac = "02:5a:0a:00:00:07"
         self._insert(mac, "Generic / Unknown")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
 
     def test_existing_classified_and_named_device_not_scheduled(self):
         # Classified AND already has a usable hostname -> no enrichment at all.
-        mac = "72:e4:6b:44:a6:11"
+        mac = "02:5a:0a:00:00:08"
         self._insert(mac, "Computer", hostname="OFFICE-PC")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertNotIn(mac, discovery.mdns_probed)
@@ -508,7 +514,7 @@ class ProbeTriggerTests(unittest.TestCase):
     def test_existing_general_type_gets_mdns_and_active(self):
         # B2: a general OS verdict ("Apple Device") is still refinable, so it
         # now gets BOTH mDNS name enrichment AND the active/Nmap probe.
-        mac = "72:e4:6b:44:a6:22"
+        mac = "02:00:00:00:00:07"
         self._insert(mac, "Apple Device")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
@@ -518,7 +524,7 @@ class ProbeTriggerTests(unittest.TestCase):
         # A specific type with no hostname is still eligible for mDNS name
         # enrichment, but NOT the active/Nmap probe (which is probe-eligible
         # only for unclassified or general-OS types).
-        mac = "72:e4:6b:44:a6:33"
+        mac = "02:00:00:00:00:08"
         self._insert(mac, "Computer")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_MDNS_PROBE' for key in discovery.probe_attempts))
@@ -528,32 +534,32 @@ class ProbeTriggerTests(unittest.TestCase):
 class DisplayDeviceTypeTests(unittest.TestCase):
     def test_private_mac_no_evidence(self):
         self.assertEqual(
-            display_device_type(None, "de:45:d6:62:b3:29", None, None, None),
+            display_device_type(None, "02:00:00:00:00:09", None, None, None),
             "Unknown (private MAC)",
         )
 
     def test_private_mac_generic_type_no_evidence(self):
         self.assertEqual(
-            display_device_type("Generic / Unknown", "de:45:d6:62:b3:29", None, None, None),
+            display_device_type("Generic / Unknown", "02:00:00:00:00:09", None, None, None),
             "Unknown (private MAC)",
         )
 
     def test_private_mac_with_hostname_stays_generic(self):
         # .234 in the live inventory: private MAC but hostname "LUJAIN".
         self.assertEqual(
-            display_device_type(None, "26:3b:93:16:69:76", "LUJAIN", None, None),
+            display_device_type(None, "02:00:00:00:00:0a", "LUJAIN", None, None),
             "Generic / Unknown",
         )
 
     def test_real_mac_unknown_stays_generic(self):
         self.assertEqual(
-            display_device_type(None, "28:39:5e:d7:44:0c", None, None, None),
+            display_device_type(None, "28:39:5e:00:00:0e", None, None, None),
             "Generic / Unknown",
         )
 
     def test_classified_device_unchanged(self):
         self.assertEqual(
-            display_device_type("Computer", "de:45:d6:62:b3:29", None, None, None),
+            display_device_type("Computer", "02:00:00:00:00:09", None, None, None),
             "Computer",
         )
 
@@ -620,7 +626,7 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(score, discovery.SCORES["dhcp_vendor"])
 
     def test_mitv_model_beats_android_hostname(self):
-        # Real case 60:35:73:f2:4d:7b: an Android-TV A-record hostname (OS token)
+        # Real case 60:35:73:00:00:0f: an Android-TV A-record hostname (OS token)
         # plus a TV model. The model (95) must win over the android OS hint (40),
         # so the device is a Smart TV, not "Mobile (Android)".
         self._insert("aa:00:00:00:00:13",
@@ -639,7 +645,7 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(score, discovery.SCORES["os_hint"])
 
     def test_zflip3_hostname_rescores_to_mobile(self):
-        # Real case d2:5a:1b:a1:48:de: the phone family in the hostname is
+        # Real case 02:5a:06:00:00:06: the phone family in the hostname is
         # form-factor evidence, so it stays Mobile (Android).
         self._insert("aa:00:00:00:00:15", hostname="Z-Flip3-alkhas-b-noura")
         discovery.rescore_stored_evidence(verbose=False)
@@ -777,15 +783,15 @@ class ReevaluateStaleClassificationTests(unittest.TestCase):
     # -- corrections (both guards satisfied) --------------------------------
 
     def test_huawei_tablet_corrected_from_stale_mobile(self):
-        # Real row e2:e1:1e:62:d5:a5: stored Mobile (Android)@90 from the old
+        # Real row 02:5a:0e:00:00:09: stored Mobile (Android)@90 from the old
         # "android" rule; stored hostname is the DHCP name, vendor_class carries
         # the known Huawei tablet code.
-        self._insert("e2:e1:1e:62:d5:a5", hostname="DBY-W09",
+        self._insert("02:00:00:00:00:0b", hostname="DBY-W09",
                      vendor_class="HUAWEI:android:DBY",
                      device_type="Mobile (Android)", class_score=90,
                      class_source="mDNS A-record hostname")
         n, out = self._run()
-        dtype, score, _ = self._get("e2:e1:1e:62:d5:a5")
+        dtype, score, _ = self._get("02:00:00:00:00:0b")
         self.assertEqual(dtype, "Tablet (Android)")
         self.assertEqual(score, discovery.SCORES["dhcp_vendor"])
         self.assertEqual(n, 1)
@@ -826,12 +832,12 @@ class ReevaluateStaleClassificationTests(unittest.TestCase):
         self.assertEqual(n, 0)
 
     def test_skyworth_tv_unchanged(self):
-        self._insert("be:6d:f7:31:38:48", hostname="SWTV-22AE",
+        self._insert("02:00:00:00:00:0c", hostname="SWTV-22AE",
                      model="Skyworth Media Renderer",
                      device_type="Smart TV / Media Device", class_score=85,
                      class_source="SSDP advertisement")
         self._run()
-        self.assertEqual(self._get("be:6d:f7:31:38:48")[0],
+        self.assertEqual(self._get("02:00:00:00:00:0c")[0],
                          "Smart TV / Media Device")
 
     def test_gateway_router_unchanged(self):
@@ -994,6 +1000,11 @@ class NbnsProbeTests(unittest.TestCase):
 
 class NbnsProbeTriggerTests(unittest.TestCase):
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.100.0/24",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -1027,7 +1038,7 @@ class NbnsProbeTriggerTests(unittest.TestCase):
         conn.close()
 
     def test_existing_unclassified_schedules_once(self):
-        mac = "72:e4:6b:44:a6:f5"
+        mac = "02:00:00:00:00:06"
         self._insert(mac, None)
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_NBNS_PROBE' for key in discovery.probe_attempts))
@@ -1036,14 +1047,14 @@ class NbnsProbeTriggerTests(unittest.TestCase):
 
     def test_existing_classified_and_named_not_scheduled(self):
         # Classified AND already named -> no NBNS enrichment.
-        mac = "72:e4:6b:44:a6:11"
+        mac = "02:5a:0a:00:00:08"
         self._insert(mac, "Computer", hostname="OFFICE-PC")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertNotIn(mac, discovery.nbns_probed)
 
     def test_existing_classified_without_name_gets_nbns(self):
         # Classified but NO hostname -> eligible for NBNS name enrichment.
-        mac = "72:e4:6b:44:a6:33"
+        mac = "02:00:00:00:00:08"
         self._insert(mac, "Computer")
         discovery.update_device(mac, ip="192.168.100.50", seen_on_span=True)
         self.assertTrue(any(key[1] == mac and key[0] == 'ENABLE_NBNS_PROBE' for key in discovery.probe_attempts))
@@ -1093,7 +1104,7 @@ class SynFingerprintLocalOnlyTests(unittest.TestCase):
 
     def test_foreign_source_ip_ignored(self):
         mac = "02:aa:aa:aa:aa:01"
-        discovery.handle(self._pkt(mac, "8.8.8.8"))
+        discovery.handle(self._pkt(mac, "198.51.100.8"))
         self.assertIsNone(self._row(mac))
 
     def test_local_source_ip_fingerprinted(self):
@@ -1160,7 +1171,7 @@ class MdnsQueryVendorInferenceTests(unittest.TestCase):
         return r
 
     def test_randomized_mac_infers_apple(self):
-        mac = "02:ab:cd:ef:00:11"  # locally administered -> no OUI vendor
+        mac = "02:00:00:00:00:0d"  # locally administered -> no OUI vendor
         discovery.handle(self._query(mac, "192.168.100.90"))
         dtype, vendor, vsrc = self._get(mac)
         self.assertEqual(dtype, "Apple Device")
@@ -1172,7 +1183,7 @@ class MdnsQueryVendorInferenceTests(unittest.TestCase):
         # (e.g. AirDrop target discovery) must KEEP "Dell Inc." / NULL source,
         # not be relabelled Apple. Gating on the MAC (not observed_vendor) is
         # what protects it.
-        mac = "b4:45:06:90:7f:2e"
+        mac = "00:00:5e:00:53:01"
         self._insert(mac, ip="192.168.100.112", device_type="Computer",
                      class_score=discovery.SCORES["dhcp_vendor"],
                      class_source="DHCP vendor class (msft 5.0)",
@@ -1225,7 +1236,7 @@ class AndroidTvClassificationTests(unittest.TestCase):
         ))
 
     def test_android_tv_model_beats_android_hostname(self):
-        mac = "60:35:73:f2:4d:7b"
+        mac = "60:35:73:00:00:0f"
         pkt = self._mdns(mac, "192.168.100.50", [
             DNSRR(rrname="android-aesp0.local", type="A", rdata="192.168.100.50"),
             DNSRR(rrname="x._device-info._tcp.local", type="TXT",
@@ -1235,7 +1246,7 @@ class AndroidTvClassificationTests(unittest.TestCase):
         self.assertEqual(self._row(mac)[0], "Smart TV / Media Device")
 
     def test_android_only_hostname_is_android_device(self):
-        mac = "d2:9b:4b:ce:f7:84"
+        mac = "02:00:00:00:00:0e"
         pkt = self._mdns(mac, "192.168.100.51", [
             DNSRR(rrname="Android-5.local", type="A", rdata="192.168.100.51"),
         ])
@@ -1391,7 +1402,9 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
         gate = patch.object(discovery, 'ENABLE_ACTIVE_PROBE', True)
         gate.start()
         self.addCleanup(gate.stop)
-        network = patch.object(discovery, 'monitored_networks', [])
+        network = patch.object(discovery, 'monitored_networks',
+                               # addresses are recorded only inside a known subnet
+                               [ipaddress.ip_network(n) for n in ("192.168.1.0/24",)])
         network.start()
         self.addCleanup(network.stop)
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -1441,7 +1454,7 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
         return row
 
     def test_probe_80_443_554_8000_is_video_surveillance(self):
-        mac, ip = "52:d4:f6:d3:28:55", "192.168.1.236"
+        mac, ip = "02:00:00:00:00:0f", "192.168.1.236"
         self._insert_unclassified(mac, ip)
         self._fake_nmap(
             "PORT     STATE  SERVICE\n"
@@ -1457,7 +1470,7 @@ class ActiveProbeSurveillanceTests(unittest.TestCase):
         self.assertIn("554+8000", source)
 
     def test_probe_rtsp_only_is_video_surveillance_not_camera(self):
-        mac, ip = "52:d4:f6:aa:bb:cc", "192.168.1.237"
+        mac, ip = "02:00:00:00:00:10", "192.168.1.237"
         self._insert_unclassified(mac, ip)
         self._fake_nmap(
             "PORT     STATE  SERVICE\n"
@@ -1486,7 +1499,9 @@ class ActiveProbeLoggingTests(unittest.TestCase):
         gate = patch.object(discovery, 'ENABLE_ACTIVE_PROBE', True)
         gate.start()
         self.addCleanup(gate.stop)
-        network = patch.object(discovery, 'monitored_networks', [])
+        network = patch.object(discovery, 'monitored_networks',
+                               # addresses are recorded only inside a known subnet
+                               [ipaddress.ip_network(n) for n in ("192.168.1.0/24",)])
         network.start()
         self.addCleanup(network.stop)
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -1641,7 +1656,7 @@ class OnvifRefinementTests(unittest.TestCase):
         return r
 
     def test_generic_onvif_stored_broad_then_nvt_refines_to_camera(self):
-        mac = "aa:bb:cc:dd:ee:01"
+        mac = "02:00:00:00:00:11"
         discovery.update_device(
             mac, ip="192.168.1.50", seen_on_span=True,
             candidate=("Video Surveillance Device", discovery.SCORES["weak_service"],
@@ -1661,7 +1676,7 @@ class OnvifRefinementTests(unittest.TestCase):
         )
 
     def test_generic_onvif_stored_broad_then_nvs_refines_to_nvr(self):
-        mac = "aa:bb:cc:dd:ee:02"
+        mac = "02:00:00:00:00:12"
         discovery.update_device(
             mac, ip="192.168.1.51", seen_on_span=True,
             candidate=("Video Surveillance Device", discovery.SCORES["weak_service"],
@@ -1780,6 +1795,11 @@ class NameEnrichmentEligibilityTests(unittest.TestCase):
     The Nmap/active probe must stay unclassified-only (not broadened)."""
 
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.1.0/24",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -2166,7 +2186,9 @@ class ProbeGuardTests(unittest.TestCase):
         gate = patch.object(discovery, 'ENABLE_NBNS_PROBE', True)
         gate.start()
         self.addCleanup(gate.stop)
-        network = patch.object(discovery, 'monitored_networks', [])
+        network = patch.object(discovery, 'monitored_networks',
+                               # addresses are recorded only inside a known subnet
+                               [ipaddress.ip_network(n) for n in ("192.168.100.0/24",)])
         network.start()
         self.addCleanup(network.stop)
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -2334,6 +2356,11 @@ class UpdateDeviceIpTrackingTests(unittest.TestCase):
     own column while leaving the legacy `ip` column behaving as before."""
 
     def setUp(self):
+        # Addresses are recorded only inside a known subnet (fail closed).
+        from unittest.mock import patch as _patch
+        _nets = _patch.object(discovery, 'monitored_networks', [ipaddress.ip_network(n) for n in ("192.168.1.0/24", "2001:db8::/64",)])
+        _nets.start()
+        self.addCleanup(_nets.stop)
         discovery.probe_attempts.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -2388,3 +2415,436 @@ class UpdateDeviceIpTrackingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeviceAddressEvidenceTests(unittest.TestCase):
+    """Multi-address ownership evidence (device_addresses) guards."""
+
+    def _conn(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE device_addresses (mac TEXT NOT NULL, addr TEXT NOT NULL, "
+            "family TEXT NOT NULL, source TEXT NOT NULL, first_seen TEXT NOT NULL, "
+            "last_seen TEXT NOT NULL, PRIMARY KEY (mac, addr))")
+        return conn
+
+    def test_parse_ndp_neighbors_discards_unproven_states(self):
+        out = (
+            "2001:0db8:dea6:2200:1111:2222:3333:4444 dev eth0 lladdr 02:00:00:00:00:11 REACHABLE\n"
+            "2001:0db8:dea6:2200:5555:6666:7777:8888 dev eth0 lladdr 02:00:00:00:00:12 STALE\n"
+            "2001:0db8:dea6:2200:9999:aaaa:bbbb:cccc dev eth0  INCOMPLETE\n"
+            "2001:0db8:dea6:2200:dddd:eeee:ffff:0000 dev eth0 lladdr 02:00:00:00:00:13 FAILED\n"
+            "fe80::1 dev eth0 lladdr 02:00:00:00:00:14 router DELAY\n"
+        )
+        pairs = discovery.parse_ndp_neighbors(out)
+        macs = [m for m, _ in pairs]
+        self.assertIn("02:00:00:00:00:11", macs)   # REACHABLE kept
+        self.assertIn("02:00:00:00:00:12", macs)   # STALE kept
+        self.assertIn("02:00:00:00:00:14", macs)   # DELAY kept
+        self.assertNotIn("02:00:00:00:00:13", macs)  # FAILED discarded
+        self.assertEqual(len(pairs), 3)              # INCOMPLETE (no lladdr) discarded
+
+    def test_external_address_never_recorded_even_under_router_mac(self):
+        # Internet traffic arrives with the router's MAC: an external server
+        # address must never become ownership evidence for ANY mac.
+        conn = self._conn()
+        router = "00:00:5e:00:53:03"
+        nets = [discovery.ipaddress.ip_network("2001:db8:dea6:2200::/64"),
+                discovery.ipaddress.ip_network("192.168.100.0/24")]
+        ok = discovery.record_device_address(
+            conn.cursor(), router, "2001:db8:4006:0818::200e", "span",
+            "2026-11-05T02:00:00", networks=nets)
+        self.assertFalse(ok)
+        ok4 = discovery.record_device_address(
+            conn.cursor(), router, "198.51.100.8", "span", "2026-11-05T02:00:00", networks=nets)
+        self.assertFalse(ok4)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM device_addresses").fetchone()[0], 0)
+
+    def test_local_addresses_recorded_with_window_and_source_upgrade(self):
+        conn = self._conn()
+        nets = [discovery.ipaddress.ip_network("2001:db8:dea6:2200::/64"),
+                discovery.ipaddress.ip_network("192.168.100.0/24")]
+        cur = conn.cursor()
+        # traffic-derived first; stored exploded lowercase; first/last equal
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "2001:0db8:dea6:2200:79ee:14d2:e191:965e", "span",
+            "2026-11-05T01:00:00", networks=nets))
+        # second sighting from NDP: last_seen bumps, first_seen kept, source upgraded
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "2001:0db8:dea6:2200:79ee:14d2:e191:965e", "ndp",
+            "2026-11-05T02:00:00", networks=nets))
+        row = conn.execute(
+            "SELECT family, source, first_seen, last_seen FROM device_addresses").fetchone()
+        self.assertEqual(row, ("ipv6", "ndp", "2026-11-05T01:00:00", "2026-11-05T02:00:00"))
+        # a later traffic sighting never downgrades the authoritative source
+        discovery.record_device_address(
+            cur, "aa:aa", "2001:0db8:dea6:2200:79ee:14d2:e191:965e", "span",
+            "2026-11-05T03:00:00", networks=nets)
+        row = conn.execute("SELECT source, last_seen FROM device_addresses").fetchone()
+        self.assertEqual(row, ("ndp", "2026-11-05T03:00:00"))
+        # IPv4 (private) + link-local recorded without a monitored-network entry
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "192.168.100.50", "arp", "2026-11-05T02:00:00", networks=nets))
+        self.assertTrue(discovery.record_device_address(
+            cur, "aa:aa", "fe80::1ff:fe23:4567:890a", "ndp", "2026-11-05T02:00:00", networks=nets))
+
+    def test_global_ipv6_fanout_cap(self):
+        conn = self._conn()
+        nets = [discovery.ipaddress.ip_network("2001:db8:dea6:2200::/64")]
+        cur = conn.cursor()
+        old_cap = discovery.DEVICE_ADDR_GLOBAL_CAP
+        discovery.DEVICE_ADDR_GLOBAL_CAP = 3
+        try:
+            for i in range(5):
+                discovery.record_device_address(
+                    cur, "bb:bb", f"2001:db8:dea6:2200::{i+1:x}", "span",
+                    "2026-11-05T02:00:00", networks=nets)
+            n = conn.execute(
+                "SELECT COUNT(*) FROM device_addresses WHERE mac='bb:bb' AND family='ipv6'"
+            ).fetchone()[0]
+            self.assertEqual(n, 3)  # capped; excess skipped, nothing replaced
+            # updates to an EXISTING address still work at the cap
+            self.assertTrue(discovery.record_device_address(
+                cur, "bb:bb", "2001:db8:dea6:2200::1", "ndp",
+                "2026-11-05T03:00:00", networks=nets))
+        finally:
+            discovery.DEVICE_ADDR_GLOBAL_CAP = old_cap
+
+    def test_normalize_address_forms(self):
+        self.assertEqual(
+            discovery.normalize_address("2001:db8:dea6:2200:6854:6bc7:cf3:1d4c"),
+            ("2001:0db8:dea6:2200:6854:6bc7:0cf3:1d4c", "ipv6"))
+        self.assertEqual(discovery.normalize_address("192.168.100.5"), ("192.168.100.5", "ipv4"))
+        self.assertEqual(discovery.normalize_address("fe80::1%eth0")[1], "ipv6-ll")
+        self.assertEqual(discovery.normalize_address("not-an-ip"), (None, None))
+
+
+class AddressEvidenceHardeningTests(unittest.TestCase):
+    """Review hardening: strict locality, windowed fan-out cap, validated NDP,
+    Proxy-NDP gateway exclusion, RA prefix learning."""
+
+    def _conn(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE device_addresses (mac TEXT NOT NULL, addr TEXT NOT NULL, "
+            "family TEXT NOT NULL, source TEXT NOT NULL, first_seen TEXT NOT NULL, "
+            "last_seen TEXT NOT NULL, PRIMARY KEY (mac, addr))")
+        return conn
+
+    def test_private_or_ula_alone_is_not_local(self):
+        nets = [discovery.ipaddress.ip_network("192.168.100.0/24"),
+                discovery.ipaddress.ip_network("2001:db8:dea6:2200::/64")]
+        # RFC1918 outside the monitored subnet: NOT evidence-grade local.
+        self.assertFalse(discovery.address_is_local("10.9.9.9", nets))
+        # ULA outside the monitored context: NOT local.
+        self.assertFalse(discovery.address_is_local("fd00::1234", nets))
+        # ULA inside a monitored ULA prefix: local.
+        ula_nets = nets + [discovery.ipaddress.ip_network("fd12:3456::/32")]
+        self.assertTrue(discovery.address_is_local("fd12:3456::9", ula_nets))
+        # Link-local is on-link by definition.
+        self.assertTrue(discovery.address_is_local("fe80::1", nets))
+        # Monitored-subnet members stay local.
+        self.assertTrue(discovery.address_is_local("192.168.100.7", nets))
+
+    def test_fanout_cap_counts_recent_addresses_only(self):
+        conn = self._conn()
+        nets = [discovery.ipaddress.ip_network("2001:db8:dea6:2200::/64")]
+        cur = conn.cursor()
+        old_cap = discovery.DEVICE_ADDR_GLOBAL_CAP
+        discovery.DEVICE_ADDR_GLOBAL_CAP = 3
+        try:
+            # Three HISTORICAL addresses (rotated out weeks ago) at the cap.
+            for i in range(3):
+                cur.execute(
+                    "INSERT INTO device_addresses VALUES (?,?,?,?,?,?)",
+                    ("cc:cc", f"2001:db8:dea6:2200::{i+1:x}", "ipv6", "ndp",
+                     "2026-10-01T00:00:00", "2026-10-02T00:00:00"))
+            # A NEW address today must still be recorded (history kept, not counted).
+            self.assertTrue(discovery.record_device_address(
+                cur, "cc:cc", "2001:db8:dea6:2200::aaaa", "ndp",
+                "2026-11-05T02:00:00", networks=nets))
+            # History is preserved alongside the new address.
+            n = conn.execute(
+                "SELECT COUNT(*) FROM device_addresses WHERE mac='cc:cc'").fetchone()[0]
+            self.assertEqual(n, 4)
+        finally:
+            discovery.DEVICE_ADDR_GLOBAL_CAP = old_cap
+
+    def _na(self, ether_src, tgt, lladdr=None, with_opt=True):
+        from scapy.layers.inet6 import ICMPv6ND_NA, ICMPv6NDOptDstLLAddr
+        p = (Ether(src=ether_src, dst="33:33:00:00:00:01")
+             / discovery.IPv6(src="fe80::1", dst="ff02::1")
+             / ICMPv6ND_NA(tgt=tgt))
+        if with_opt:
+            p = p / ICMPv6NDOptDstLLAddr(lladdr=lladdr or ether_src)
+        return p
+
+    def test_ndp_evidence_pairs_validation(self):
+        from scapy.layers.inet6 import ICMPv6ND_NS, ICMPv6NDOptSrcLLAddr
+        mac = "02:00:00:00:00:15"
+        addr = "2001:db8:dea6:2200::77"
+        # Consistent NA (TLLA == Ether src) -> one pair.
+        self.assertEqual(discovery.ndp_evidence_pairs(self._na(mac, addr)), [(mac, addr)])
+        # NA without the target link-layer option -> rejected.
+        self.assertEqual(discovery.ndp_evidence_pairs(self._na(mac, addr, with_opt=False)), [])
+        # NA whose option MAC mismatches the frame source (spoof/relay) -> rejected.
+        self.assertEqual(
+            discovery.ndp_evidence_pairs(self._na(mac, addr, lladdr="aa:bb:cc:dd:ee:99")), [])
+        # NA for a multicast target -> rejected.
+        self.assertEqual(discovery.ndp_evidence_pairs(self._na(mac, "ff02::1")), [])
+        # Consistent NS asserts its own source.
+        ns_ok = (Ether(src=mac, dst="33:33:00:00:00:01")
+                 / discovery.IPv6(src=addr, dst="ff02::1:ff00:77")
+                 / ICMPv6ND_NS(tgt="2001:db8:dea6:2200::1")
+                 / ICMPv6NDOptSrcLLAddr(lladdr=mac))
+        self.assertEqual(discovery.ndp_evidence_pairs(ns_ok), [(mac, addr)])
+        # NS with mismatching SLLA -> rejected.
+        ns_bad = (Ether(src=mac, dst="33:33:00:00:00:01")
+                  / discovery.IPv6(src=addr, dst="ff02::1:ff00:77")
+                  / ICMPv6ND_NS(tgt="2001:db8:dea6:2200::1")
+                  / ICMPv6NDOptSrcLLAddr(lladdr="aa:bb:cc:dd:ee:99"))
+        self.assertEqual(discovery.ndp_evidence_pairs(ns_bad), [])
+        # DAD probe (source ::) carries no proof.
+        dad = (Ether(src=mac, dst="33:33:00:00:00:01")
+               / discovery.IPv6(src="::", dst="ff02::1:ff00:77")
+               / ICMPv6ND_NS(tgt=addr))
+        self.assertEqual(discovery.ndp_evidence_pairs(dad), [])
+
+    def test_handle_ndp_records_via_real_handler_and_skips_gateway(self):
+        mac = "02:00:00:00:00:16"
+        gw = "00:00:5e:00:53:03"
+        addr = "2001:db8:dea6:2200::88"
+        recorded = []
+        original = discovery.update_device
+        discovery.update_device = lambda m, **kw: recorded.append((m, kw.get("ip"), kw.get("addr_source")))
+        discovery.gateway_macs.add(gw)
+        try:
+            # Real packet through the real handler -> recorded with source 'ndp'.
+            discovery.handle_ndp(self._na(mac, addr))
+            self.assertEqual(recorded, [(mac, addr, "ndp")])
+            # Same assertion from the gateway MAC (Proxy NDP) -> NOT recorded.
+            recorded.clear()
+            discovery.handle_ndp(self._na(gw, addr))
+            self.assertEqual(recorded, [])
+        finally:
+            discovery.update_device = original
+            discovery.gateway_macs.discard(gw)
+
+    def test_learn_ra_prefixes_requires_link_local_source(self):
+        from scapy.layers.inet6 import ICMPv6ND_RA, ICMPv6NDOptPrefixInfo
+        saved = list(discovery.ra_networks)
+        discovery.ra_networks.clear()
+        try:
+            ra_ok = (Ether(src="00:00:5e:00:53:03", dst="33:33:00:00:00:01")
+                     / discovery.IPv6(src="fe80::1", dst="ff02::1")
+                     / ICMPv6ND_RA()
+                     / ICMPv6NDOptPrefixInfo(prefix="2001:db8:c83e:5700::",
+                                             prefixlen=64, L=1))
+            discovery.learn_ra_prefixes(ra_ok)
+            self.assertEqual(
+                discovery.ra_networks,
+                [discovery.ipaddress.ip_network("2001:db8:c83e:5700::/64")])
+            # RA from a non-link-local source violates RFC 4861 -> ignored.
+            discovery.ra_networks.clear()
+            ra_bad = (Ether(src="00:00:5e:00:53:03", dst="33:33:00:00:00:01")
+                      / discovery.IPv6(src="2001:db8::1", dst="ff02::1")
+                      / ICMPv6ND_RA()
+                      / ICMPv6NDOptPrefixInfo(prefix="2001:db8:bad::", prefixlen=64, L=1))
+            discovery.learn_ra_prefixes(ra_bad)
+            self.assertEqual(discovery.ra_networks, [])
+        finally:
+            discovery.ra_networks.clear()
+            discovery.ra_networks.extend(saved)
+
+
+class OpaqueHostnameTests(unittest.TestCase):
+    """UUID-style names (e.g. the random WebRTC mDNS name a browser publishes)
+    are not a device's hostname: rejected from mDNS and ranked below any real
+    name, so a later DHCP option 12 name replaces one already stored."""
+
+    UUID = "7b19f703-93a5-4369-af88-f8d5c77abf61"
+
+    def setUp(self):
+        discovery.probe_attempts.clear()
+        import ipaddress
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.remove(self.db_path)
+        self._orig_db = discovery.DB_PATH
+        discovery.DB_PATH = self.db_path
+        discovery.init_db()
+        self._orig_nets = list(discovery.monitored_networks)
+        discovery.monitored_networks[:] = [ipaddress.ip_network("192.168.100.0/24")]
+        discovery.write_cache.clear()
+
+    def tearDown(self):
+        discovery.monitored_networks[:] = self._orig_nets
+        discovery.write_cache.clear()
+        discovery.DB_PATH = self._orig_db
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _hostname(self, mac):
+        conn = sqlite3.connect(self.db_path)
+        r = conn.execute("SELECT hostname FROM devices WHERE mac=?", (mac,)).fetchone()
+        conn.close()
+        return r[0]
+
+    def test_uuid_mdns_name_rejected(self):
+        pkt = DNS(qr=1, an=DNSRR(rrname=self.UUID + ".local", type="A",
+                                 rdata="192.168.100.40"))
+        self.assertIsNone(discovery.extract_mdns_hostname(pkt))
+        self.assertEqual(discovery.mdns_name_candidate(pkt, None), (None, None))
+        for name in (self.UUID, self.UUID + ".local", self.UUID.upper()):
+            self.assertIsNone(discovery._usable_mdns_name(name), name)
+
+    def test_uuid_ranks_below_dhcp_name(self):
+        self.assertLess(discovery.hostname_quality(self.UUID),
+                        discovery.hostname_quality("Maraheb_PC"))
+        self.assertLess(discovery.hostname_quality("a7f3e9c1b2d84f60a7f3e9c1b2d84f60"),
+                        discovery.hostname_quality("Maraheb_PC"))
+
+    def test_dhcp_option_12_replaces_stored_uuid(self):
+        mac = "a8:42:a1:01:02:03"
+        discovery.update_device(mac, ip="192.168.100.40", hostname=self.UUID,
+                                seen_on_span=True, seen_in_discovery=False)
+        self.assertEqual(self._hostname(mac), self.UUID)
+        discovery.handle(Ether(bytes(
+            Ether(src=mac, dst="ff:ff:ff:ff:ff:ff") /
+            IP(src="192.168.100.40", dst="255.255.255.255") /
+            UDP(sport=68, dport=67) / BOOTP(chaddr=b"\x00" * 16) /
+            DHCP(options=[("hostname", b"Maraheb_PC"),
+                          ("vendor_class_id", b"MSFT 5.0"), "end"])
+        )))
+        self.assertEqual(self._hostname(mac), "Maraheb_PC")
+
+    def test_normal_names_keep_their_previous_score(self):
+        # Scores measured on the code before this change.
+        expected = {"Marahebs-Ipad": 60, "TL-SG105E": 90,
+                    "LG_Smart_Laundry2_open": 90, "iPhone": 60, "Maraheb_PC": 60}
+        for name, score in expected.items():
+            self.assertEqual(discovery.hostname_quality(name), score, name)
+            self.assertEqual(discovery._usable_mdns_name(name), name, name)
+
+    def test_short_hex_names_unchanged(self):
+        # Below the 16-hex-digit limit: still accepted, same score as before.
+        for name, score in (("deadbeef", 60), ("0123456789abcde", 90),
+                            ("cafe-babe-1234", 90)):
+            self.assertEqual(discovery._usable_mdns_name(name), name, name)
+            self.assertEqual(discovery.hostname_quality(name), score, name)
+
+
+class ApAddressByMacTests(unittest.TestCase):
+    """The AP takes its IP by DHCP, so without ASSAS_AP_URL it is found by MAC."""
+
+    AP_MAC = "02:00:00:00:00:01"
+    AP_IP = "192.0.2.10"
+    PROC_ARP = (
+        "IP address       HW type     Flags       HW address            Mask     Device\n"
+        "192.0.2.10       0x1         0x2         02:00:00:00:00:01     *        eth0\n"
+        "192.0.2.11       0x1         0x0         00:00:00:00:00:00     *        eth0\n"
+    )
+
+    def setUp(self):
+        from unittest.mock import patch
+        for name, value in (("AP_PASSWORD", "placeholder"), ("MANUAL_AP_CLIENTS", set())):
+            p = patch.object(discovery, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.dict(discovery._tplink_auth_cache,
+                       {"mode": None, "headers": None, "station_url": None,
+                        "time": None, "base_url": None})
+        p.start()
+        self.addCleanup(p.stop)
+        self.patch = patch
+
+    def _set(self, url, mac):
+        for name, value in (("AP_URL", url), ("AP_MAC", mac)):
+            p = self.patch.object(discovery, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_parse_proc_net_arp_keeps_complete_entries_only(self):
+        self.assertEqual(discovery.parse_ipv4_neighbors(self.PROC_ARP),
+                         {self.AP_MAC: self.AP_IP})
+
+    def test_parse_ip_neigh_output(self):
+        out = ("192.0.2.10 dev eth0 lladdr 02:00:00:00:00:01 REACHABLE\n"
+               "192.0.2.12 dev eth0  INCOMPLETE\n"
+               "192.0.2.13 dev eth0 lladdr 02:00:00:00:00:03 FAILED\n")
+        self.assertEqual(discovery.parse_ipv4_neighbors(out),
+                         {self.AP_MAC: self.AP_IP})
+
+    def test_url_given_is_used_without_lookup(self):
+        self._set("http://192.0.2.20", self.AP_MAC)
+        with self.patch.object(discovery, "_read_kernel_ipv4_neighbors") as kernel:
+            self.assertEqual(discovery.resolve_ap_url(), "http://192.0.2.20")
+        kernel.assert_not_called()
+
+    def test_url_missing_mac_found_in_neighbour_table(self):
+        self._set("", self.AP_MAC)
+        neighbors = discovery.parse_ipv4_neighbors(self.PROC_ARP)
+        with self.patch.object(discovery, "_read_kernel_ipv4_neighbors",
+                               return_value=neighbors), \
+             self.patch.object(discovery, "_tplink_authenticate",
+                               return_value=(None, None, None)) as auth:
+            self.assertEqual(discovery.resolve_ap_url(), "http://192.0.2.10")
+            discovery._fetch_tplink_clients_with_password()
+        auth.assert_called_once_with("http://192.0.2.10")
+
+    def test_url_missing_mac_found_only_in_discovery_db(self):
+        self._set("", self.AP_MAC)
+        with self.patch.object(discovery, "_read_kernel_ipv4_neighbors", return_value={}), \
+             self.patch.object(discovery, "_stored_ipv4_for_mac",
+                               return_value=self.AP_IP):
+            self.assertEqual(discovery.resolve_ap_url(), "http://192.0.2.10")
+
+    def test_url_missing_mac_not_found_skips_and_warns_each_cycle(self):
+        self._set("", self.AP_MAC)
+        with self.patch.object(discovery, "_read_kernel_ipv4_neighbors", return_value={}), \
+             self.patch.object(discovery, "_stored_ipv4_for_mac", return_value=None), \
+             self.patch.object(discovery, "_tplink_authenticate") as auth, \
+             self.patch.object(discovery, "apply_ap_membership") as apply_:
+            for _ in range(2):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertFalse(discovery.refresh_ap_membership(verbose=False))
+                lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+                self.assertEqual(len(lines), 1)
+                self.assertIn("AP polling skipped this cycle", lines[0])
+                self.assertNotIn(self.AP_MAC, lines[0])
+        auth.assert_not_called()
+        apply_.assert_not_called()
+
+    def test_ap_mac_empty_finds_no_address_and_discards_nothing(self):
+        self._set("", "")
+        with self.patch.object(discovery, "_read_kernel_ipv4_neighbors") as kernel:
+            self.assertIsNone(discovery.resolve_ap_url())
+        kernel.assert_not_called()
+        page = ('var hostList = new Array("02-00-00-00-00-01", "02-00-00-00-00-02");'
+                ' Wireless Statistics')
+        clients, ok = discovery._parse_tplink_station_page(page)
+        self.assertTrue(ok)
+        self.assertEqual(clients, {"02:00:00:00:00:01", "02:00:00:00:00:02"})
+
+    def test_ap_mac_set_is_discarded_from_stations(self):
+        self._set("", self.AP_MAC)
+        page = ('var hostList = new Array("02-00-00-00-00-01", "02-00-00-00-00-02");'
+                ' Wireless Statistics')
+        clients, _ = discovery._parse_tplink_station_page(page)
+        self.assertEqual(clients, {"02:00:00:00:00:02"})
+
+    def test_cached_session_dropped_when_ap_address_changes(self):
+        self._set("", self.AP_MAC)
+        discovery._tplink_auth_cache.update(
+            mode="md5-cookie", headers={}, time=discovery.time.monotonic(),
+            station_url="http://192.0.2.99/userRpm/WlanStationRpm.htm?Page=1",
+            base_url="http://192.0.2.99")
+        with self.patch.object(discovery, "_read_kernel_ipv4_neighbors",
+                               return_value={self.AP_MAC: self.AP_IP}), \
+             self.patch.object(discovery, "_http_get_text") as get, \
+             self.patch.object(discovery, "_tplink_authenticate",
+                               return_value=(None, None, None)) as auth:
+            discovery._fetch_tplink_clients_with_password()
+        get.assert_not_called()
+        auth.assert_called_once_with("http://192.0.2.10")

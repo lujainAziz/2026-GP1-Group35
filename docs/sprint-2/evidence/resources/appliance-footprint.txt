@@ -1,0 +1,8 @@
+# Appliance-only memory footprint (RSS), 2026-11-02T13:36:55Z
+# Assas services + Suricata only; EXCLUDES the co-resident development agent.
+   199.2 MB  display app
+   133.7 MB  discovery.py
+  1065.1 MB  suricata
+    15.5 MB  alerts.py
+    80.2 MB  api (uvicorn)
+---- appliance services total: 1493.7 MB (target: < 4096 MB) ----

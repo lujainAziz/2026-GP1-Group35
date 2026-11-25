@@ -98,7 +98,7 @@ class DhcpSignatureMatchTests(unittest.TestCase):
             self.assertEqual(type_from_dhcp_signature(sig), dtype, sig)
 
     def test_zflip3_android_signature_is_android_device(self):
-        # Real case d2:5a:1b:a1:48:de: base Android PRL + 114 + 108 (RFC 8925).
+        # Real case 02:5a:06:00:00:06: base Android PRL + 114 + 108 (RFC 8925).
         # Android option-55 is OS-only -> "Android Device", never a phone.
         self.assertEqual(type_from_dhcp_signature(self.ZFLIP3), "Android Device")
 
@@ -245,7 +245,7 @@ class AndroidOsTokenTests(unittest.TestCase):
         self.assertEqual(type_from_os_hint("android-12ab"), "Android Device")
 
     def test_mitv_model_is_smart_tv(self):
-        # Real case: Xiaomi Android TV 60:35:73:f2:4d:7b, model MiTV-AESP0.
+        # Real case: Xiaomi Android TV 60:35:73:00:00:0f, model MiTV-AESP0.
         self.assertEqual(type_from_model("MiTV-AESP0"), "Smart TV / Media Device")
 
     def test_other_android_tv_box_models_are_smart_tv(self):
@@ -291,7 +291,7 @@ class AndroidOsTokenTests(unittest.TestCase):
                          "Mobile (Android)")
 
     def test_zflip3_hostname_stays_mobile(self):
-        # Real case: d2:5a:1b:a1:48:de hostname "Z-Flip3-alkhas-b-noura".
+        # Real case: 02:5a:06:00:00:06 hostname "Z-Flip3-alkhas-b-noura".
         self.assertEqual(type_from_hostname("Z-Flip3-alkhas-b-noura"),
                          "Mobile (Android)")
 

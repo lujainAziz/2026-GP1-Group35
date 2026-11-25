@@ -90,10 +90,15 @@ void main() {
     for (var i = 0; i < 6; i++) { await tester.pump(const Duration(milliseconds: 250)); }
     expect(find.text('Pair your phone'), findsOneWidget);
     expect(find.text('Soon'), findsOneWidget);
-    expect(find.text('SOON · SPRINT 4'), findsOneWidget);
-    expect(find.text('SOON · SPRINT 2'), findsOneWidget);
+    expect(find.text('NETWORK ALERT LEVEL'), findsOneWidget);
+    expect(find.text('NETWORK RISK'), findsNothing);
+    expect(find.text('Network Alert Level arrives in Sprint 4'), findsOneWidget);
+    expect(find.text('SOON · SPRINT 4'), findsNothing);
+    // Unresolved alerts are live (Sprint 2 feature): the demo has 2 New alerts.
+    expect(find.text('SOON · SPRINT 2'), findsNothing);
+    expect(find.text('2'), findsOneWidget);
     expect(find.text('High'), findsNothing);
-    expect(find.text('CONNECTED'), findsOneWidget);
+    expect(find.text('ONLINE'), findsWidgets);
     expect(find.textContaining('New phone paired:'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.runAsync(() async {

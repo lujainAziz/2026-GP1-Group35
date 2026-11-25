@@ -10,6 +10,8 @@ class UiMemory {
   static const _deviceFilter = 'ui.deviceFilter';
   static const _deviceSearch = 'ui.deviceSearch';
   static const _alertTab = 'ui.alertTab';
+  static const _alertSeverities = 'ui.alertSeverities';
+  static const _deviceAlertSort = 'ui.deviceAlertSort';
 
   static Future<SharedPreferences> get _p => SharedPreferences.getInstance();
 
@@ -31,5 +33,17 @@ class UiMemory {
   static Future<String?> alertTab() async => (await _p).getString(_alertTab);
   static Future<void> setAlertTab(String v) async {
     await (await _p).setString(_alertTab, v);
+  }
+
+  // Alert list: which severities are shown (empty = all). Display only.
+  static Future<List<String>?> alertSeverities() async => (await _p).getStringList(_alertSeverities);
+  static Future<void> setAlertSeverities(List<String> v) async {
+    await (await _p).setStringList(_alertSeverities, v);
+  }
+
+  // Per-device alerts: sort order.
+  static Future<String?> deviceAlertSort() async => (await _p).getString(_deviceAlertSort);
+  static Future<void> setDeviceAlertSort(String v) async {
+    await (await _p).setString(_deviceAlertSort, v);
   }
 }

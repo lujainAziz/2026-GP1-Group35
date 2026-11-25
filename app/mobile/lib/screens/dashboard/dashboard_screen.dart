@@ -14,7 +14,7 @@ import '../../widgets/ui_kit.dart';
 import '../alerts/alert_details_screen.dart';
 import '../devices/device_details_screen.dart';
 
-/// Dashboard (PBI-21): risk level, online / total devices, unresolved alerts,
+/// Dashboard (PBI-21): network alert level, online / total devices, unresolved alerts,
 /// unrecognized devices, recent alerts.
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({
@@ -208,18 +208,18 @@ class DashboardScreen extends StatelessWidget {
 
   Widget _risk() {
     final risk = Released.risk ? state.risk : null;
-    final open = Released.alerts ? state.unresolvedCount : null;
-    final note = open == null
+    final unresolved = Released.alertsHome ? state.unresolvedAlertCount : null;
+    final note = unresolved == null
         ? 'Alerts are not available yet'
-        : open > 0
-            ? '$open alert${open > 1 ? 's' : ''} still open on your network'
-            : 'Nothing needs you right now';
+        : unresolved > 0
+            ? '$unresolved alert${unresolved > 1 ? 's' : ''} unresolved on your network'
+            : 'No unresolved alerts';
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 18, 22, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('NETWORK RISK', style: UiText.kicker.copyWith(color: Ui.mute)),
+          Text('NETWORK ALERT LEVEL', style: UiText.kicker.copyWith(color: Ui.mute)),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -245,9 +245,9 @@ class DashboardScreen extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
                     !Released.risk
-                        ? 'Network risk arrives in Sprint 4'
+                        ? 'Network Alert Level arrives in Sprint 4'
                         : risk == null
-                            ? 'Risk level is not available yet'
+                            ? 'Alert level is not available yet'
                             : note,
                     textAlign: TextAlign.right,
                     style: UiText.secondary.copyWith(height: 1.35, color: Ui.mute),
@@ -262,7 +262,6 @@ class DashboardScreen extends StatelessWidget {
   }
 
   Widget _stats(List<DeviceSignal> signals) {
-    final open = Released.alerts ? state.unresolvedCount : null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 26, 16, 0),
       child: IntrinsicHeight(
@@ -334,24 +333,35 @@ class DashboardScreen extends StatelessWidget {
             Expanded(
               flex: 100,
               child: Column(
+                // Stretch so both cards share one width; Expanded makes the two
+                // cards + the gap span the full column height, which (in the
+                // IntrinsicHeight row) equals the Online card — Unresolved
+                // alerts aligns to Online's top and Unrecognized to its bottom.
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Pressable(
-                    onTap: onOpenAlerts, // PBI-17
-                    child: _CardX(
-                      radius: UiRadius.card,
-                      color: Ui.mix(Ui.high, .16, Ui.surf),
-                      child: Released.alerts
-                          ? _statInner('Open\nalerts', open?.toString() ?? '–', Ui.high)
-                          : _soonInner('Open\nalerts', 2),
+                  Expanded(
+                    child: Pressable(
+                      onTap: onOpenAlerts, // PBI-17
+                      child: _CardX(
+                        radius: UiRadius.card,
+                        color: Ui.mix(Ui.high, .16, Ui.surf),
+                        child: Released.alertsHome
+                            ? _unresolvedInner()
+                            : _soonInner('Unresolved\nalerts', 2),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Pressable(
-                    onTap: onOpenUnrecognized ?? onOpenDevices,
-                    child: _CardX(
-                      radius: UiRadius.card,
-                      stripes: Ui.mix(Ui.med, .14, Ui.surf),
-                      child: _statInner('Unrecognized', '${state.unrecognizedCount}', Ui.med),
+                  Expanded(
+                    child: Pressable(
+                      onTap: onOpenUnrecognized ?? onOpenDevices,
+                      child: _CardX(
+                        radius: UiRadius.card,
+                        stripes: Ui.mix(Ui.med, .14, Ui.surf),
+                        // Soft hyphen (U+00AD): invisible normally; if the word must break at
+                        // the largest size it hyphenates cleanly instead of a raw mid-word cut.
+                        child: _statInner('Unrecog\u00adnized', '${state.unrecognizedCount}', Ui.med),
+                      ),
                     ),
                   ),
                 ],
@@ -363,44 +373,88 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  /// Stat card content for a feature from a later sprint.
-  Widget _soonInner(String label, int sprint) {
+  /// Shared layout for the two stacked stat cards (Unresolved alerts + Unrecognized):
+  /// identical padding, label on the left and value on the right, across the
+  /// full card width. The card width is fixed (the column stretches both cards
+  /// to the same width); Wrap keeps the label and value on one line at normal
+  /// text sizes and, when the enlarged font no longer fits them together, flows
+  /// the value onto the next line so the card grows in HEIGHT (width unchanged).
+  Widget _statCard(String label, Widget value, {String? note}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
+      // Centre the label/value row vertically now the card fills the column
+      // height; stretch keeps the Wrap full-width so the value sits at the
+      // right edge.
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: Text(label, style: UiText.sans(13, 600, height: 1.2))),
-          Text('SOON', style: UiText.mono(13, 700, em: .1, color: Ui.mute)),
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 2,
+            children: [
+              Text(label, style: UiText.sans(13, 600, height: 1.2)),
+              value,
+            ],
+          ),
+          if (note != null) ...[
+            const SizedBox(height: 4),
+            Text(note, key: const ValueKey('unresolvedNote'),
+                style: UiText.mono(10, 600, em: .06, color: Ui.mute)),
+          ],
         ],
       ),
     );
   }
 
-  Widget _statInner(String label, String value, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        children: [
-          // Shrinks instead of breaking a word ("Unrecognized") across lines.
-          Expanded(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(label, style: UiText.sans(13, 600, height: 1.2)),
-            ),
-          ),
-          Text(value, style: UiText.statNumber.copyWith(color: color)),
-        ],
-      ),
+  /// "Unresolved alerts" card: the DB count of New alerts (GET /alerts/open_count).
+  /// 0 is muted with "No unresolved alerts" (never "All clear": the card must
+  /// not suggest the network is safe). After a failed refresh the last known
+  /// count stays, dimmed, with "Last known"; with no count yet it shows "—".
+  Widget _unresolvedInner() {
+    final n = state.unresolvedAlertCount;
+    final lastKnown = n != null && state.alertsError;
+    final note = n == null
+        ? null
+        : lastKnown
+            ? 'Last known'
+            : n == 0
+                ? 'No unresolved alerts'
+                : null;
+    final color = n == null || n == 0
+        ? Ui.mute
+        : lastKnown
+            ? Ui.fade(Ui.high, .45)
+            : Ui.high;
+    return _statCard(
+      'Unresolved\nalerts',
+      Text(n == null ? '—' : '$n', key: const ValueKey('unresolvedCount'),
+          style: UiText.sans(18, 800, em: -.02, color: color)),
+      note: note,
     );
   }
+
+  /// Stat card content for a feature from a later sprint (same layout as a live
+  /// stat card, with the deferred marker in place of the number).
+  Widget _soonInner(String label, int sprint) =>
+      _statCard(label, Text('SOON', style: UiText.mono(13, 700, em: .1, color: Ui.mute)));
+
+  /// A labelled count. The number is a normal (not oversized) weight so it sits
+  /// on the same line as the label at normal text sizes; it keeps its colour
+  /// (e.g. the amber used for Unrecognized).
+  Widget _statInner(String label, String value, Color color) =>
+      _statCard(label, Text(value, style: UiText.sans(18, 800, em: -.02, color: color)));
 
   Widget _recent(BuildContext context) {
-    if (!Released.alerts) {
+    if (!Released.alertsHomeRecent) {
+      // Alerts are live in the Alerts tab; only the Home summary here is still
+      // deferred: the Home network-status summary (PBI-26), planned for Sprint 5.
       return const EmptyDashed(
-        title: 'Coming soon',
-        hint: 'Threat alerts arrive in Sprint 2 and anomaly alerts in Sprint 3.',
-        action: SoonTag(2),
+        title: 'See the Alerts tab',
+        hint: 'A summary of recent alerts on the home screen is coming later. '
+            'Go to the Alerts tab for the full list.',
+        action: SoonTag(5),
       );
     }
     final alerts = state.alerts;

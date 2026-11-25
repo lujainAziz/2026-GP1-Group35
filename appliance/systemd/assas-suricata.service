@@ -1,0 +1,17 @@
+[Unit]
+Description=ASSAS Suricata IDS (signature-based threat detection, PBI-13)
+Wants=network-online.target
+After=network-online.target assas-capture.service
+
+[Service]
+Type=simple
+User=root
+# IDS mode only: af-packet on the mirrored capture interface. Never inline/IPS,
+# never drops or modifies traffic. Config and interface pinned explicitly.
+ExecStart=/usr/bin/suricata -c /etc/suricata/assas.yaml --af-packet=eth1
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

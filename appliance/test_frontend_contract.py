@@ -170,5 +170,357 @@ class FrontendContractTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 503)
 
 
+class AlertContractTests(unittest.TestCase):
+    """End-to-end (incl. pairing auth) exact-string contract for Threat Alerts."""
+
+    def setUp(self):
+        import alerts
+        self.directory = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.directory.name, 'assas.db')
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute(f'CREATE TABLE devices ({_DEVICES_SCHEMA})')
+            conn.execute(
+                "INSERT INTO devices (mac, user_name, status, discovered_current) "
+                "VALUES (?, ?, 'online', 1)", ('aa:bb:cc:dd:ee:ff', 'Front Cam'))
+            alerts.ensure_schema(conn)
+            conn.execute(
+                "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+                "src_ip, dst_ip, src_port, dst_port, severity, state, occurrence_count, "
+                "last_event_time) VALUES (?, 'Threat', ?, ?, ?, ?, ?, ?, ?, ?, 'New', ?, ?)",
+                ('aa:bb:cc:dd:ee:ff', 'ET MALWARE X', 2025001, '2026-11-02T10:00:00',
+                 '10.0.0.5', '198.51.100.8', 1234, 53, 'High', 4, '2026-11-02T10:04:00'))
+        self.patch = patch.object(api, 'DB_PATH', self.db)
+        self.patch.start()
+        self.local = TestClient(api.app, client=('127.0.0.1', 1234))
+        self.phone = TestClient(api.app, client=('192.0.2.10', 1234))
+
+    def tearDown(self):
+        self.local.close()
+        self.phone.close()
+        self.patch.stop()
+        self.directory.cleanup()
+
+    def pair(self):
+        code = self.local.get('/pairing/code').json()['code']
+        token = self.phone.post('/pair', json={'code': code, 'device_name': 'p'}).json()['token']
+        self.phone.headers['Authorization'] = 'Bearer ' + token
+
+    def test_alerts_require_auth_and_match_exact_contract(self):
+        self.assertEqual(self.phone.get('/alerts').status_code, 401)
+        self.pair()
+        response = self.phone.get('/alerts')
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        a = data[0]
+        # Exact strings SecurityAlert.fromApi depends on (casing locked).
+        self.assertEqual(a['kind'], 'threat')
+        self.assertEqual(a['state'], 'new')
+        self.assertEqual(a['severity'], 'high')
+        self.assertEqual(a['title'], 'ET MALWARE X')
+        self.assertEqual(a['device_mac'], 'aa:bb:cc:dd:ee:ff')
+        self.assertEqual(a['device_name'], 'Front Cam')
+        self.assertEqual(a['time'], '2026-11-02T10:04:00')  # = last_event_time
+        self.assertEqual(a['first_event_time'], '2026-11-02T10:00:00')
+        self.assertEqual(a['last_event_time'], '2026-11-02T10:04:00')
+        self.assertEqual(a['occurrence_count'], 4)
+        self.assertEqual(a['rule_id'], 2025001)
+        self.assertEqual(a['source_ip'], '10.0.0.5')
+        self.assertEqual(a['destination_ip'], '198.51.100.8')
+        self.assertEqual(a['src_port'], 1234)
+        self.assertEqual(a['dst_port'], 53)
+        # No classtype stored on this row -> fallback title/explanation with
+        # the original rule name (never the rule ID, which stays in rule_id),
+        # no role.
+        self.assertEqual(a['display_title'], 'Network activity detected')
+        self.assertIn('("ET MALWARE X")', a['explanation'])
+        self.assertNotIn('2025001', a['explanation'])
+        self.assertIsNone(a['classtype'])
+        self.assertIsNone(a['category'])
+        self.assertIsNone(a['device_role'])
+        self.assertIsNone(a['anomaly_score'])
+        # single-alert + per-device endpoints
+        one = self.phone.get('/alerts/' + a['id'])
+        self.assertEqual(one.status_code, 200)
+        self.assertEqual(one.json()['id'], a['id'])
+        dev = self.phone.get('/devices/aa:bb:cc:dd:ee:ff/alerts')
+        self.assertEqual(dev.status_code, 200)
+        self.assertEqual(len(dev.json()), 1)
+        self.assertEqual(self.phone.get('/alerts/99999').status_code, 404)
+
+    def _insert_alert(self, state='New', mac='aa:bb:cc:dd:ee:ff', sid=3000, when='2026-11-02T09:00:00'):
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute(
+                "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+                "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
+                "VALUES (?, 'Threat', 'ET X', ?, ?, '10.0.0.5', '198.51.100.8', 'High', ?, 1, ?)",
+                (mac, sid, when, state, when))
+
+    def test_open_count_is_db_aggregate_of_new(self):
+        # setUp already has one New alert; add resolved + new.
+        self._insert_alert(state='Resolved', sid=3002)
+        self._insert_alert(state='New', sid=3003)
+        self.assertEqual(self.phone.get('/alerts/open_count').status_code, 401)
+        self.pair()
+        r = self.phone.get('/alerts/open_count')
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json(), {'open': 2})  # 2 New, Resolved excluded
+        # the literal path is matched here, not parsed as an int id
+        self.assertEqual(r.json()['open'], 2)
+
+    def test_open_count_answers_the_appliance_without_pairing(self):
+        # The 7-inch display runs on the Pi and calls the API from 127.0.0.1
+        # with no token; it reads its "Unresolved alerts" card from here.
+        self._insert_alert(state='Resolved', sid=3002)
+        self.assertNotIn('Authorization', self.local.headers)
+        r = self.local.get('/alerts/open_count')
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json(), {'open': 1})  # setUp's New alert only
+        # A phone on the network still needs pairing.
+        self.assertEqual(self.phone.get('/alerts/open_count').status_code, 401)
+
+    def test_open_count_not_capped_by_page_limit(self):
+        for i in range(250):
+            self._insert_alert(state='New', sid=4000 + i, when='2026-11-02T08:00:00')
+        self.pair()
+        # default page returns at most 200, but the count is the true total
+        self.assertEqual(len(self.phone.get('/alerts').json()), 200)
+        self.assertEqual(self.phone.get('/alerts/open_count').json()['open'], 251)  # 250 + setUp's 1
+
+    def test_open_count_and_paging_beyond_2000(self):
+        # Bulk-insert >2000 so the count and paging are exercised past the app cap.
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.executemany(
+                "INSERT INTO alerts (device_mac, alert_type, title, rule_id, event_time, "
+                "src_ip, dst_ip, severity, state, occurrence_count, last_event_time) "
+                "VALUES (NULL, 'Threat', 'ET X', ?, '2026-11-02T07:00:00', '10.0.0.5', "
+                "'198.51.100.8', 'High', 'New', 1, '2026-11-02T07:00:00')",
+                [(6000 + i,) for i in range(2100)])
+        self.pair()
+        self.assertEqual(self.phone.get('/alerts/open_count').json()['open'], 2101)  # 2100 + setUp's 1
+        # page through all with limit=1000 and confirm the full set is reachable
+        seen = set()
+        for off in (0, 1000, 2000):
+            page = self.phone.get(f'/alerts?limit=1000&offset={off}').json()
+            seen.update(a['id'] for a in page)
+        self.assertEqual(len(seen), 2101)  # every alert reachable by paging (no silent cap server-side)
+
+    def test_alerts_pagination_offset_is_stable(self):
+        for i in range(250):
+            self._insert_alert(state='New', sid=5000 + i, when='2026-11-02T08:00:00')
+        self.pair()
+        page1 = self.phone.get('/alerts?limit=100&offset=0').json()
+        page2 = self.phone.get('/alerts?limit=100&offset=100').json()
+        page3 = self.phone.get('/alerts?limit=100&offset=200').json()
+        self.assertEqual([len(page1), len(page2), len(page3)], [100, 100, 51])
+        ids = {a['id'] for a in page1 + page2 + page3}
+        self.assertEqual(len(ids), 251)  # no overlap/gap across pages
+
+    def test_alert_state_transitions_persist_and_enforce_rules(self):
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        # Reviewed is retired: rejected as an unknown state, alert stays New
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'reviewed'}).status_code, 422)
+        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'new')
+        # New -> Resolved
+        r = self.phone.patch('/alerts/' + aid, json={'state': 'resolved'})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()['state'], 'resolved')
+        # persisted across a fresh read
+        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'resolved')
+        # Resolved is terminal: no going back
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'new'}).status_code, 409)
+        # unknown state / missing alert
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'bogus'}).status_code, 422)
+        self.assertEqual(self.phone.patch('/alerts/99999', json={'state': 'resolved'}).status_code, 404)
+
+    def test_alert_state_change_requires_auth(self):
+        aid = self.phone.get('/alerts')  # unauthenticated
+        self.assertEqual(self.phone.patch('/alerts/1', json={'state': 'resolved'}).status_code, 401)
+
+    def test_new_to_resolved_is_allowed(self):
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
+
+    def test_resolve_is_idempotent_and_cannot_revert(self):
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'resolved'}).json()['state'], 'resolved')
+        # repeating resolve is a no-op 200 (idempotent), not a 409
+        r = self.phone.patch('/alerts/' + aid, json={'state': 'resolved'})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['state'], 'resolved')
+        # a late New must NOT revert a Resolved alert
+        self.assertEqual(self.phone.patch('/alerts/' + aid, json={'state': 'new'}).status_code, 409)
+        self.assertEqual(self.phone.get('/alerts/' + aid).json()['state'], 'resolved')
+
+    def test_concurrent_transitions_never_revert_or_corrupt(self):
+        # Two phones Resolve the same New alert at once. The atomic guarded
+        # UPDATE must leave a consistent result: both succeed (the second is an
+        # idempotent no-op) and the alert ends Resolved.
+        import threading
+        self.pair()
+        aid = self.phone.get('/alerts').json()[0]['id']
+        codes = {}
+
+        def do(name, state):
+            c = TestClient(api.app, client=('127.0.0.1', 1))  # local-bypass, no token
+            try:
+                codes[name] = c.patch('/alerts/' + aid, json={'state': state}).status_code
+            finally:
+                c.close()
+
+        t1 = threading.Thread(target=do, args=('first', 'resolved'))
+        t2 = threading.Thread(target=do, args=('second', 'resolved'))
+        t1.start(); t2.start(); t1.join(); t2.join()
+
+        final = self.phone.get('/alerts/' + aid).json()['state']
+        self.assertEqual(final, 'resolved')
+        self.assertEqual((codes['first'], codes['second']), (200, 200))
+
+
+class AlertReadTests(unittest.TestCase):
+    """Per-phone "read" marker (Release 1): not a state; stored per paired phone."""
+
+    # Same fixture as the contract tests (one New alert, a local and a phone
+    # client) without re-running their tests.
+    setUp = AlertContractTests.setUp
+    tearDown = AlertContractTests.tearDown
+    pair = AlertContractTests.pair
+    _insert_alert = AlertContractTests._insert_alert
+
+    def second_phone(self):
+        c = TestClient(api.app, client=('192.0.2.11', 1234))
+        self.addCleanup(c.close)
+        code = self.local.get('/pairing/code').json()['code']
+        token = c.post('/pair', json={'code': code, 'device_name': 'q'}).json()['token']
+        c.headers['Authorization'] = 'Bearer ' + token
+        return c
+
+    def first_id(self, client):
+        return client.get('/alerts').json()[0]['id']
+
+    def sql(self, query, args=()):
+        with closing(sqlite3.connect(self.db)) as conn, conn:
+            return conn.execute(query, args).fetchall()
+
+    def read_of(self, client, aid):
+        return client.get('/alerts/' + aid).json()['read']
+
+    def unread(self, client):
+        r = client.get('/alerts/unread_count')
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()['unread']
+
+    def test_read_is_per_phone_and_never_a_state(self):
+        self.pair()
+        other = self.second_phone()
+        aid = self.first_id(self.phone)
+        self.assertEqual((self.read_of(self.phone, aid), self.read_of(other, aid)), (False, False))
+        self.assertEqual((self.unread(self.phone), self.unread(other)), (1, 1))
+
+        r = self.phone.post(f'/alerts/{aid}/read')
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()['read'], r.json()['state']), (True, 'new'))
+        self.assertEqual(self.phone.post(f'/alerts/{aid}/read').status_code, 200)  # idempotent
+
+        self.assertTrue(self.read_of(self.phone, aid))
+        self.assertFalse(self.read_of(other, aid))  # the other phone is unaffected
+        self.assertEqual((self.unread(self.phone), self.unread(other)), (0, 1))
+        self.assertEqual(self.phone.get('/alerts?filter=unread').json(), [])
+        self.assertEqual([a['id'] for a in other.get('/alerts?filter=unread').json()], [aid])
+        # Never a state change, and the appliance's open count is unchanged.
+        self.assertEqual(self.sql("SELECT state FROM alerts WHERE alert_id=?", (aid,)), [('New',)])
+        self.assertEqual(self.phone.get('/alerts/open_count').json(), {'open': 1})
+
+    def test_new_detection_makes_a_read_alert_unread(self):
+        self.pair()
+        aid = self.first_id(self.phone)
+        self.phone.post(f'/alerts/{aid}/read')
+        # The ingester merges one more detection into the alert.
+        self.sql("UPDATE alerts SET occurrence_count = occurrence_count + 1 WHERE alert_id=?", (aid,))
+        self.assertFalse(self.read_of(self.phone, aid))
+        self.assertEqual(self.unread(self.phone), 1)
+        self.phone.post(f'/alerts/{aid}/read')
+        self.assertTrue(self.read_of(self.phone, aid))
+
+    def test_unread_tab_and_count_exclude_resolved(self):
+        self.pair()
+        self._insert_alert(state='Resolved', sid=3002)
+        aid = self.first_id(self.phone)
+        resolved = [a for a in self.phone.get('/alerts').json() if a['state'] == 'resolved']
+        self.assertEqual([a['read'] for a in resolved], [True])  # resolved = read
+        self.assertEqual(self.unread(self.phone), 1)
+        self.assertEqual([a['id'] for a in self.phone.get('/alerts?filter=unread').json()], [aid])
+        self.phone.patch('/alerts/' + aid, json={'state': 'resolved'})
+        self.assertTrue(self.read_of(self.phone, aid))
+        self.assertEqual(self.unread(self.phone), 0)
+
+    def test_unread_count_is_a_db_aggregate(self):
+        for i in range(250):
+            self._insert_alert(state='New', sid=7000 + i, when='2026-11-02T08:00:00')
+        self.pair()
+        self.assertEqual(self.unread(self.phone), 251)  # past the default page of 200
+
+    def test_appliance_caller_has_no_read_state(self):
+        aid = self.first_id(self.local)
+        self.assertIsNone(self.local.get('/alerts').json()[0]['read'])
+        self.assertEqual(self.local.post(f'/alerts/{aid}/read').status_code, 409)
+        self.assertEqual(self.local.get('/alerts/unread_count').status_code, 409)
+        self.assertEqual(self.local.get('/alerts?filter=unread').status_code, 409)
+        self.assertEqual(self.local.get('/alerts/open_count').status_code, 200)
+
+    def test_errors_and_auth(self):
+        self.assertEqual(self.phone.post('/alerts/1/read').status_code, 401)
+        self.assertEqual(self.phone.get('/alerts/unread_count').status_code, 401)
+        self.pair()
+        self.assertEqual(self.phone.post('/alerts/99999/read').status_code, 404)
+        self.assertEqual(self.phone.get('/alerts?filter=bogus').status_code, 422)
+
+    def test_unpair_removes_the_phones_read_markers(self):
+        self.pair()
+        other = self.second_phone()
+        aid = self.first_id(self.phone)
+        self.phone.post(f'/alerts/{aid}/read')
+        other.post(f'/alerts/{aid}/read')
+        self.assertEqual(self.sql("SELECT COUNT(*) FROM alert_reads"), [(2,)])
+        self.assertEqual(self.phone.post('/unpair').status_code, 204)
+        self.assertEqual(self.sql("SELECT COUNT(*) FROM alert_reads"), [(1,)])
+        self.assertTrue(self.read_of(other, aid))
+
+    def _pre_rollout(self):
+        """A DB from before Release 1: a phone already paired, alerts stored, no
+        alert_reads table yet."""
+        self.pair()
+        self._insert_alert(state='Resolved', sid=3002)
+        self.sql("DROP TABLE alert_reads")
+        return self.first_id(self.phone)
+
+    def test_rollout_existing_alerts_read_for_phones_already_paired(self):
+        aid = self._pre_rollout()
+        with patch.object(api, 'DB_PATH', self.db):
+            api.ensure_alert_reads_table()
+        self.assertTrue(self.read_of(self.phone, aid))
+        self.assertEqual(self.unread(self.phone), 0)
+        # An alert after the rollout is unread; a second run backfills nothing.
+        self._insert_alert(state='New', sid=3003, when='2026-11-02T11:00:00')
+        with patch.object(api, 'DB_PATH', self.db):
+            api.ensure_alert_reads_table()
+        self.assertEqual(self.unread(self.phone), 1)
+        # A phone paired later: existing unresolved alerts unread, resolved read.
+        other = self.second_phone()
+        self.assertEqual(self.unread(other), 2)
+        self.assertEqual(sorted(a['read'] for a in other.get('/alerts').json()), [False, False, True])
+
+    def test_pairing_before_the_table_exists_keeps_the_rollout_rule(self):
+        # The API did not create the table at startup (e.g. DB not there yet).
+        aid = self._pre_rollout()
+        other = self.second_phone()  # /pair creates it before adding this phone
+        self.assertTrue(self.read_of(self.phone, aid))   # paired before rollout
+        self.assertFalse(self.read_of(other, aid))       # paired after rollout
+        self.assertEqual(self.unread(other), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

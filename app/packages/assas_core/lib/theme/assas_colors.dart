@@ -72,15 +72,13 @@ class BadgeColors {
 
   static AssasPalette get _p => AssasColors.palette;
 
-  // Severity (Low / Medium / High / Critical)
-  static BadgeColors get low => BadgeColors(_p.tintGreen, _p.fgGreen);
-  static BadgeColors get medium => BadgeColors(_p.tintAmber, _p.fgAmber);
-  static BadgeColors get high => BadgeColors(_p.tintOrange, _p.fgOrange);
-  static BadgeColors get critical => BadgeColors(_p.tintRed, _p.fgRed);
+  // Severity (Low / Medium / High): amber / orange / red (Release 1 scale)
+  static BadgeColors get low => BadgeColors(_p.tintAmber, _p.fgAmber);
+  static BadgeColors get medium => BadgeColors(_p.tintOrange, _p.fgOrange);
+  static BadgeColors get high => BadgeColors(_p.tintRed, _p.fgRed);
 
-  // Alert state (New / Reviewed / Resolved)
+  // Alert state (New / Resolved)
   static BadgeColors get stateNew => BadgeColors(_p.tintPurple, _p.fgPurple);
-  static BadgeColors get stateReviewed => BadgeColors(_p.tintBlue, _p.fgBlue);
   static BadgeColors get stateResolved => BadgeColors(_p.tintSlate, _p.fgSlate);
 
   // Recognition
@@ -98,20 +96,18 @@ class BadgeColors {
   static BadgeColors get slate => BadgeColors(_p.tintSlate, _p.fgSlate);
   static BadgeColors get teal => BadgeColors(_p.tintTeal, _p.fgTeal);
 
-  /// Bright risk color that stays readable on the purple header (both modes).
+  /// Bright alert-level color that stays readable on the purple header (both modes).
   static Color riskOnPurple(String label) {
     final l = label.toLowerCase();
-    if (l.contains('critical')) return const Color(0xFFFF9AA5);
-    if (l.contains('high')) return const Color(0xFFFFB38A);
-    if (l.contains('moderate') || l.contains('medium')) return const Color(0xFFFFE08A);
-    return const Color(0xFF9EF0C0);
+    if (l.contains('high')) return const Color(0xFFFF9AA5);
+    if (l.contains('moderate') || l.contains('medium')) return const Color(0xFFFFB38A);
+    return const Color(0xFFFFE08A);
   }
 
-  /// Color for a network risk level label coming from the backend
-  /// (works for Low / Moderate / Medium / High / Critical).
+  /// Color for a Network Alert Level label coming from the backend
+  /// (works for Low / Moderate / Medium / High).
   static BadgeColors forRiskLabel(String label) {
     final l = label.toLowerCase();
-    if (l.contains('critical')) return critical;
     if (l.contains('high')) return high;
     if (l.contains('moderate') || l.contains('medium')) return medium;
     return low;

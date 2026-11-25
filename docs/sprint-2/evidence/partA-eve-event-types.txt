@@ -1,0 +1,4 @@
+# eve.json event-type counts (names+counts only; no raw records committed)
+# computed with python3 at 2026-11-02T12:47:20Z
+      4 alert
+     14 stats

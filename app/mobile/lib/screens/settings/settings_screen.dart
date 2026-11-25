@@ -158,7 +158,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.only(top: 5),
-                        child: Text('Control\ncenter.', style: UiText.settingsTitle),
+                        // scaleDown keeps the two-line title intact and shrinks it
+                        // to fit instead of wrapping mid-word on narrow / large-font
+                        // layouts.
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text('Control\ncenter.', style: UiText.settingsTitle),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -244,10 +251,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(width: 14),
-          _Toggle(
-            value: on,
-            onChanged: _saving ? null : (s == null ? (_) => _loadSettings() : (_loading ? null : _toggleProbes)),
-          ),
+          // Until the real state is known, do NOT show a toggle (it would read as
+          // a confirmed "off"): show an explicit error+retry or a loading spinner.
+          if (_settingsUnavailable)
+            Pressable(
+              onTap: _loading ? null : _loadSettings,
+              semanticLabel: 'Retry loading settings',
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(UiRadius.pill),
+                  border: Border.all(color: Ui.mix(Ui.med, .4, Ui.line)),
+                ),
+                child: Text('RETRY', style: UiText.mono(10.5, 700, em: .1, color: Ui.med)),
+              ),
+            )
+          else if (s == null)
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: UiSpinner(size: 18))
+          else
+            _Toggle(
+              value: on,
+              onChanged: _saving || _loading ? null : _toggleProbes,
+            ),
         ],
       ),
     );
@@ -314,6 +339,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Column(
         children: [
           // Keep the design width when possible; shrink to fit at larger zoom.
+          // The box WIDTH is set instantly via SizedBox (not animated): changing
+          // the app text size changes the DesignScale zoom, which shrinks this
+          // canvas; if the width animated down over 220 ms the row would briefly
+          // overflow mid-transition. Only the selection COLOR animates.
           LayoutBuilder(builder: (context, box) {
             final w = ((box.maxWidth - 3 * 6) / 4).clamp(0.0, 66.0).toDouble();
             return Row(
@@ -325,20 +354,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: () => app.setTextScaleIndex(i),
                   semanticLabel:
                       'Text size ${AppSettings.textScaleLabels[i]}${i == app.textScaleIndex ? ', selected' : ''}',
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
+                  child: SizedBox(
                     width: w,
                     height: 58,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: i == app.textScaleIndex ? Ui.acc : Ui.surf2,
-                      borderRadius: BorderRadius.circular(UiRadius.textSizeOption),
-                    ),
-                    child: Text(
-                      'Aa',
-                      textScaler: TextScaler.noScaling,
-                      style: UiText.sans(12 + i * 4.0, 800,
-                          color: i == app.textScaleIndex ? Ui.accInk : Ui.ink),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: i == app.textScaleIndex ? Ui.acc : Ui.surf2,
+                        borderRadius: BorderRadius.circular(UiRadius.textSizeOption),
+                      ),
+                      child: Text(
+                        'Aa',
+                        textScaler: TextScaler.noScaling,
+                        style: UiText.sans(12 + i * 4.0, 800,
+                            color: i == app.textScaleIndex ? Ui.accInk : Ui.ink),
+                      ),
                     ),
                   ),
                 ),
@@ -367,10 +398,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Text(k, style: UiText.mono(8.5, 500, color: Ui.mute)),
             const SizedBox(height: 3),
+            // Wraps (at address separators) instead of clipping: the row grows
+            // with the text size; no ellipsis, no font shrinking.
             Text(
-              v,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              breakAddress(v),
+              softWrap: true,
               style: UiText.mono(10.5, 600, color: color ?? Ui.ink),
             ),
           ],

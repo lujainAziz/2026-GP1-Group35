@@ -2,10 +2,16 @@
 
 The discovery daemon (`appliance/discovery.py`) writes a single SQLite database,
 `assas.db` (default `/home/assas/assas/assas.db`, override with `ASSAS_DB_PATH`).
+A separate process, the alert ingester (`appliance/alerts.py`, service
+`assas-alerts`), writes the Threat Alert tables in the same file.
 The API (`appliance/api.py`) opens it read-only, except for the API-owned tables and
-columns marked below. WAL journal mode allows concurrent reads while the daemon writes.
+columns marked below. WAL journal mode allows concurrent reads while the daemons write.
 
-Verified against the live appliance database on 2026-10-17 (commit `f9d157b`).
+Schema verified against the device database on 2026-11-23, after the Release 1
+alert-model changes: every table, column, type, default, NOT NULL, key, CHECK
+constraint and index below matches it. Only the schema was compared, not the
+data, so the value rules and the one-time conversions and cleanups described
+below are documented from the code.
 
 | Table | Written by | Purpose |
 |---|---|---|
@@ -16,22 +22,35 @@ Verified against the live appliance database on 2026-10-17 (commit `f9d157b`).
 | `paired_sessions` | API | One row per paired phone. |
 | `app_settings` | API / discovery daemon | Appliance settings (single row). |
 | `appliance_identity` | API | Persistent public identifier of this appliance (single row). |
+| `device_addresses` | discovery daemon | Every local address seen for each device, with first/last sighting. Used to link alerts to devices. |
+| `alerts` | alert ingester (+ API for `state`) | One row per Threat Alert from Suricata. |
+| `alert_ingest_state` | alert ingester | Read position in each Suricata `eve.json` file. |
+| `alert_reads` | API | Per-phone "read" marker for alerts (not an alert state). |
+| `migrations` | discovery daemon / alert ingester | One row per one-time data repair that has run. |
 
 `sqlite_sequence` also exists; it is SQLite's internal counter for the
-`AUTOINCREMENT` key of `paired_sessions` and is not used by Assas code.
+`AUTOINCREMENT` keys of `paired_sessions` and `alerts` and is not used by Assas code.
 
 Timestamps stored as TEXT are **server-local naive ISO-8601** to the second
 (e.g. `2026-09-20T10:57:37`). Timestamps stored as REAL are **Unix epoch seconds**.
-No indexes exist besides the primary keys.
+
+Indexes besides the primary keys:
+
+| Index | Columns | Used for |
+|---|---|---|
+| `idx_alerts_dedup` | `alerts(rule_id, device_mac)` | Finding the alert a repeated event merges into (de-dup). |
+| `idx_alerts_device` | `alerts(device_mac, last_event_time)` | Alerts of one device, newest first. |
+| `idx_alerts_last_event` | `alerts(last_event_time)` | Alert list ordered by time; relink window. |
+| `idx_device_addresses_addr` | `device_addresses(addr)` | Finding which device owns an address. |
 
 ## Table: `devices`
 
 | Column | Type | Meaning |
 |---|---|---|
 | `mac` | TEXT (PK) | Device MAC address, lowercase colon form. |
-| `ip` | TEXT | Most recently seen address (IPv4 or IPv6). Kept for compatibility; the API prefers the three columns below. |
-| `last_ipv4` | TEXT | Most recently seen IPv4 address. |
-| `last_ipv6_global` | TEXT | Most recently seen global IPv6 address. |
+| `ip` | TEXT | Most recently seen address (IPv4 or IPv6) on the monitored network. Kept for compatibility; the API prefers the three columns below. |
+| `last_ipv4` | TEXT | Most recently seen IPv4 address on the monitored network. |
+| `last_ipv6_global` | TEXT | Most recently seen global IPv6 address on the monitored network. |
 | `last_ipv6_ll` | TEXT | Most recently seen link-local IPv6 address (`fe80::`). |
 | `vendor` | TEXT | Vendor name (OUI lookup or inferred). |
 | `vendor_source` | TEXT | How `vendor` was derived; `inferred: ...` for guesses (e.g. on randomized MACs). |
@@ -83,6 +102,21 @@ No indexes exist besides the primary keys.
   keeps the state it had when it was last online (no usable `last_seen`: now).
 - **IP shown by the API**: `last_ipv4`, then `last_ipv6_global`, then
   `last_ipv6_ll` as a last resort.
+- **Only addresses on the monitored network** are stored in `ip` and the
+  `last_*` columns: the same check as `device_addresses` (inside the discovery
+  interface's subnets, or a prefix learned from Router Advertisements;
+  link-local always). Internet servers' addresses arrive behind the router's
+  MAC and are never stored as the router's address. While no subnet is known
+  (e.g. before the discovery interface has an address) no address is stored;
+  discovery re-reads its own addresses and subnets every 5 minutes
+  (`ASSAS_NETWORK_CONTEXT_REFRESH_SECONDS`, default 300).
+- **One-time cleanup** (`migrations` name
+  `2026-11-clear-offlink-device-addresses`, discovery at startup): an `ip` /
+  `last_ipv4` / `last_ipv6_global` value written before that check is cleared
+  when it is not a LAN-scoped address (private IPv4, `100.64.0.0/10`,
+  link-local, IPv6 ULA) and the device has no `device_addresses` row for it.
+  Private addresses from a previous network and evidence-backed global IPv6
+  addresses are kept. One transaction.
 
 ## Table: `flows`
 
@@ -113,7 +147,7 @@ Single row (`id = 1`) holding the rolling live-traffic summary served by
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `data` | TEXT, NOT NULL | JSON: recent packets-per-second samples (at most 12) and the protocols seen recently (e.g. `ARP`, `MDNS`, `UDP`). No DNS query names or payloads. |
 
 `GET /activity` returns `{"available": false}` when the table does not exist yet, and
@@ -126,7 +160,7 @@ device sends traffic.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `updated_at` | REAL, NOT NULL | Last heartbeat (epoch seconds). |
 
 `/healthz` reports `daemon_stale: true` when the heartbeat is older than the stale
@@ -144,7 +178,8 @@ pairing; readers treat a missing table as "nobody is paired yet".
 | `created_at` | TEXT, NOT NULL | When the phone paired. |
 | `device_name` | TEXT, NOT NULL, default `'Unnamed phone'` | Phone name sent with `POST /pair` (max 40 characters), shown on the display. |
 
-`POST /unpair` deletes the calling phone's row; other phones stay paired.
+`POST /unpair` deletes the calling phone's row and its `alert_reads` rows (same
+transaction); other phones stay paired.
 
 ## Table: `app_settings`
 
@@ -152,7 +187,7 @@ Single row (`id = 1`).
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `active_probes` | INTEGER (0/1), NOT NULL, default 0 | "Active identification" switch in the app. 0 = passive only (no nmap / mDNS / NBNS probes). The daemon reloads it at runtime. |
 
 ## Table: `appliance_identity`
@@ -161,7 +196,178 @@ Single row (`id = 1`).
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | INTEGER (PK), always 1 | Single-row table. |
+| `id` | INTEGER (PK), CHECK `id = 1` | Single-row table. |
 | `value` | TEXT, NOT NULL | Random UUID created once. Public identifier returned by `/healthz` and `/pair` so the app knows it is talking to the same appliance. Not a credential. |
+
+## Table: `device_addresses`
+
+Address ownership evidence (PBI-14). One row per (`mac`, `addr`): the full set of
+local addresses each device has used. Unlike the `last_*` columns of `devices`, a
+new address never replaces an old one. Written by the discovery daemon; the alert
+ingester only reads it.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `mac` | TEXT, NOT NULL | Device MAC (same form as `devices.mac`). |
+| `addr` | TEXT, NOT NULL | Address: IPv4 dotted, IPv6 exploded lowercase (the form Suricata writes in `eve.json`). |
+| `family` | TEXT, NOT NULL | `ipv4`, `ipv6` (global or ULA) or `ipv6-ll` (link-local). |
+| `source` | TEXT, NOT NULL | Evidence source: `arp`, `ndp`, `dhcp` (authoritative) or `span` / `discovery` (traffic-derived). |
+| `first_seen` | TEXT, NOT NULL | First time this device was seen with this address. Never changed after insert. |
+| `last_seen` | TEXT, NOT NULL | Most recent sighting. |
+
+Primary key: (`mac`, `addr`).
+
+### Notes
+- **What is recorded**: only addresses on the monitored link (the discovery
+  interface's subnets and prefixes, plus prefixes from Router Advertisements;
+  IPv6 link-local always counts). Off-link, loopback, multicast and unspecified
+  addresses are never stored. At most 16 global IPv6 addresses seen in the last
+  48 hours are recorded per device (`ASSAS_ADDR_FANOUT_CAP`,
+  `ASSAS_ADDR_FANOUT_WINDOW_HOURS`); further ones are skipped.
+- **Source upgrade**: on a repeat sighting `last_seen` is bumped, and an
+  authoritative source (`arp` / `ndp` / `dhcp`) replaces a traffic-derived one
+  (`span` / `discovery`), never the reverse.
+
+## Table: `alerts`
+
+Threat Alerts from Suricata `alert` events in `eve.json` (PBI-14, PBI-22). Written
+by the alert ingester; the API writes only `state`. Payloads are never stored.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `alert_id` | INTEGER (PK, AUTOINCREMENT) | Alert id. |
+| `device_mac` | TEXT | Linked device (see device linking below). `NULL` when no single device could be linked. |
+| `alert_type` | TEXT, NOT NULL, default `'Threat'` | Alert kind. The ingester writes only `Threat`, and the API serves only `Threat` rows. |
+| `title` | TEXT, NOT NULL | Suricata rule signature text; `Suricata alert` when the event has none. The API returns it as `title` and adds a plain-language `display_title` from `classtype`. |
+| `rule_id` | INTEGER | Suricata signature id (`alert.signature_id`). Returned by the API for internal use; never shown to the user. |
+| `event_time` | TEXT, NOT NULL | Earliest event of this alert. Ingest time when the event has no usable timestamp. |
+| `src_ip` | TEXT | Source address of the first event; `NULL` for events without addresses (e.g. decoder events). |
+| `dst_ip` | TEXT | Destination address of the first event; `NULL` as above. |
+| `src_port` | INTEGER | Source port of the first event; `NULL` when absent. |
+| `dst_port` | INTEGER | Destination port of the first event; `NULL` when absent. |
+| `severity` | TEXT, NOT NULL | From the rule priority (`alert.severity`): 1 = `High`, 2 = `Medium`, 3 or more / missing = `Low`. There is no `Critical`. |
+| `state` | TEXT, NOT NULL, default `'New'` | `New` / `Resolved`. **API-owned after insert**: the ingester inserts `New` and never changes it; the API changes it via `PATCH /alerts/{alert_id}` (New→Resolved only; `Resolved` is final). |
+| `explanation` | TEXT | Stored explanation; not written today. When `NULL` the API shows the `classtype` text. |
+| `model_version` | TEXT | Not written or read by any code today (always `NULL`). |
+| `anomaly_score` | REAL | Not written or read by any code today (always `NULL`). |
+| `threshold` | REAL | Not written or read by any code today (always `NULL`). |
+| `occurrence_count` | INTEGER, NOT NULL, default 1 | Number of events merged into this alert (see de-dup below). |
+| `last_event_time` | TEXT, NOT NULL | Latest event of this alert. |
+| `category` | TEXT | Suricata `alert.category` (the classtype description), as received. `NULL` for rules without a classtype. |
+| `classtype` | TEXT | Short classtype name, mapped back from `category` through Suricata's `classification.config`. `NULL` when unknown or ambiguous; the API then shows a fallback title. |
+| `device_role` | TEXT | Side of the first event the linked device was on: `source` / `target`. `NULL` when unlinked or linked by MAC. |
+| `priority` | INTEGER | Raw Suricata rule priority (eve `alert.severity`) that `severity` was derived from; `NULL` when the event had none. Rows converted in Release 1 from the old `Low` label also have `NULL` (the old label does not say whether it was 4 or more). |
+
+`category`, `classtype` and `device_role` were added after the table first shipped.
+Only the ingester adds them, at startup; rows from before that have `NULL`. The API
+never alters the `alerts` table: if it starts before the ingester has added a
+column, it reads that column as `NULL`.
+
+`priority` is also added only by the ingester, by the one-time Release 1 conversion below.
+
+### Notes
+- **Release 1 conversion** (one time, ingester only, `alerts.migrate_release1`):
+  in a single transaction the ingester adds `priority`, fills it from the old
+  label, and rewrites the labels: `Critical`→`High`, `High`→`Medium`,
+  `Medium`→`Low`, `Low`→`Low`; it also sets every `Reviewed` alert to `New`.
+  The column's existence marks the conversion as done, so it never runs twice
+  (running it again would shift `High` to `Medium`), and a fresh table is never
+  converted. If any step fails the whole conversion rolls back. The API reads a
+  leftover `Critical` as `high` and a leftover `Reviewed` as `new`.
+- **De-dup**: a new event is merged into the most recent alert with the same
+  `rule_id` and the same `device_mac` (for unlinked alerts: same `rule_id`,
+  `src_ip` and `dst_ip`, so unknown hosts never merge), if that alert is not
+  `Resolved` and its `last_event_time` is within 5 minutes of the event
+  (`ASSAS_ALERT_DEDUP_WINDOW`, seconds). The window slides: it is measured from
+  the latest event, so a long run of repeats stays one alert. A merge adds 1 to
+  `occurrence_count`
+  and widens `event_time` / `last_event_time`; every other column, including
+  `state`, keeps its value. If the newest match is `Resolved` or outside the
+  window, a new alert is inserted with state `New`.
+- **Device linking**: each of `src_ip` / `dst_ip` is matched to a device.
+  `device_addresses` decides for any address it has rows for, using only rows
+  whose [`first_seen` − 2 h, `last_seen` + 24 h] window contains the event time
+  (`ASSAS_ADDR_PRE_SLACK_HOURS`, `ASSAS_ADDR_GRACE_HOURS`). An address with no
+  rows falls back to the `devices` address columns only when it is LAN-scoped
+  (private IPv4, `100.64.0.0/10`, link-local, IPv6 ULA); a public IPv4 or global
+  IPv6 address links only through `device_addresses`. An address links only when
+  exactly one device owns it; the appliance's own address, the gateway,
+  multicast, broadcast and unspecified addresses never link. One side matches:
+  that device, role `source` or `target`. Both match: the source device, role
+  `source`. Neither: unlinked. Events without addresses are linked by Ethernet
+  MAC only when exactly one side is a known device that is not the gateway or
+  the appliance (no role).
+- **Relink**: unlinked alerts whose `last_event_time` is within the last
+  24 hours (`ASSAS_ALERT_RELINK_HOURS`) are retried when new address evidence
+  arrives. Only `device_mac` and `device_role` are set.
+- **One-time relink** (`migrations` name `2026-11-relink-offlink-alert-links`,
+  alert ingester at startup): alerts that the older column fallback linked
+  through an internet address (typically to the router) are linked again with
+  the rule above: to the right device and role, or unlinked. An alert is
+  changed only when its link cannot be justified (the linked side is not
+  LAN-scoped and has no `device_addresses` row for that device; for alerts
+  stored before `device_role`, neither side supports the device). All alerts
+  are covered; only `device_mac` and `device_role` change. One transaction.
+
+## Table: `alert_reads`
+
+Which alerts each paired phone has read (Release 1). Written only by the API.
+"Read" is a marker kept per phone, not an alert state: `alerts.state` stays
+`New` / `Resolved`, and the ingester never touches this table.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `session_id` | INTEGER, NOT NULL | The phone: `paired_sessions.id`. |
+| `alert_id` | INTEGER, NOT NULL | The alert: `alerts.alert_id`. |
+| `read_count` | INTEGER, NOT NULL | The alert's `occurrence_count` when this phone read it. |
+| `read_at` | TEXT, NOT NULL | When this phone read it. |
+
+Primary key: (`session_id`, `alert_id`).
+
+- **Read rule**: an alert is read for a phone when it is `Resolved`, or when the
+  phone's row has `read_count` ≥ the alert's current `occurrence_count`. A
+  detection merged into the alert raises `occurrence_count`, so it becomes unread
+  again. No row means unread.
+- **Written** by `POST /alerts/{alert_id}/read` (insert or update, storing the
+  current `occurrence_count`). `POST /unpair` deletes the phone's rows.
+- **Created** by the API at startup, or by `POST /pair` / `POST /alerts/{alert_id}/read`
+  if it does not exist yet. In the same transaction as the `CREATE`, every phone
+  already paired gets a row for every existing unresolved alert (the Release 1
+  rollout: existing alerts start read). The table's existence marks this as done,
+  so it runs once. `POST /pair` creates the table before adding the new phone, so
+  a phone paired later gets no rows: the unresolved alerts that exist when it
+  pairs start unread for it.
+
+## Table: `migrations`
+
+One row per one-time data repair that has run. A repair runs in one
+transaction together with the insert of its row, and never runs again once
+the row exists. Created by the discovery daemon or the alert ingester,
+whichever runs a repair first.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `name` | TEXT (PK) | Repair name, e.g. `2026-11-clear-offlink-device-addresses` (discovery) or `2026-11-relink-offlink-alert-links` (alert ingester). |
+| `applied_at` | TEXT, NOT NULL | When it ran. |
+
+## Table: `alert_ingest_state`
+
+Read checkpoint of the alert ingester: one row per `eve.json` file (the live file
+and rotated `eve.json-<timestamp>` files), identified by inode. Written in the same
+transaction as the alerts read from that file, so no event is stored twice after
+a restart.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `st_dev` | INTEGER, NOT NULL | Device number of the file (part of its identity). |
+| `st_ino` | INTEGER, NOT NULL | Inode number of the file (part of its identity). |
+| `path` | TEXT | Path the file was last read under (changes when it is rotated). |
+| `offset` | INTEGER, NOT NULL, default 0 | Bytes read so far (up to the last complete line). |
+| `size_at_eof` | INTEGER | File size when it was marked fully read; `NULL` before. |
+| `consumed` | INTEGER (0/1), NOT NULL, default 0 | 1 = rotated file fully read and may be deleted. Set back to 0 if the file grows again. |
+| `updated_at` | TEXT | Last time `offset` was written. |
+
+Primary key: (`st_dev`, `st_ino`). The row is deleted when the ingester deletes the
+rotated file (or finds it already gone).
 
 See [API_CONTRACT.md](API_CONTRACT.md) for how these fields are exposed over HTTP.

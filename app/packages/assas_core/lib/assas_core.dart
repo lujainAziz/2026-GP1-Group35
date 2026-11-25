@@ -12,6 +12,7 @@ export 'theme/assas_theme.dart';
 // Models
 export 'models/device.dart';
 export 'models/security_alert.dart';
+export 'models/alert_ordering.dart';
 export 'models/network_status.dart';
 export 'models/pairing_code.dart';
 export 'models/appliance_settings.dart';

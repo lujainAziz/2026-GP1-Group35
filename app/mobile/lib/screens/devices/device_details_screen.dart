@@ -1,6 +1,7 @@
 import 'package:assas_core/assas_core.dart';
 import 'package:flutter/material.dart';
 
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import '../../state/app_state.dart';
 import '../../theme/assas_ui.dart';
 import '../../widgets/coming_soon.dart';
@@ -8,6 +9,7 @@ import '../../widgets/device_signals.dart';
 import '../../widgets/radar_hero.dart';
 import '../../widgets/rename_dialog.dart';
 import '../../widgets/ui_kit.dart';
+import '../../widgets/ui_memory.dart';
 import '../../widgets/ui_overlays.dart';
 import '../alerts/alert_details_screen.dart';
 
@@ -29,10 +31,66 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
   bool _saving = false;
   bool _detailError = false;
 
+  // This device's alerts, fetched independently (GET /devices/{mac}/alerts,
+  // paginated) so older alerts are never hidden behind the global page limit.
+  List<SecurityAlert>? _deviceAlertList;
+  bool _alertsLoaded = false;
+
+  // Order for this device's alerts — useful on devices with many alerts.
+  AlertSort _alertSort = AlertSort.newest;
+
   @override
   void initState() {
     super.initState();
     _loadDetail();
+    _loadAlerts();
+    UiMemory.deviceAlertSort().then((name) {
+      for (final s in AlertSort.values) {
+        if (s.name == name && mounted) setState(() => _alertSort = s);
+      }
+    });
+  }
+
+  void _toggleAlertSort() {
+    setState(() => _alertSort = _alertSort == AlertSort.newest ? AlertSort.severity : AlertSort.newest);
+    UiMemory.setDeviceAlertSort(_alertSort.name);
+  }
+
+  /// Sort control for the "Alerts for this device" header. Shows the current
+  /// mode in both colour and text: neutral for Newest, the active-button purple
+  /// (`Ui.acc`) for Most severe.
+  Widget _alertSortButton() {
+    final severe = _alertSort == AlertSort.severity;
+    final fg = severe ? Ui.acc : Ui.mute;
+    Widget content(String label) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.swap_vert_rounded, size: 14, color: fg),
+            const SizedBox(width: 6),
+            Text(label, maxLines: 1, style: UiText.mono(10.5, 700, em: .04, color: fg)),
+          ],
+        );
+    return Pressable(
+      semanticLabel: 'Sort: ${_alertSort.label}. Tap to switch.',
+      onTap: _toggleAlertSort,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(UiRadius.pill),
+          color: severe ? Ui.fade(Ui.acc, .16) : null,
+          border: Border.all(color: severe ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line),
+        ),
+        // Fixed to the WIDEST option ("Most severe") so the pill keeps one size
+        // on toggle; the shown label is centred. IndexedStack measures both at
+        // the current text scale, so the size adapts to the system font size and
+        // stays equal for both options.
+        child: IndexedStack(
+          alignment: Alignment.center,
+          index: severe ? 1 : 0,
+          children: [content('Newest'), content('Most severe')],
+        ),
+      ),
+    );
   }
 
   Future<void> _loadDetail() async {
@@ -46,6 +104,18 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
       widget.state.handleFailure(e);
       setState(() => _detailError = true);
       // Keep the latest list data, but expose a retry for a failed detail read.
+    }
+  }
+
+  Future<void> _loadAlerts() async {
+    if (!Released.alerts) return;
+    try {
+      final list = await widget.state.repo.getDeviceAlerts(widget.mac);
+      if (mounted) setState(() { _deviceAlertList = list; _alertsLoaded = true; });
+    } catch (e) {
+      if (!mounted) return;
+      widget.state.handleFailure(e);
+      setState(() => _alertsLoaded = true); // keep last; _deviceAlertList may be null
     }
   }
 
@@ -133,7 +203,10 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: UiSpace.pageText),
                     child: Column(
                       children: [
-                        Text(d.displayName, textAlign: TextAlign.center, style: UiText.deviceName),
+                        // breakName: wrap long machine-style tokens at their
+                        // separators instead of mid-word; the column grows.
+                        Text(breakName(d.displayName),
+                            textAlign: TextAlign.center, style: UiText.deviceName),
                         const SizedBox(height: 8),
                         Pressable(
                           onTap: _saving ? null : () => _rename(d),
@@ -218,14 +291,20 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: PillButton(
                       label: d.trusted ? 'Remove trust' : 'Mark as trusted',
+                      // Reserve the wider label so the pill keeps one width when
+                      // trust toggles (no jump).
+                      reserveLabel: 'Mark as trusted',
                       filled: !d.trusted,
                       busy: _saving,
                       onTap: () => _setTrusted(d, !d.trusted),
                     ),
                   ),
-                  const SectionHeader(
+                  SectionHeader(
                     'Alerts for this device',
-                    padding: EdgeInsets.fromLTRB(22, 26, 22, 10),
+                    padding: const EdgeInsets.fromLTRB(22, 26, 22, 10),
+                    // Sort control sits to the right of the header, on the same
+                    // row; only once there are enough alerts to reorder.
+                    trailing: (_deviceAlertList?.length ?? 0) >= 2 ? _alertSortButton() : null,
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: UiSpace.pageCards),
@@ -262,14 +341,26 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
           quarterTurns: topLeft ? 0 : 2,
           child: CustomPaint(size: const Size(14, 14), painter: _BracketPainter(hero)),
         );
-    Widget field(String k, String v, TextStyle style) => Padding(
+    // One uniform style for every address VALUE (IPv4, IPv6, MAC) and a smaller
+    // uniform style for the labels. The value is tap-to-copy (raw text); long
+    // addresses wrap at `:`/`.` groups at the SAME font size (no shrink/clip).
+    final labelStyle = UiText.mono(9, 600, em: .14, color: Ui.mute);
+    final valueStyle = UiText.ip; // same size + weight for IPv4, IPv6 and MAC
+    Widget field(String k, String v) => Padding(
           padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(k, style: UiText.identityLabel.copyWith(color: Ui.mute)),
+              Text(k, style: labelStyle),
               const SizedBox(height: 5),
-              Text(v, style: style),
+              Pressable(
+                semanticLabel: 'Copy $k',
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: v));
+                  showToast(context, 'Copied');
+                },
+                child: Text(breakAddress(v), style: valueStyle, softWrap: true),
+              ),
             ],
           ),
         );
@@ -287,10 +378,10 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  field('IP ADDRESS', d.ipLabel, UiText.ip),
-                  for (final address in d.ipv6.where((v) => v != d.ip))
-                    field('IPV6 ADDRESS', address, UiText.ip),
-                  field('MAC ADDRESS', d.macLabel, UiText.mac),
+                  field('IP ADDRESS', d.ipLabel),
+                  for (final address in d.displayIpv6.where((v) => v != d.ip))
+                    field('IPV6 ADDRESS', address),
+                  field('MAC ADDRESS', d.macLabel),
                 ],
               ),
             ),
@@ -305,18 +396,21 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
       return const EmptyDashed(
         padding: EdgeInsets.all(26),
         title: 'Coming soon',
-        hint: 'Alerts for this device arrive in Sprint 2.',
-        action: SoonTag(2),
+        hint: 'Alerts for this device will appear here.',
       );
     }
-    final alerts = widget.state.alertsForDevice(d.mac);
-    if (alerts == null || alerts.isEmpty) {
+    if (!_alertsLoaded) {
+      return const Padding(padding: EdgeInsets.all(26), child: Center(child: UiSpinner(size: 20)));
+    }
+    final raw = _deviceAlertList;
+    if (raw == null || raw.isEmpty) {
       return EmptyDashed(
         padding: const EdgeInsets.all(26),
-        title: alerts == null ? 'Alerts are not available yet' : 'All quiet',
+        title: raw == null ? 'Alerts are not available yet' : 'No alerts for this device',
         hint: 'Alerts related to this device will appear here.',
       );
     }
+    final alerts = sortedAlerts(raw, _alertSort);
     return Column(
       children: [
         for (var i = 0; i < alerts.length; i++) ...[
@@ -326,11 +420,15 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
             compact: true,
             dotSize: 11,
             railWidth: 22,
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => AlertDetailsScreen(state: widget.state, alertId: alerts[i].id),
-              ),
-            ),
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AlertDetailsScreen(state: widget.state, alertId: alerts[i].id),
+                ),
+              );
+              // State may have changed on the details screen; refresh this list.
+              await _loadAlerts();
+            },
           ),
         ],
       ],

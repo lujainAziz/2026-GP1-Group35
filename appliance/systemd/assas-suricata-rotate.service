@@ -1,0 +1,9 @@
+[Unit]
+Description=ASSAS Suricata eve.json rotation (rename + SIGHUP reopen, PBI-13)
+# Only meaningful while the IDS is running; do not start it otherwise.
+Requisite=assas-suricata.service
+After=assas-suricata.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/assas/assas/appliance/suricata/rotate-eve.sh

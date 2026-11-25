@@ -11,10 +11,12 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from collections import namedtuple
 from datetime import datetime, timedelta
 
+import alert_text
 import api
 
 # Full devices schema, matching what discovery.py creates.
@@ -63,13 +65,13 @@ class _SeededDBTest(unittest.TestCase):
 class DeviceDetailClassificationTests(_SeededDBTest):
     def test_detail_includes_classification_needles(self):
         self.insert(
-            mac="72:a3:36:be:90:06", ip="192.168.1.5", device_type="Mobile (Apple)",
+            mac="02:5a:05:00:00:05", ip="192.168.1.5", device_type="Mobile (Apple)",
             model="iPhone", class_source="mDNS model (mapped identifier)", class_score=80,
             model_source="mDNS model (mapped identifier)", model_score=80,
             vendor_class="TL-SG105E", status="online", discovered_current=1,
             last_seen="2026-09-20T10:57:37",
         )
-        d = api.get_device("72:a3:36:be:90:06", self.conn)
+        d = api.get_device("02:5a:05:00:00:05", self.conn)
         c = d.classification
         self.assertIsNotNone(c)
         self.assertEqual(c.device_type, "Mobile (Apple)")
@@ -84,10 +86,10 @@ class DeviceDetailClassificationTests(_SeededDBTest):
 
     def test_vendor_on_randomized_mac_is_inferred(self):
         self.insert(
-            mac="72:a3:36:be:90:06", vendor="Apple Inc.", vendor_source=None,
+            mac="02:5a:05:00:00:05", vendor="Apple Inc.", vendor_source=None,
             status="online", last_seen="2026-09-20T10:57:37",
         )
-        d = api.get_device("72:a3:36:be:90:06", self.conn)
+        d = api.get_device("02:5a:05:00:00:05", self.conn)
         self.assertEqual(d.classification.vendor_source, "inferred: private MAC")
 
 
@@ -160,6 +162,111 @@ class HealthzHeartbeatTests(_SeededDBTest):
         self.assertIsNone(h["last_write"])
         self.assertIsNone(h["seconds_since_write"])
         self.assertTrue(h["daemon_stale"])
+
+
+class ApplianceIdentityTests(_SeededDBTest):
+    """/healthz is read-only: the identity is created once, never per request."""
+
+    def setUp(self):
+        super().setUp()
+        # Production daemons run the DB in WAL mode.
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self._orig_db_path = api.DB_PATH
+        api.DB_PATH = self.path
+        self._readers = []
+
+    def tearDown(self):
+        for gen in self._readers:
+            gen.close()
+        api.DB_PATH = self._orig_db_path
+        super().tearDown()
+        for suffix in ("-wal", "-shm"):
+            if os.path.exists(self.path + suffix):
+                os.remove(self.path + suffix)
+
+    def _ro_conn(self):
+        gen = api.get_connection()
+        self._readers.append(gen)
+        return next(gen)
+
+    def _startup(self):
+        async def run():
+            async with api.lifespan(api.app):
+                pass
+        asyncio.run(run())
+
+    def test_startup_creates_identity(self):
+        self._startup()
+        row = self.conn.execute("SELECT value FROM appliance_identity WHERE id=1").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(api.healthz(self._ro_conn())["appliance_id"], row[0])
+
+    def test_healthz_works_while_another_connection_holds_write_lock(self):
+        self._startup()
+        expected = api.appliance_identity()
+        writer = sqlite3.connect(self.path, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("INSERT INTO devices (mac) VALUES ('busy')")
+            original = api._create_appliance_identity
+            api._create_appliance_identity = lambda path: self.fail("healthz wrote to the DB")
+            try:
+                started = time.monotonic()
+                h = api.healthz(self._ro_conn())
+                elapsed = time.monotonic() - started
+            finally:
+                api._create_appliance_identity = original
+        finally:
+            writer.execute("ROLLBACK")
+            writer.close()
+        self.assertEqual(h["status"], "ok")
+        self.assertEqual(h["appliance_id"], expected)
+        self.assertLess(elapsed, 1.0)
+
+    def test_short_exclusive_lock_waits_instead_of_raising(self):
+        # Rollback-journal EXCLUSIVE blocks even readers; the busy timeout must
+        # absorb a short hold instead of raising "database is locked".
+        self.conn.execute("PRAGMA journal_mode=DELETE")
+        self._startup()
+        expected = api.appliance_identity()
+        locked, release = threading.Event(), threading.Event()
+
+        def hold():
+            writer = sqlite3.connect(self.path, isolation_level=None)
+            writer.execute("BEGIN EXCLUSIVE")
+            locked.set()
+            release.wait(5)
+            time.sleep(0.5)
+            writer.execute("ROLLBACK")
+            writer.close()
+
+        t = threading.Thread(target=hold)
+        t.start()
+        try:
+            self.assertTrue(locked.wait(5))
+            release.set()
+            h = api.healthz(self._ro_conn())
+        finally:
+            release.set()
+            t.join()
+        self.assertEqual(h["appliance_id"], expected)
+
+    def test_appliance_id_stable_across_calls_and_restarts(self):
+        self._startup()
+        first = api.healthz(self._ro_conn())["appliance_id"]
+        self.assertEqual(first, api.healthz(self._ro_conn())["appliance_id"])
+        self.assertEqual(first, api.appliance_identity())  # the value /pair returns
+        self._startup()  # API restart
+        self._startup()
+        self.assertEqual(first, api.healthz(self._ro_conn())["appliance_id"])
+        count = self.conn.execute("SELECT COUNT(*) FROM appliance_identity").fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_first_need_creates_identity_when_db_appeared_after_startup(self):
+        # No startup ran (DB created later): the first call creates it once.
+        first = api.healthz(self._ro_conn())["appliance_id"]
+        self.assertTrue(first)
+        self.assertEqual(first, api.healthz(self._ro_conn())["appliance_id"])
 
 
 class OnlineOnlyConsistencyTests(_SeededDBTest):
@@ -348,24 +455,24 @@ class EffectiveVendorSourceTests(unittest.TestCase):
         # An OUI never produces a vendor for a locally-administered MAC, so
         # the API must surface it as inferred rather than as certain fact.
         self.assertEqual(
-            api._effective_vendor_source("72:a3:36:be:90:06", "Apple Inc.", None),
+            api._effective_vendor_source("02:5a:05:00:00:05", "Apple Inc.", None),
             "inferred: private MAC",
         )
 
     def test_real_mac_null_source_unchanged(self):
         # Genuine OUI vendor on a real MAC must stay non-inferred.
         self.assertIsNone(
-            api._effective_vendor_source("28:39:5e:d7:44:0c", "Samsung Electronics", None)
+            api._effective_vendor_source("28:39:5e:00:00:0e", "Samsung Electronics", None)
         )
 
     def test_explicit_inferred_source_preserved(self):
         self.assertEqual(
-            api._effective_vendor_source("72:a3:36:be:90:06", "Apple Inc.", "inferred: model"),
+            api._effective_vendor_source("02:5a:05:00:00:05", "Apple Inc.", "inferred: model"),
             "inferred: model",
         )
 
     def test_no_vendor_stays_none(self):
-        self.assertIsNone(api._effective_vendor_source("72:a3:36:be:90:06", None, None))
+        self.assertIsNone(api._effective_vendor_source("02:5a:05:00:00:05", None, None))
 
     def test_locally_administered_bit(self):
         self.assertTrue(api._is_locally_administered_mac("02:11:22:33:44:55"))
@@ -1508,5 +1615,208 @@ class IpResolutionEndpointTests(_SeededDBTest):
         self.assertIsNone(d.ipv6)
 
 
+class AlertEndpointTests(_SeededDBTest):
+    """Read-only Threat Alert endpoints (PBI-14), called directly with a conn."""
+
+    def _schema(self):
+        import alerts
+        alerts.ensure_schema(self.conn)
+
+    def _add_alert(self, **cols):
+        keys = ", ".join(cols)
+        marks = ", ".join("?" for _ in cols)
+        self.conn.execute(
+            f"INSERT INTO alerts ({keys}) VALUES ({marks})", tuple(cols.values())
+        )
+        self.conn.commit()
+
+    def test_missing_table_reads_as_empty(self):
+        self.assertEqual(api.list_alerts(conn=self.conn, limit=200), [])
+
+    def test_list_orders_by_last_event_and_maps_contract(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="cam-1", status="online")
+        self._add_alert(
+            device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET A", rule_id=1,
+            event_time="2026-11-02T10:00:00", severity="High", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            src_ip="10.0.0.5", dst_ip="198.51.100.8", src_port=5, dst_port=53)
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ET B", rule_id=2,
+            event_time="2026-11-02T11:00:00", severity="Medium", state="New",
+            occurrence_count=3, last_event_time="2026-11-02T11:30:00",
+            src_ip="203.0.113.1", dst_ip="198.51.100.1")
+        out = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual([a.title for a in out], ["ET B", "ET A"])  # newest last_event_time first
+        b, a = out
+        self.assertEqual((b.kind, b.state, b.severity), ("threat", "new", "medium"))
+        self.assertEqual(a.severity, "high")
+        self.assertIsNone(b.device_mac)
+        self.assertEqual(b.device_name, "Unknown device")
+        self.assertEqual(b.occurrence_count, 3)
+        self.assertEqual((b.source_ip, b.destination_ip), ("203.0.113.1", "198.51.100.1"))
+        self.assertEqual(a.device_name, "cam-1")  # hostname (no user_name)
+        self.assertEqual(a.first_event_time, "2026-11-02T10:00:00")
+        # No classtype stored -> fallback text naming the original rule; the
+        # rule name also stays in title.
+        self.assertEqual(a.display_title, "Network activity detected")
+        self.assertEqual(
+            a.explanation,
+            'Assas noticed traffic that matched one of its security rules '
+            '("ET A"). The full rule details are below.')
+        self.assertEqual(a.rule_id, 1)  # kept in the response for internal use
+        self.assertIsNone(a.device_role)
+        self.assertIsNone(a.anomaly_score)
+
+    def test_classtype_gives_plain_title_explanation_and_role(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="laptop", status="online")
+        self._add_alert(
+            device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat",
+            title="ET SCAN X", rule_id=8,
+            event_time="2026-11-02T10:00:00", severity="Medium", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            src_ip="192.168.8.50", dst_ip="192.168.8.60",
+            category="Detection of a Network Scan", classtype="network-scan",
+            device_role="source")
+        self._add_alert(
+            device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="ET WEB X",
+            rule_id=7, event_time="2026-11-02T11:00:00", severity="High",
+            state="New", occurrence_count=1, last_event_time="2026-11-02T11:00:00",
+            src_ip="203.0.113.9", dst_ip="192.168.8.50",
+            classtype="web-application-attack", device_role="target")
+        target, source = api.list_alerts(conn=self.conn, limit=200)
+        # The original rule name is kept in `title`; nothing existing is removed.
+        self.assertEqual(source.title, "ET SCAN X")
+        self.assertEqual(source.rule_id, 8)
+        self.assertEqual(source.display_title, "Network scan")
+        self.assertEqual(source.explanation, alert_text.CLASSTYPE_TEXT["network-scan"][1])
+        self.assertEqual(source.classtype, "network-scan")
+        self.assertEqual(source.category, "Detection of a Network Scan")
+        self.assertEqual(source.device_role, "source")
+        self.assertEqual(target.display_title, "Attempt to attack a website")
+        self.assertEqual(target.device_role, "target")
+        # Single-alert and per-device endpoints carry the same fields.
+        one = api.get_alert(int(source.id), conn=self.conn)
+        self.assertEqual((one.display_title, one.device_role), ("Network scan", "source"))
+        dev = api.list_device_alerts("aa:bb:cc:dd:ee:ff", conn=self.conn, limit=200)
+        self.assertEqual([a.display_title for a in dev], ["Attempt to attack a website", "Network scan"])
+
+    def test_rule_specific_text_overrides_classtype(self):
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat",
+            title="ET SCAN Suspicious inbound to mySQL port 3306", rule_id=2010937,
+            event_time="2026-11-02T10:00:00", severity="Medium", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            category="Detection of a Network Scan", classtype="network-scan")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual(a.display_title, "Attempt to reach a device's database feature")
+        self.assertEqual(a.explanation, alert_text.RULE_TEXT[2010937][1])
+        # The original rule name and classtype stay; the rule ID is not in user text.
+        self.assertEqual(a.title, "ET SCAN Suspicious inbound to mySQL port 3306")
+        self.assertEqual(a.classtype, "network-scan")
+        self.assertEqual(a.rule_id, 2010937)
+        self.assertNotIn("2010937", a.display_title + a.explanation)
+        one = api.get_alert(int(a.id), conn=self.conn)
+        self.assertEqual(one.display_title, a.display_title)
+
+    def test_unknown_classtype_and_unlinked_role_fall_back(self):
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ASSAS TEST High",
+            rule_id=1000001, event_time="2026-11-02T10:00:00", severity="High",
+            state="New", occurrence_count=1, last_event_time="2026-11-02T10:00:00",
+            classtype="tcp-connection", device_role="source")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual(a.title, "ASSAS TEST High")
+        self.assertEqual(a.severity, "high")
+        self.assertEqual(a.display_title, "Network activity detected")
+        self.assertIn('("ASSAS TEST High")', a.explanation)
+        self.assertNotIn("1000001", a.explanation)  # rule ID never in user text
+        self.assertEqual(a.rule_id, 1000001)  # but kept in the response
+        self.assertIsNone(a.device_role)  # no device -> no role line
+
+    def test_legacy_critical_and_reviewed_read_as_high_and_new(self):
+        # Safety net for rows the one-time conversion has not reached.
+        self._schema()
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ET OLD", rule_id=9,
+            event_time="2026-11-02T10:00:00", severity="Critical", state="Reviewed",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual((a.severity, a.state), ("high", "new"))
+
+    def test_table_without_new_columns_still_reads(self):
+        # An alerts table the ingester has not migrated yet (pre-classtype).
+        self.conn.execute(
+            "CREATE TABLE alerts (alert_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "device_mac TEXT, alert_type TEXT NOT NULL DEFAULT 'Threat', "
+            "title TEXT NOT NULL, rule_id INTEGER, event_time TEXT NOT NULL, "
+            "src_ip TEXT, dst_ip TEXT, src_port INTEGER, dst_port INTEGER, "
+            "severity TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'New', "
+            "explanation TEXT, model_version TEXT, anomaly_score REAL, "
+            "threshold REAL, occurrence_count INTEGER NOT NULL DEFAULT 1, "
+            "last_event_time TEXT NOT NULL)")
+        self._add_alert(
+            device_mac=None, alert_type="Threat", title="ET OLD", rule_id=3,
+            event_time="2026-11-02T10:00:00", severity="Low", state="New",
+            occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        (a,) = api.list_alerts(conn=self.conn, limit=200)
+        self.assertEqual(a.title, "ET OLD")
+        self.assertEqual(a.display_title, "Network activity detected")
+        self.assertIsNone(a.classtype)
+        self.assertIsNone(a.device_role)
+
+    def test_user_name_preferred_for_device_name(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="cam-1", user_name="Front Cam",
+                    status="online")
+        self._add_alert(device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="X",
+                        rule_id=1, event_time="2026-11-02T10:00:00", severity="low",
+                        state="New", occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        self.assertEqual(api.list_alerts(conn=self.conn, limit=200)[0].device_name, "Front Cam")
+
+    def test_get_alert_and_404(self):
+        self._schema()
+        self._add_alert(device_mac=None, alert_type="Threat", title="X", rule_id=1,
+                        event_time="2026-11-02T10:00:00", severity="Medium", state="New",
+                        occurrence_count=1, last_event_time="2026-11-02T10:00:00")
+        self.assertEqual(api.get_alert(alert_id=1, conn=self.conn).severity, "medium")
+        with self.assertRaises(api.HTTPException) as ctx:
+            api.get_alert(alert_id=999, conn=self.conn)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_device_alerts_filter_normalises_mac(self):
+        self._schema()
+        self.insert(mac="aa:bb:cc:dd:ee:ff", hostname="cam-1", status="online")
+        self._add_alert(device_mac="aa:bb:cc:dd:ee:ff", alert_type="Threat", title="mine",
+                        rule_id=1, event_time="2026-11-02T10:00:00", severity="low",
+                        state="New", occurrence_count=1, last_event_time="2026-11-02T10:02:00")
+        self._add_alert(device_mac=None, alert_type="Threat", title="other", rule_id=2,
+                        event_time="2026-11-02T10:00:00", severity="low", state="New",
+                        occurrence_count=1, last_event_time="2026-11-02T10:03:00")
+        out = api.list_device_alerts(mac="AA:BB:CC:DD:EE:FF", conn=self.conn, limit=200)
+        self.assertEqual([a.title for a in out], ["mine"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_alert_device_name_matches_device_details_precedence():
+    """The alert's device name follows the same precedence the app shows on
+    device details: user name -> human hostname (opaque machine identifiers
+    skipped) -> model -> 'Unknown device'. Inventory data only."""
+    # user name always wins
+    assert api._alert_device_name("Dad laptop", "0badc396-c1f4-40db-ba83-c0702b11ae58", "emu") == "Dad laptop"
+    # opaque UUID hostname falls through to the model
+    assert api._alert_device_name(None, "0badc396-c1f4-40db-ba83-c0702b11ae58",
+                                  "emulator (sdk_gphone64_x86_64)") == "emulator (sdk_gphone64_x86_64)"
+    # long-hex hostname falls through
+    assert api._alert_device_name(None, "a7f3e9c1b2d84f60a7f3e9c1b2d84f60", "Smart TV") == "Smart TV"
+    # human hostname is kept
+    assert api._alert_device_name(None, "Living-Room-TV", "X100") == "Living-Room-TV"
+    # nothing usable -> Unknown device (no guessing)
+    assert api._alert_device_name(None, "0badc396-c1f4-40db-ba83-c0702b11ae58", None) == "Unknown device"
+    assert api._alert_device_name(None, None, None) == "Unknown device"

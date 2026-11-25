@@ -1,0 +1,6 @@
+# Reader-restart SMOKE TEST (alert_ids only; not full resume proof)
+before: 70  after: 70
+all pre-restart ids still present (no loss/renumber): True
+ids lost (must be empty): []
+new ids during restart window (live traffic, possible): []
+note: alert_id is a PK (no duplicate rows); repeat events raise occurrence_count

@@ -1,0 +1,13 @@
+# Resume cross-check (read-only; counts/ids only, no addresses) — ingestion checkpoints + occurrence_count vs source events
+
+## alert_ingest_state (persisted read position)
+  [rotated] offset 554696 == size_at_eof 554696 == file size 554696: True; consumed=1
+  [LIVE] offset 7385626 vs size 7385626 (lag 0 bytes = unflushed tail, consumed=0)
+
+## aggregate integrity (no eve files reaped, so these should match exactly)
+  total alert events in available eve files: 739
+  SUM(occurrence_count) in alerts table:      739
+  EQUAL (no loss, no double-count):           True
+
+## NULL-device alerts: occurrence_count vs source events in [first,last] (exact; rule+src+dst)
+  checked: 12  exact matches: 12  mismatches: 0

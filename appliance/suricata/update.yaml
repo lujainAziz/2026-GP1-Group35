@@ -1,0 +1,22 @@
+# ASSAS suricata-update config. Deployed to /etc/suricata/update.yaml.
+#
+# Adds the demo/self-test rules (assas-test.rules) as a local rule source, so
+# suricata-update merges them into suricata.rules on every run. Use a single
+# explicit file only: /etc/suricata/rules holds Suricata's bundled rules, so a
+# directory or *.rules wildcard there would load them twice.
+#
+# /etc/suricata/disable.conf and /etc/suricata/modify.conf must still be
+# applied. Verify after `suricata-update --offline`: the enabled-rule count
+# must be exactly 53,147 (after round 5, 2026-11-23), and the 2016503 rule
+# line must contain flowbits:noalert. If the count is higher, disable.conf was
+# not applied; if noalert is missing, modify.conf was not applied: restore
+# the backups.
+
+# Explicit, so the disabled SIDs from all tuning rounds stay applied.
+disable-conf: /etc/suricata/disable.conf
+
+# Explicit, so 2016503 stays enabled as a silent flowbit helper (round 5).
+modify-conf: /etc/suricata/modify.conf
+
+local:
+  - /etc/suricata/assas-test.rules

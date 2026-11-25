@@ -1,0 +1,32 @@
+{
+  "started": "2026-11-17T16:32:16+00:00",
+  "ended": "2026-11-17T18:32:19+00:00",
+  "duration_seconds": 7203,
+  "interval_seconds": 10.0,
+  "samples": 720,
+  "cpu_pct_avg": 9.8,
+  "cpu_pct_max": 32.7,
+  "cpu_target_avg_le_75": true,
+  "mem_used_mb_avg": 2414.66,
+  "mem_used_mb_max": 2438,
+  "mem_total_mb": 8061,
+  "mem_target_under_4gb": true,
+  "rx_bps_avg": 1189421.17,
+  "tx_bps_avg": 0.0,
+  "suricata_pkts_during": 1320585,
+  "suricata_drops_during": 0,
+  "suricata_drop_rate_pct": 0.0,
+  "suricata_resets_detected": 0,
+  "suricata_missing_samples": 0,
+  "suricata_valid_delta_samples": 721,
+  "suricata_pid_start": 47672,
+  "suricata_pid_end": 47672,
+  "suricata_pid_changed": false,
+  "suricata_pids_observed": [
+    47672
+  ],
+  "suricata_pid_changes": 0,
+  "suricata_pid_missing_samples": 0,
+  "mem_units": "MiB (threshold 4096 MiB = 4 GiB; 4 GB decimal = 3815 MiB)",
+  "suricata_drop_measurement_valid": true
+}

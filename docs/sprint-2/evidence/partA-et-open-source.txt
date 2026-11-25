@@ -1,0 +1,5 @@
+2/11/2026 -- 15:40:31 - <Warning> -- No enabled sources.
+2/11/2026 -- 15:40:31 - <Info> -- Using data-directory /var/lib/suricata.
+2/11/2026 -- 15:40:31 - <Info> -- Using Suricata configuration /etc/suricata/suricata.yaml
+2/11/2026 -- 15:40:31 - <Info> -- Using /etc/suricata/rules for Suricata provided rules.
+2/11/2026 -- 15:40:31 - <Info> -- Found Suricata version 7.0.10 at /usr/bin/suricata.

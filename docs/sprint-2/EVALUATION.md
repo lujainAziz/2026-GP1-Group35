@@ -1,0 +1,367 @@
+# Sprint 2 — Evaluation
+
+This document covers two evaluations: **detection accuracy** on replayed attack traffic, and
+**resource usage** of the appliance under load. Status markers: ☐ Planned · ◐ In progress ·
+☑ Done. **No detection or resource figure is recorded without a linked raw-evidence file** under
+`docs/sprint-2/evidence/`. No private network data (real addresses, MAC addresses or hostnames) is
+committed.
+
+**Detection-accuracy evaluation — not yet performed.** No dataset has been downloaded (the
+selection below awaits approval) and no replay has been run; the live appliance has only
+demonstrated that a detection travels end-to-end into the application, which is not a measure of
+accuracy. Datasets are downloaded only after explicit approval.
+
+**Resource-usage evaluation — measured; one target not met, one measurement pending.** The 2-hour
+live-traffic baseline is complete (CPU and packet-drop targets met; memory target not met). An
+additional run taken without the development agent co-resident is also complete and is reported
+alongside the baseline; it confirms the memory target is still not met, and its packet-drop figure
+is recorded but not yet validated (a measurement-tool defect, since fixed). Details in sections 4
+onward.
+
+---
+
+## 1. Datasets (selection for approval) — ☐ HOLD, nothing downloaded
+Metadata gathered 2026-11-02 from the official sources (no dataset files fetched). SHA-256 is
+computed only after download; publisher checksums are recorded where available.
+
+**Download target is the replay host, not the Pi.** Datasets are downloaded onto the dedicated
+replay host (§2); the appliance only ever sees the mirrored replayed traffic on `eth1`. Disk is
+therefore sized on the replay host (recorded in §2 once finalized), not on the Pi.
+
+**First approval covers IoT-23 only; CICIoT2023 remains on hold.**
+
+### IoT-23 (Stratosphere Laboratory, CTU)
+- **Source:** `https://www.stratosphereips.org/datasets-iot23` · Zenodo record 4743746
+  (DOI `10.5281/zenodo.4743746`). **Licence: CC-BY-4.0** (confirmed via Zenodo API).
+  **Reference:** Garcia, Parmisano, Erquiaga, *IoT-23…*, 2020.
+- **Official per-capture downloads (preferred — avoids the 20 GiB archive):** the publisher mirror
+  serves each scenario at
+  `https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/<capture>/` with a
+  directly downloadable `.pcap` (size shown in the autoindex), a publisher `.capinfos` (capture
+  metadata), and a README stating the label. Confirmed 2026-11-02.
+- **Proposed selection** (small, labelled; exact direct URLs; filenames are the dataset's own public
+  artifact names). Base = `https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/`:
+
+  | Capture | Label | Direct PCAP URL (under base) | Size |
+  |---|---|---|---|
+  | Malware-34-1 | Mirai | `CTU-IoT-Malware-Capture-34-1/2018-12-21-15-50-14-192.168.1.195.pcap` | **120 MB** |
+  | Malware-8-1 | Hakai | `CTU-IoT-Malware-Capture-8-1/2018-07-31-15-15-09-192.168.100.113.pcap` | **2.0 MB** |
+  | Malware-20-1 | Torii | `CTU-IoT-Malware-Capture-20-1/2018-10-02-13-12-30-192.168.100.103.pcap` | **3.9 MB** |
+  | Honeypot-7-1 | benign (Somfy) | `CTU-Honeypot-Capture-7-1/Somfy-01/2019-07-03-15-15-47-first_start_somfy_gateway.pcap` | **2.0 MB** |
+
+  Total ≈ **128 MB** (all four sizes confirmed from the publisher autoindex 2026-11-02). Rejected
+  `CTU-IoT-Malware-Capture-60-1` (pcap is **21 GB**). IP strings in the filenames are the dataset's
+  own published lab addresses, not Assas-network data.
+- **Full archive — only if per-capture proves insufficient:** `iot_23_datasets_full.tar.gz` =
+  21,510,801,277 B (~20.0 GiB), **publisher `md5:7132e603f9750b8580b6cebdbcd43e9c`**. Use of the
+  archive requires separate approval and an expected extracted size (not published; estimated from
+  the `.capinfos` metadata beforehand).
+- **Checksums:** record publisher-provided values where available (the archive md5 above; per-capture
+  `.capinfos` is capture metadata, not a hash). **SHA-256 is computed after download, never before.**
+
+### CICIoT2023 (Canadian Institute for Cybersecurity, UNB) — ON HOLD (not in the first approval)
+- **Source:** `https://www.unb.ca/cic/datasets/iotdataset-2023.html` → files under
+  `http://cicresearch.ca/IOTDataset/CIC_IOT_Dataset2023/` (`PCAP/`, `CSV/`).
+  **Licence:** CIC terms — free for research, **citation required**.
+- **Reference / DOI:** Neto et al., *CICIoT2023…*, *Sensors* 23(13):5941, 2023 — `10.3390/s23135941`.
+- **Attack classes (33 attacks / 7 classes):** DDoS (11), DoS (4), Recon (5), Web (6), Brute Force
+  (1), Spoofing (2), Mirai (3); 105 IoT devices.
+- **Proposed selection** (one small labelled PCAP per class for coverage, e.g. a Recon scan, a
+  DoS/DDoS flood, a Mirai flood, a Spoofing capture, plus a `BenignTraffic` sample).
+- **Download/extracted sizes + SHA-256:** the `PCAP/` directory is **not web-autoindexed** (the URL
+  302-redirects to the CIC portal), so exact per-file sizes are not available without access; an
+  HTTP `HEAD` at download captures them. The raw PCAP set is large (multi-GB per attack).
+
+### Download procedure
+The replay host and isolated network (§2) are finalized **first**. On approval, the selected files
+are downloaded **onto the replay host** (not the Pi); each file's size is confirmed against the
+autoindex, SHA-256 is computed after download and recorded here, then replay follows.
+
+---
+
+## 2. Replay environment and method — ☐ to finalize BEFORE any download
+This setup is fixed before datasets are downloaded.
+- **Goal:** replayed traffic must reach the monitored interface `eth1` (the SPAN/mirror port),
+  exactly like live monitoring — not injected into the appliance's own stack.
+- **Replay host:** a dedicated second machine on an **isolated lab network** (no bridge to the
+  production LAN). **Datasets are downloaded and stored on this host**, which runs `tcpreplay`. The
+  Pi downloads nothing and only receives the mirrored copy on `eth1`.
+- **Wiring:** replay host → a switch port that is mirrored (SPAN) to the port Suricata watches, so
+  replayed packets appear on `eth1`. (If no managed switch: replay onto the mirror source segment.)
+  Final host spec, OS and disk free recorded here once set up.
+- **Switch port map and mirror settings** (TP-Link TL-SG105E, recorded 2026-11-23):
+
+  | Port | Connected to |
+  |---|---|
+  | 1 | Home router |
+  | 2 | Assas-Test access point |
+  | 3 | Pi management interface (`eth0`) |
+  | 4 | Pi capture interface (`eth1`) |
+  | 5 | Spare (for a wired laptop) |
+
+  Port Mirror: **enabled**; source **Port 2** (ingress + egress); destination **Port 4**. Only
+  traffic that passes through Port 2 is copied to `eth1`; what this covers was verified in §5.
+- To record per run: replay host + OS, `tcpreplay` version and exact command (incl. `--intf`,
+  pps/`--mbps`, loop), switch mirror config, start/stop timestamps, the pcap(s) and their SHA-256,
+  and the **ET Open rules date/version** in use.
+- Detection is measured from **raw Suricata `alert` events (pre-dedup)** in `eve.json`, matched to
+  each attack by **time window + addresses**; an alert merely appearing during replay does **not**
+  count.
+
+### Ready-to-run commands — HELD until approval (nothing downloaded)
+All on the **replay host** (never the Pi). `BASE` = the IndividualScenarios URL above.
+
+```bash
+# (a) download the four approved captures + record size and SHA-256
+mkdir -p ~/iot23 && cd ~/iot23
+for u in \
+  "CTU-IoT-Malware-Capture-34-1/2018-12-21-15-50-14-192.168.1.195.pcap" \
+  "CTU-IoT-Malware-Capture-8-1/2018-07-31-15-15-09-192.168.100.113.pcap" \
+  "CTU-IoT-Malware-Capture-20-1/2018-10-02-13-12-30-192.168.100.103.pcap" \
+  "CTU-Honeypot-Capture-7-1/Somfy-01/2019-07-03-15-15-47-first_start_somfy_gateway.pcap"; do
+  curl -fLO "$BASE/$u"
+done
+ls -l *.pcap && sha256sum *.pcap | tee SHA256SUMS   # recorded into this file on download
+
+# (b) replay one capture onto the mirrored segment (per run: record the exact
+#     command, timestamps, and the rules version)
+date -u +%FT%TZ   # start marker
+sudo tcpreplay --intf1=<replay-NIC> --mbps=10 <capture>.pcap
+date -u +%FT%TZ   # stop marker
+```
+
+On the **Pi** (read-only measurement, per attack window) — the committed,
+unit-tested tool `appliance/tools/measure_detection.py`:
+```bash
+python3 appliance/tools/measure_detection.py \
+  --start 2026-11-06T12:00:00 --stop 2026-11-06T12:20:00 \
+  --addr 192.168.1.195 \
+  --save docs/sprint-2/evidence/detection/<capture>-slice.jsonl
+```
+It counts RAW pre-dedup alert events from eve.json (live + rotated), matched by
+the time window AND the capture's own lab addresses — co-occurrence alone never
+counts (`appliance/test_measure_detection.py`). **Scope of this output: it
+establishes that an alert RELATES to the replayed test traffic — it does NOT by
+itself establish that the labelled attack was correctly detected.** The
+detection judgement in §3 additionally requires mapping each fired signature's
+semantics (rule message/classtype) to the capture's labelled attack class;
+signatures unrelated to the label are recorded but do not count as detection.
+Undetected attacks are recorded as such, and alerts raised on the benign
+capture are recorded as false positives. Nothing here runs until the download
+approval.
+
+## 3. Detection results — ☐ Planned
+Per-attack table (one row per labelled attack class), filled from the raw detection-event evidence:
+
+| Dataset | Attack class | Time window | Related signature(s) | Signature matches the label? | Detected? | Raw evidence |
+|---|---|---|---|---|---|
+| *(pending)* | | | | | | |
+
+- **Precision and recall are computed only for attack classes whose labels permit it** (a window
+  and addresses that isolate the attack traffic); classes whose labels do not support the
+  computation are reported descriptively, not scored.
+- Alerts raised on benign traffic are recorded separately as false positives, with the signature,
+  count and evidence path.
+- The signature set has partial coverage by design: undetected attacks are recorded as such, with
+  no full-coverage assumption.
+- Raw detection-event slices and the matching tool's output are saved under `evidence/detection/`.
+
+## 4. Resources — ☑ 2-hour live-traffic baseline complete (2026-11-02 13:37–15:37 UTC)
+
+**Standing verdict:** the baseline run's result is RETAINED as-is — CPU and
+drop-rate targets PASS, **the memory target was NOT met** under its stated
+conditions (the development agent co-resident and not excluded, as required).
+The agent-free clean run below is an **additional, independent measurement**;
+whatever it shows, it does not cancel or replace the baseline verdict — both
+results are reported side by side.
+All existing services + `assas-suricata` + `assas-alerts` running. **Scope:** baseline under *live
+house traffic*, not proof of performance under attack or heavy load; the attack-replay run (§2–3) is
+measured separately once datasets are approved.
+
+Method: `appliance/tools/resource_sampler.py 7200 10` reading `/proc/stat` (total-device CPU 0–100%),
+`/proc/meminfo` (`MemTotal−MemAvailable`), `/sys/class/net/eth1/statistics` (throughput), and the eve
+`stats` `capture.kernel_packets`/`kernel_drops` deltas (drop rate). Rules: ET Open 2026-11-02 (53,305
+sigs). Evidence: `evidence/resources/resource-2h.csv` (720 rows), `resource-2h-summary.json`,
+`appliance-footprint.txt`.
+
+**Run verification:** duration **7200 s (exactly 2 h)**, 13:37:07→15:37:08 UTC; **720 samples**;
+inter-sample interval 10.0–11.0 s, mean 10.001 s, **no gap >15 s**; all five services `active` with
+**NRestarts=0** and "active since" predating the window (suricata/rotate 12:39 UTC, alerts 13:27,
+api 13:29, discovery/capture since 2026-10-29) → **continuous, no restarts** during the test.
+
+**Acceptance metrics are total-device CPU and total-device memory**, judged as-is; the total memory
+figure is **not** adjusted by excluding any process.
+
+| Metric (acceptance) | Target | Measured | Verdict | Evidence |
+|---|---|---|---|---|
+| Total-device CPU | avg ≤ 75% | **avg 29.5%, max 39.9%** | **PASS** | `resource-2h-summary.json` |
+| Total-device memory | < 4 GB of 8 GB | **avg 4.90 GB, max 6.01 GB** (of 7.87 GB) | **NOT MET** (see note) | `resource-2h.csv`, `-summary.json` |
+| Traffic load | record | **rx avg ~12.0 kbps, tx ~0** (light live traffic) | — | `resource-2h.csv` |
+| Suricata packet-drop rate | record | **0.0%** — 0 drops / 163,368 pkts | **PASS** | `resource-2h-summary.json` |
+
+**Memory — why NOT MET and what it means:** total-device memory exceeded 4 GB, but a development
+agent was **co-resident on the appliance during this run (~2.4 GB RSS)** and is
+included in the figure as required. It is not part of the deployed appliance, so this baseline
+**overstates** the appliance's own memory. For context only (not a substitute for the acceptance
+figure), the appliance services' own RSS sum is **~1.49 GB** (`appliance-footprint.txt`:
+Suricata ~1.06, display ~0.20, discovery ~0.13, API ~0.08, alerts ~0.02). The target is therefore
+**not yet validly judged** — a representative run without the development agent is required before a
+pass/fail on memory is claimed.
+
+**This baseline is retained.** The clean run below is **additive** — it writes to
+`evidence/resources/clean/` and does **not** replace or erase the baseline results above
+(CPU target met, memory target not met, zero drops under light traffic).
+
+**Representative run without the development agent (to validly judge the memory target):** use
+`appliance/tools/clean_resource_run.sh`. It refuses to start while the development agent is present,
+samples only after that precheck passes, and records agent presence every 30 s to
+`clean/agent-guard.log`; the result is valid only if that log shows **zero `PRESENT`** entries.
+```
+# After the development agent's session on the Pi has fully exited:
+ASSAS_DEV_AGENT_PATTERN='<agent-process-name>' /home/assas/assas/appliance/tools/clean_resource_run.sh
+# -> evidence/resources/clean/resource-2h-summary.json + clean/agent-guard.log
+
+### Clean (agent-free) 2-hour run — COMPLETED 2026-11-05 02:26–04:26 UTC
+
+Results recorded AS-IS (`evidence/resources/clean/`); the baseline verdict above
+stands unchanged; this is the independent additional measurement.
+
+| Metric | Result | Verdict |
+|---|---|---|
+| Validity guard | `agent-guard.log`: precheck passed, **0 PRESENT** entries over the full window | valid agent-free run |
+| Sampling integrity | 720 samples / 7200 s, 0 gaps > 15 s (worst interval 11.0 s), 0 blank Suricata-stat samples | continuous |
+| Service continuity | all five services active since before the window, `NRestarts=0` throughout | continuous |
+| CPU | avg **36.71 %**, max 53.4 % | **PASS** (≤ 75 %) |
+| Memory | avg **4045.9 MB**, max **4470 MB**, min 3605 MB (steady ≈4.0 GB, no runaway growth: first-10 avg 4012 → last-10 avg 4086) | **NOT met** (< 4096 MB) |
+| Suricata drops | 0 of 6,193,620 packets; 0 resets; 0 missing samples; 721 valid deltas | **NOT VALIDATED** — see below |
+
+**Why the drop measurement is not validated:** `suricata_drop_measurement_valid`
+is false solely because `suricata_pid_start/end` were null. Cause identified
+(read-only check): the kernel reports Suricata's process name as
+`Suricata-Main`, while the sampler's detector matched the literal `suricata`
+only — a defect in the measurement tool, not in the service. Every other
+validity input was clean. **The drop figure is therefore recorded but NOT
+claimed as a pass.** Required fix: accept the real process name — implemented in
+`resource_sampler._is_suricata_comm` with a regression test; a re-run to obtain
+a fully validated drop measurement awaits the team's decision.
+
+**Memory analysis (read-only, post-run):** usage was steady around 4.0 GB with
+no leak-shaped growth. Top consumers at inspection: Suricata **≈1205 MB** (the
+53k-rule ET Open set dominates), the 7-inch display app ≈231 MB, discovery
+≈165 MB, API ≈117 MB, alerts reader (small) — appliance processes total
+**≈1.7–1.8 GB**. The remainder (~2.2–2.5 GB) is the Pi's desktop stack and
+system services (window manager, panels, VNC, journald, portals, kernel/anon).
+Proposals for the team (NOT applied): run the appliance headless in deployment
+(the desktop/VNC stack is not part of the product's function), and/or re-state
+the memory target against appliance processes; Suricata's footprint could also
+be reduced by further rule scoping — each option changes scope and needs a
+decision first.
+```
+Record the clean run's total-device memory here as the memory acceptance figure once it shows the
+agent absent throughout.
+
+
+### Memory accounting + units audit (read-only, 2026-11-05)
+
+**Units audit (tool definition vs acceptance criterion):** `/proc/meminfo`
+values are KiB, so the sampler's figures are **MiB** and its 4096 threshold is
+**4 GiB (= 4.295 GB decimal)**; against a literal **4 GB (decimal)** the bound
+would be 3815 MiB. Readings of the clean run under each interpretation:
+
+| Basis | avg 4046 MiB | max 4470 MiB |
+|---|---|---|
+| < 4 GiB (4096 MiB) | under | **over** |
+| < 4 GB decimal (3815 MiB) | **over** | **over** |
+
+The recorded verdict (max < 4 GiB → **NOT met**) **stands unchanged** under
+every interpretation of the maximum; the team should still pin the criterion
+(GB vs GiB, average vs maximum) for the report. The sampler now labels its
+units explicitly (`mem_units` in the summary; CSV header `mem_used_mib`).
+
+**What actually consumes the memory** (meminfo components, not an RSS guess):
+`used = MemTotal − MemAvailable` = anonymous pages + shmem + unreclaimable
+kernel memory (reclaimable page cache excluded). At inspection:
+AnonPages ≈ 2163 MiB (process heaps — Suricata ≈ 1205 MiB dominant; the
+inspection-time figure also includes the dev agent ≈ 447 MiB which was ABSENT
+during the clean run), **Shmem ≈ 1740 MiB**, kernel unreclaimable ≈ 160 MiB,
+plus the MemAvailable heuristic margin.
+
+**Shmem distribution — what is PROVEN vs not (unprivileged vantage):**
+- `ShmemHugePages` and `ShmemPmdMapped` are both **0** — no huge-page shmem.
+- SysV shared memory (`ipcs -m`) totals **0 MiB**.
+- tmpfs files (`df -t tmpfs`, all mounts) total **≈ 342 MiB** (mostly `/tmp`,
+  `/run`).
+- That leaves **≈ 1400 MiB of Shmem UNATTRIBUTED from an unprivileged vantage.**
+  Readable per-process shared mappings sum to only ≈ 439 MiB *and that
+  double-counts* pages shared between processes, so it does not close the gap.
+  Suricata's `smaps_rollup` is root-only here, and GEM/dma-buf graphics
+  allocations are not enumerable without privilege. **Therefore the earlier
+  claim that the Shmem bulk is graphics buffers is NOT established** — it is a
+  plausible candidate (anonymous shared memory on a Wayland system commonly
+  holds compositor/client surface buffers) but unproven. Settling it needs
+  privileged accounting, e.g. `sudo cat /proc/<suricata-pid>/smaps_rollup`,
+  `sudo grep -r . /sys/kernel/debug/dri/*/clients` or a GEM/dma-buf breakdown,
+  and `sudo smem -t` for a PSS table across all processes.
+
+**Candidate improvements — HYPOTHESES only, none applied, none quantified until
+the breakdown above exists (criterion, display and services unchanged):**
+1. Suricata detect-engine profile: the deployed config uses
+   **`detect.profile: medium`** (confirmed in `appliance/suricata/assas.yaml`,
+   not `low`), `sgh-mpm-context: auto`, `toclient/toserver-groups 3/25`. A `low`
+   profile *may* reduce the ≈ 1.2 GiB engine footprint at some CPU/detection
+   cost — **expected impact UNKNOWN; must be measured before/after** if the team
+   approves a trial. No number is claimed here.
+2. Display-pipeline footprint (resolution/buffer count, VNC-on-demand): only
+   worth pursuing **if** the privileged breakdown confirms graphics buffers hold
+   the unattributed ≈ 1.4 GiB; expected saving cannot be stated until then, and
+   it touches the screen pipeline so it needs product approval regardless.
+3. Report an appliance-scoped figure (sum of the five services) alongside the
+   total-device figure so the target can be judged on what the product actually
+   controls (reporting change only — safe, no runtime effect).
+
+### Drop-measurement re-test — PENDING (not run; tool fixed and ready)
+The sampler defect (PID detector missing `Suricata-Main`) is fixed and the tool
+now samples the Suricata PID **every interval** (`suri_pid` CSV column;
+`suricata_pid_changes`/`pids_observed`/`pid_missing` in the summary) — a mid-run
+restart invalidates the measurement even if counters look clean. **The re-run to
+obtain a validated drop figure has NOT been performed** (it requires a fresh
+agent-free 2-hour window the team cannot allocate right now); it stays pending.
+The previous clean-run results are retained unchanged; the drop measurement
+there remains recorded-but-NOT-validated. When a window is available, run (new
+output dir, so nothing earlier is overwritten):
+```bash
+ASSAS_RES_OUTDIR=/home/assas/assas/docs/sprint-2/evidence/resources/clean2 \
+  /home/assas/assas/appliance/tools/clean_resource_run.sh
+```
+
+## 5. Capture scope verification (B4) — ☑ Done (2026-11-23)
+
+The project states its capture scope: traffic analysis is limited to communications visible
+through the mirrored port, and communications that do not traverse the monitored ports are outside
+that coverage. This planned check verified that stated scope on the switch setup recorded in §2.
+
+**Method:** ICMP pings from a laptop on Assas-Test to a phone, with a capture running on the Pi's
+capture interface. The packet counts are the ones tcpdump reports when the capture is stopped.
+```bash
+sudo tcpdump -i eth1 -nn icmp and host <laptop-address> and host <phone-address>
+```
+
+| Round | Setup | Pings sent / replies | Captured on `eth1` | Dropped | Visible? |
+|---|---|---|---|---|---|
+| 1 | Laptop on Assas-Test → phone on the home router Wi-Fi | 10 / 10 | 20 | 0 | Yes |
+| 2 | Laptop and phone both on Assas-Test (phone Wi-Fi screen confirmed) | 10 / 10 | 0 | — | No |
+| 3 | Repeat of round 2 | 30 / 29 | 0 | — | No |
+| 4 | Control, right after round 3: phone back on the home Wi-Fi | 30 / 30 | 60 of 60 | 0 | Yes |
+
+Round 4 shows the capture was working during rounds 2 and 3.
+
+**Result: consistent with the stated scope.** Traffic that crosses the access point uplink (Port 2)
+is visible: traffic between Assas-Test devices and the router, wired devices, home Wi-Fi devices or
+the internet. Traffic between two devices on the same access point is forwarded by the access point
+itself and does not reach the mirrored port, so it is outside the capture coverage.
+
+**Design reason:** Assas is out-of-band. It receives a copy of the traffic and is not in the
+forwarding path, so if the Pi fails, the home network keeps working.
+
+**Possible future improvement:** the Pi acting as the Wi-Fi access point could also see
+client-to-client traffic; this is a design change, not planned for Release 1.
