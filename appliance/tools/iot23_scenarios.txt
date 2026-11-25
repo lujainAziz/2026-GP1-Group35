@@ -8,8 +8,8 @@
 #   scenario  folder name under the IoTScenarios directory
 #   label     malware family / benign device (device name and reports only)
 #   earlier   category from the earlier evaluation: Strong | Indirect | Weak | Not_detected
-#             (no earlier per-scenario category is recorded in the repo yet:
-#             docs/sprint-2/EVALUATION.md section 3 is still "Planned")
+#             (the per-scenario categories are recorded in
+#             docs/sprint-2/EVALUATION.md section 3, which is "Done")
 #   host_ip   infected/benign host IP(s), comma separated; overrides the IP in the file name
 #
 # kind     scenario                           label                                earlier  host_ip

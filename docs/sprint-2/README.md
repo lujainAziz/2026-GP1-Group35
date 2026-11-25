@@ -624,8 +624,8 @@ Evidence: `evidence/alert-log-reset-2026-11-10.md`.
   tuning is deliberately deferred until the capture path (mirror/offload
   settings) is examined. (Decision made on 2026-11-09: see "Rule-scope
   tuning, round 2".)
-- **Detection evaluation:** the replayed-dataset evaluation has not been run
-  (datasets on hold); unit and live tests do not substitute for it
-  (`EVALUATION.md`).
+- **Detection evaluation:** the offline IoT-23 evaluation was completed on
+  23-24 November 2026: alerts on the infected device in 16 of 20 malware
+  captures (`EVALUATION.md` §3).
 - **Memory target:** the 2-hour baseline included a co-resident development
   agent; the <4 GB judgement awaits a clean run (`EVALUATION.md §4`).

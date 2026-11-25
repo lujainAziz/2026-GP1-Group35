@@ -12,13 +12,12 @@
 
 **Sprint status: implementation and automated tests are complete; the clean
 resource run is done (CPU pass; memory target NOT met — see #8/R); the
-drop-measurement re-run (corrected tool, pending an agent-free window), the
-detection evaluation and the owner's visual sign-off are all still pending —
-Sprint 2 is NOT fully closed.**
+drop-measurement re-run (corrected tool, pending an agent-free window) and the
+owner's visual sign-off are still pending — Sprint 2 is NOT fully closed.**
 
 Practical verification of each acceptance requirement. **Automated** = test suite; **Live** =
 observed on the running appliance. Synthetic/unit tests are **not** a substitute for the dataset
-detection evaluation (that item is explicitly ☐ not-tested). No test data was written into
+detection evaluation, which was completed offline on 23-24 November 2026 (row D). No test data was written into
 production logs; live evidence is redacted of addresses/MACs. Commit links:
 `github.com/lujainAziz/Assas/commit/<hash>`.
 
@@ -36,7 +35,7 @@ Legend: ✅ pass · ❌ fail · ☐ not tested.
 | 8 | Independent 2-hour resource run **without** the dev agent (CPU/mem/traffic/drops/continuity) | ✅ CPU · ❌ memory · ☐ drops not validated | Live | Completed 2026-11-05 02:26–04:26 UTC, guard **0 PRESENT**: CPU avg **36.71 %** PASS; memory avg **4046 MB**/max 4470 → **NOT met** even agent-free (appliance ≈1.7–1.8 GB; remainder is the desktop/system stack — analysis in `EVALUATION.md §4`); drops 0/6,193,620 with clean counters but **not validated** — the sampler's PID detector missed the real process name `Suricata-Main` (tool defect, fixed + regression-tested; re-run pending decision). 720 samples, 0 gaps, five services continuous. Baseline verdict retained unchanged. | `evidence/resources/clean/`; `EVALUATION.md §4` | `(this commit)` |
 | 9 | Later-sprint features stay hidden; Sprint 1 not broken | ✅ | Automated | Gating test locks the released flag state — enabled: security alert display, alert state management, and device signals from unresolved alerts (`alerts`/`alertManagement`/`alertSeverityBadges` = true); hidden: Home open-alerts summary, display count, plain-language explanations, network risk and behavioural baseline (`alertsHome`/`alertDisplay`/`alertExplanations`/`risk`/`baseline` = false). *(Release 1: `alertDisplay` is now true; the 7-inch display shows the unresolved alert count.)* Suites green: appliance **555 passed**, mobile **80 passed** | `app/mobile/test/alerts_test.dart`; suites | `87d819e`,`df5f387` |
 | R | Resource targets (CPU ≤75% avg, memory <4 GB, drops) — baseline | ✅ CPU · ✅ drops · ❌ memory | Live | CPU avg **29.5%**/max 39.9% (PASS); drop rate **0.0%** (0/163,368) (PASS); total-device memory avg **4.90 GB**/max 6.01 GB → **NOT met** (dev agent co-resident; not excluded) | `evidence/resources/resource-2h-summary.json` | `2bea922` |
-| D | Detection evaluation on replayed attack datasets | ☐ | — | **Not tested** — datasets on hold (no download). Synthetic/unit alerts are **not** a substitute. Replay host + IoT-23 selection prepared | `EVALUATION.md §1–3` | `6bd3981` |
+| D | Detection evaluation on a labelled attack dataset (IoT-23, offline) | ✅ | Offline (IoT-23) | 20 malware + 3 benign IoT-23 captures read offline by Suricata on the appliance (`suricata -r`, configuration and rules unchanged) and processed by the real alert pipeline into a separate test database; no traffic replayed, no malware executed. Alerts on the infected device in **16 of 20** malware captures: 4 Strong, 12 Indirect, 0 Weak, 4 Not detected. 14,783,458 alert events → 1,096 alerts, all associated with the infected device; no alert on any device in the benign captures (one low-severity protocol event in the Philips Hue capture was not associated with a device). Precision/recall not computed; CICIoT2023 not tested in Release 1 | Project report, Chapter 5; `appliance/tools/IOT23_OFFLINE_TEST.md` | `6bd3981` |
 
 ## Verification classes — automated vs live vs pending
 
