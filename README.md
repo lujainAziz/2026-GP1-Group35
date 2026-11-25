@@ -23,17 +23,25 @@ The ASSAS project is designed around the following capabilities:
 
 ## Current Development Status
 
-ASSAS is being developed incrementally. The repository currently includes work on:
+ASSAS is developed in two releases.
 
-- Raspberry Pi network monitoring and device discovery.
-- Device fingerprinting and classification.
-- SQLite-based local device inventory.
-- FastAPI backend and device-management endpoints.
-- Mobile-to-appliance pairing using a rotating QR code displayed on the appliance.
+**Release 1 (implemented):**
+
+- Raspberry Pi network monitoring, device discovery, fingerprinting and classification.
+- SQLite-based local storage for the device inventory, flow summaries and alerts.
+- FastAPI backend with device, alert and pairing endpoints.
+- Mobile-to-appliance pairing using a rotating code shown on the appliance display.
+- Signature-based threat detection with Suricata and the Emerging Threats Open rule set, tuned through a documented list of disabled rules.
+- Threat Alerts with a severity level and a plain-language title and explanation; repeated detections are grouped into one alert.
+- Alert management in the mobile application (unread, resolved) and an unresolved-alert count on the Home screen and the on-device display.
 - Flutter mobile application and on-device display.
-- Automated tests, systemd services, and local service discovery.
+- Automated tests, systemd services with automatic restart, and local service discovery.
 
-The broader cybersecurity components, including Suricata integration, Isolation Forest anomaly detection, SHAP explanations, alert management, and network risk assessment, are part of the planned system architecture and are not presented here as completed functionality.
+**Planned for Release 2:**
+
+- Per-device behavioral anomaly detection with Isolation Forest.
+- SHAP-based explanations of anomaly alerts.
+- Network alert level, notifications, and secure remote access to alerts.
 
 ## System Architecture
 
@@ -52,23 +60,43 @@ Managed Switch (SPAN)
      |
 Raspberry Pi 5
      |
-Device Discovery & Classification
-     |
-SQLite Database
-     |
-FastAPI Backend
-     |
-Flutter User Interfaces
+     +-------------------------------------+
+     |                                     |
+Device Discovery & Classification     Suricata (signature-based detection)
+     |                                     |
+     |                                Alert Service (Threat Alerts)
+     |                                     |
+     +------------------+------------------+
+                        |
+                 SQLite Database
+                        |
+                 FastAPI Backend
+                        |
+             Flutter User Interfaces
 ```
 
-The complete architecture additionally includes two complementary security-detection paths:
+Signature-based detection with Suricata is part of the current architecture. Suricata runs in IDS mode on the capture interface and never blocks or modifies traffic. The alert service reads Suricata's alerts and stores them as Threat Alerts in SQLite.
 
-- Suricata for signature-based detection.
-- Isolation Forest for per-device behavioral anomaly detection, with SHAP for interpreting anomaly results.
-
-Detection results will feed the local explanation, alert-management, and network risk components.
+Per-device behavioral anomaly detection with Isolation Forest, with SHAP for interpreting anomaly results, is planned for Release 2.
 
 Core monitoring and security analysis are designed to run locally on the Raspberry Pi.
+
+## Technologies Used
+
+| Technology | Purpose |
+|---|---|
+| Python | Appliance backend, discovery, classification, and alert ingestion |
+| FastAPI (0.141.1) | Local REST API for the mobile application and the on-device display |
+| Uvicorn (0.53.0) | ASGI server that runs the FastAPI backend |
+| SQLite | Local storage for the device inventory, flow summaries, and alerts |
+| Suricata (7.0.10) with the Emerging Threats Open rule set | Signature-based threat detection on the mirrored traffic |
+| Scapy | Passive packet capture and protocol parsing |
+| arp-scan | Active ARP scanning of the local subnet |
+| Nmap | Optional service identification for devices that remain unclassified |
+| Avahi (mDNS) | Local advertisement of the appliance API (`_assas._tcp`) |
+| Flutter and Dart (Dart SDK ^3.5.0) | Mobile application and on-device display |
+| systemd | Running the appliance services with automatic restart |
+| Raspberry Pi OS (64-bit) | Operating system of the Raspberry Pi appliance |
 
 ## Repository Structure
 
@@ -77,10 +105,15 @@ ASSAS/
 ├── appliance/
 │   ├── discovery.py
 │   ├── classification.py
+│   ├── flows.py
 │   ├── api.py
+│   ├── alerts.py
+│   ├── alert_text.py
 │   ├── requirements.txt
 │   ├── systemd/
+│   ├── suricata/
 │   ├── avahi/
+│   ├── tools/
 │   └── test_*.py
 │
 ├── app/
@@ -92,12 +125,16 @@ ASSAS/
 ├── docs/
 │   ├── API_CONTRACT.md
 │   ├── database-schema.md
+│   ├── sprint-2/
 │   └── ...
 │
+├── AUTHORS
 └── README.md
 ```
 
-- `appliance/` — Raspberry Pi backend, discovery, classification, API, and system services.
+- `appliance/` — Raspberry Pi backend, discovery, classification, API, alert ingestion, and system services.
+- `appliance/suricata/` — Suricata configuration, rule tuning (disabled and modified rules), and log rotation.
+- `appliance/tools/` — Offline detection and resource measurement tools.
 - `app/mobile/` — Flutter application for mobile devices.
 - `app/display/` — Flutter-based on-device display for the Raspberry Pi.
 - `app/packages/` — Shared Flutter packages.
@@ -140,22 +177,32 @@ The appliance advertises its local API using Avahi (`_assas._tcp`) so the mobile
 
 ## Backend Services
 
-The backend runs through systemd services on the Raspberry Pi.
+The backend runs through four long-running systemd services on the Raspberry Pi:
+
+- `assas-discovery` — device discovery, passive fingerprinting, and classification.
+- `assas-api` — FastAPI backend served by Uvicorn.
+- `assas-alerts` — reads Suricata alerts and stores them as Threat Alerts in SQLite.
+- `assas-suricata` — Suricata IDS on the capture interface.
+
+Two supporting units also exist: `assas-capture` (one-time setup that puts the capture interface in promiscuous mode at boot) and the `assas-suricata-rotate` timer (rotates the Suricata event log).
+
+Each service restarts automatically if it stops (`Restart=always`).
 
 ```bash
-sudo systemctl restart assas-discovery
-sudo systemctl restart assas-api
+sudo systemctl restart assas-discovery assas-api assas-alerts assas-suricata
 ```
 
 Check service status:
 
 ```bash
-systemctl status assas-discovery assas-api
+systemctl status assas-discovery assas-api assas-alerts assas-suricata
 ```
 
 The corresponding systemd configuration files are maintained under `appliance/systemd/`.
 
 ### Optional AP association polling
+
+> This feature is optional and is not enabled in the current deployment. The access point used in the prototype requires an encrypted login that is not supported yet.
 
 `assas-discovery` can read the wireless-station list from the TP-Link access point. The AP takes its IP address by DHCP, so it changes with the upstream router; discovery therefore finds the AP by its MAC address.
 
@@ -195,6 +242,14 @@ python3 -m unittest test_discovery
 ```
 
 Additional component tests are available under `appliance/`.
+
+To run the whole appliance test suite with pytest, from `appliance/`:
+
+```bash
+../.venv/bin/python3 -m pytest
+```
+
+pytest must be installed in the virtual environment, because it is not listed in `appliance/requirements.txt`.
 
 ## Flutter Applications
 
