@@ -139,8 +139,9 @@ class _StatusScreenState extends State<StatusScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final statusLabel = ConnectionLook.text(_status);
-    final statusColor = ConnectionLook.color(_status);
+    // Stale still reads CONNECTED (as live); only the sync line says OUTDATED.
+    final statusLabel = ConnectionWording.text(_status);
+    final statusColor = ConnectionWording.color(_status);
     return Scaffold(body: Padding(
       padding: const EdgeInsets.all(24),
       child: Column(children: [
@@ -161,7 +162,8 @@ class _StatusScreenState extends State<StatusScreen> {
               const SizedBox(width: 9),
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(statusLabel, style: DisplayUi.mono(11, color: statusColor)),
-                Text(ConnectionLook.synced(_status, _lastSync), style: UiText.synced.copyWith(color: Ui.mute)),
+                Text(ConnectionWording.synced(_status, _lastSync),
+                    style: UiText.synced.copyWith(color: ConnectionWording.syncedColor(_status) ?? Ui.mute)),
               ]),
             ])),
         ]),

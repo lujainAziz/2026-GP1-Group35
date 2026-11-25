@@ -5,6 +5,7 @@ import 'package:assas_mobile/screens/alerts/alert_list_screen.dart';
 import 'package:assas_mobile/state/app_state.dart';
 import 'package:assas_mobile/theme/assas_ui.dart';
 import 'package:assas_mobile/widgets/design_scale.dart';
+import 'package:assas_mobile/widgets/filter_button.dart';
 import 'package:assas_mobile/widgets/ui_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -67,6 +68,13 @@ Future<AppState> _pump(WidgetTester tester, List<SecurityAlert> alerts,
   return state;
 }
 
+final _dot = find.byKey(const ValueKey('filterActiveDot'));
+
+Color _fill(WidgetTester tester) => tester
+    .widget<Glass>(find.descendant(
+        of: find.byKey(const ValueKey('alertFilterButton')), matching: find.byType(Glass)))
+    .color;
+
 List<String> _cardOrder(WidgetTester tester) =>
     tester.widgetList<TimelineAlertCard>(find.byType(TimelineAlertCard))
         .map((c) => c.alert.id)
@@ -115,8 +123,10 @@ void main() {
     final ids = _cardOrder(tester).toSet();
     expect(ids.contains('med'), isFalse); // medium not selected -> hidden
     expect(ids.containsAll({'low', 'high'}), isTrue);
-    // The filter button shows the active count like the devices filter.
-    expect(find.text('2 filters'), findsOneWidget);
+    // The filter button is icon-only: active = dot, count only for screen readers.
+    expect(find.text('2 filters'), findsNothing);
+    expect(_dot, findsOneWidget);
+    expect(find.bySemanticsLabel('Filter, 2 selected'), findsOneWidget);
   });
 
   testWidgets('filter keeps "Load older" available so it reaches the full list',
@@ -150,8 +160,8 @@ void main() {
     expect(_cardOrder(tester), ['high-old']);
   });
 
-  testWidgets('Filter button keeps one width inactive vs active, at normal and large font',
-      (tester) async {
+  testWidgets('Filter button: icon-only, fixed size, accent fill + dot when active, '
+      'at normal and large font', (tester) async {
     for (final scale in [1.0, 1.3]) {
       SharedPreferences.setMockInitialValues({});
       await _loadFonts();
@@ -176,8 +186,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       final pill = find.byKey(const ValueKey('alertFilterButton'));
-      expect(find.text('Filter'), findsOneWidget, reason: 'scale=$scale inactive -> "Filter"');
-      final wInactive = tester.getSize(pill).width;
+      // Inactive: outlined, no text, no dot, fixed size, state in semantics.
+      expect(find.text('Filter'), findsNothing, reason: 'scale=$scale inactive: no visible text');
+      expect(find.descendant(of: pill, matching: find.byType(Text)), findsNothing);
+      expect(_dot, findsNothing, reason: 'scale=$scale inactive: no dot');
+      expect(_fill(tester), Ui.fade(Ui.surf, .82), reason: 'scale=$scale inactive: outlined');
+      expect(find.bySemanticsLabel('Filter, none selected'), findsOneWidget);
+      expect(tester.getSize(pill), const Size.square(FilterButton.size), reason: 'scale=$scale');
       expect(tester.takeException(), isNull, reason: 'scale=$scale inactive no overflow');
 
       // Activate two severities.
@@ -190,10 +205,14 @@ void main() {
       await tester.tapAt(const Offset(10, 1300));
       await tester.pumpAndSettle();
 
-      expect(find.text('2 filters'), findsOneWidget, reason: 'scale=$scale active -> "2 filters"');
-      final wActive = tester.getSize(pill).width;
-      expect(wActive, moreOrLessEquals(wInactive, epsilon: 0.5),
-          reason: 'scale=$scale: pill width constant between states');
+      // Active: accent fill + dot, still no text, same fixed size.
+      expect(find.text('2 filters'), findsNothing, reason: 'scale=$scale active: no visible count');
+      expect(find.descendant(of: pill, matching: find.byType(Text)), findsNothing);
+      expect(_dot, findsOneWidget, reason: 'scale=$scale active: dot');
+      expect(_fill(tester), Ui.mix(Ui.acc, .22, Ui.surf), reason: 'scale=$scale active: accent fill');
+      expect(find.bySemanticsLabel('Filter, 2 selected'), findsOneWidget);
+      expect(tester.getSize(pill), const Size.square(FilterButton.size),
+          reason: 'scale=$scale: button size constant between states');
       expect(tester.takeException(), isNull, reason: 'scale=$scale active no overflow');
 
       await tester.pumpWidget(const SizedBox());
@@ -234,10 +253,14 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tapAt(const Offset(8, 1300));
         await tester.pumpAndSettle();
-        expect(find.text('2 filters'), findsOneWidget);
+        expect(find.bySemanticsLabel('Filter, 2 selected'), findsOneWidget);
+        expect(_dot, findsOneWidget);
       } else {
-        expect(find.text('Filter'), findsOneWidget);
+        expect(find.bySemanticsLabel('Filter, none selected'), findsOneWidget);
+        expect(_dot, findsNothing);
       }
+      expect(find.text('Filter'), findsNothing);
+      expect(find.text('2 filters'), findsNothing);
       expect(tester.takeException(), isNull, reason: 'active=$active no overflow');
 
       // Resolved label is fully on-screen (not clipped off the right).
@@ -255,7 +278,7 @@ void main() {
     }
   });
 
-  testWidgets('3 filters at the app smallest AND largest real font: one pinned row, all counts whole',
+  testWidgets('3 severities selected at the app smallest AND largest real font: one pinned row, all counts whole',
       (tester) async {
     // The app's actual extremes: zoom 1.0 x system 0.85 and zoom 1.2 x system 1.3.
     for (final (zoom, scale) in [(1.0, 0.85), (1.2, 1.3)]) {
@@ -286,7 +309,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       final reason = 'zoom=$zoom scale=$scale';
 
-      expect(find.text('3 filters'), findsOneWidget, reason: reason);
+      // The stored selection restores into the icon-only active state.
+      expect(find.text('3 filters'), findsNothing, reason: reason);
+      expect(find.bySemanticsLabel('Filter, 3 selected'), findsOneWidget, reason: reason);
+      expect(_dot, findsOneWidget, reason: reason);
+      expect(tester.getSize(find.byKey(const ValueKey('alertFilterButton'))),
+          const Size.square(FilterButton.size), reason: reason);
       expect(tester.takeException(), isNull, reason: reason);
 
       // All 288 / Unread 287 (badge) / Resolved 1 all whole, button on one row.

@@ -134,10 +134,10 @@ class DashboardScreen extends StatelessWidget {
   }
 
   Widget _connectionPill() {
-    final c = ConnectionLook.color(state.connection);
+    final c = ConnectionWording.color(state.connection);
     return Pressable(
       onTap: state.refresh,
-      semanticLabel: 'Connection: ${ConnectionLook.text(state.connection)}. Tap to refresh',
+      semanticLabel: 'Connection: ${ConnectionWording.semantics(state.connection)}. Tap to refresh',
       child: Glass(
         color: Ui.fade(Ui.bg, .62),
         radius: UiRadius.headerPill,
@@ -157,13 +157,13 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 7),
-                Text(ConnectionLook.text(state.connection), style: UiText.connection.copyWith(color: c)),
+                Text(ConnectionWording.text(state.connection), style: UiText.connection.copyWith(color: c)),
               ],
             ),
             const SizedBox(height: 2),
             Text(
-              ConnectionLook.synced(state.connection, state.lastSync),
-              style: UiText.synced.copyWith(color: Ui.mute),
+              ConnectionWording.synced(state.connection, state.lastSync),
+              style: UiText.synced.copyWith(color: ConnectionWording.syncedColor(state.connection) ?? Ui.mute),
             ),
           ],
         ),

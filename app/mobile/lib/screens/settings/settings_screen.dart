@@ -392,7 +392,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _hardwareCard() {
     final c = widget.state.connection;
-    final color = ConnectionLook.color(c);
+    final color = ConnectionWording.color(c);
     Widget cell(String k, String v, {Color? color}) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -426,7 +426,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Text('ASSAS Hardware', style: UiText.cardTitle),
                       const SizedBox(height: 3),
                       Text(
-                        '● ${ConnectionLook.text(c)} / PAIRED',
+                        '● ${ConnectionWording.text(c)} / PAIRED',
                         style: UiText.mono(10.5, 500, color: color),
                       ),
                     ],
@@ -460,7 +460,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    Expanded(child: cell('LAST SYNC', ConnectionLook.synced(c, widget.state.lastSync))),
+                    Expanded(
+                      child: cell('LAST SYNC', ConnectionWording.synced(c, widget.state.lastSync),
+                          color: ConnectionWording.syncedColor(c)),
+                    ),
                     const SizedBox(width: 14),
                     Expanded(
                       child: cell(
