@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../state/app_state.dart';
 import '../../theme/assas_ui.dart';
 import '../../widgets/device_signals.dart';
+import '../../widgets/filter_button.dart';
 import '../../widgets/ui_icons.dart';
 import '../../widgets/ui_kit.dart';
 import '../../widgets/ui_memory.dart';
@@ -26,7 +27,7 @@ extension FilterPoleX on FilterPole {
 
   String get label => switch (this) {
         FilterPole.attention => 'Attention',
-        FilterPole.notAttention => 'No attention needed',
+        FilterPole.notAttention => 'No attention',
         FilterPole.trusted => 'Trusted',
         FilterPole.untrusted => 'Untrusted',
         FilterPole.online => 'Online',
@@ -183,12 +184,6 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
     _selectAll();
   }
 
-  String get _filterSummary => _poles.isEmpty
-      ? 'All'
-      : _poles.length == 1
-          ? _poles.first.label
-          : '${_poles.length} filters';
-
   @override
   Widget build(BuildContext context) {
     final bottomPad = UiSpace.navBottomPad + math.max(0.0, MediaQuery.paddingOf(context).bottom - 14);
@@ -289,7 +284,6 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
   Widget _divider() => Container(width: 1, color: Ui.line);
 
   Widget _searchBar(List<DeviceSignal> all) {
-    final active = _poles.isNotEmpty || _menu.isShowing;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 13, 16, 8),
       child: DecoratedBox(
@@ -345,29 +339,11 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
               child: OverlayPortal(
                 controller: _menu,
                 overlayChildBuilder: (context) => _menuOverlay(all),
-                child: Pressable(
+                // Fixed-size, icon-only: the search field keeps its width.
+                child: FilterButton(
+                  key: const ValueKey('deviceFilterButton'),
+                  selected: _poles.length,
                   onTap: () => setState(_menu.toggle),
-                  semanticLabel: 'Filter devices, $_filterSummary',
-                  child: Glass(
-                    color: active ? Ui.mix(Ui.acc, .22, Ui.surf) : Ui.fade(Ui.surf, .82),
-                    border: active ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
-                    radius: UiRadius.search,
-                    blur: 16,
-                    height: 50,
-                    padding: const EdgeInsets.fromLTRB(14, 0, 16, 0),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        UiIcon(UiIcons.filter, size: 18, stroke: 2, color: Ui.ink),
-                        if (_poles.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          GlowDot(_poles.first.dot, glow: 0),
-                          const SizedBox(width: 6),
-                          Text(_filterSummary, style: UiText.sans(12, 700)),
-                        ],
-                      ],
-                    ),
-                  ),
                 ),
               ),
             ),
@@ -378,6 +354,21 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
   }
 
   Widget _menuOverlay(List<DeviceSignal> all) {
+    // Width of the longest option label at the current text size. Every label
+    // is laid out in a box this wide, so when they must shrink (large text)
+    // they all shrink by the same factor and stay the same size and weight.
+    final scaler = MediaQuery.textScalerOf(context);
+    final labelWidth = FilterPole.values.map((p) {
+      final tp = TextPainter(
+        text: TextSpan(text: p.label, style: UiText.menuItem),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final w = tp.width;
+      tp.dispose();
+      return w;
+    }).reduce(math.max).ceilToDouble();
     return Stack(
       children: [
         Positioned.fill(
@@ -412,9 +403,9 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
                       if (axis > 0) const SizedBox(height: 4),
                       Row(
                         children: [
-                          Expanded(child: _poleChip(FilterPole.values[axis * 2], all)),
+                          Expanded(child: _poleChip(FilterPole.values[axis * 2], all, labelWidth)),
                           const SizedBox(width: 4),
-                          Expanded(child: _poleChip(FilterPole.values[axis * 2 + 1], all)),
+                          Expanded(child: _poleChip(FilterPole.values[axis * 2 + 1], all, labelWidth)),
                         ],
                       ),
                     ],
@@ -457,7 +448,7 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
     );
   }
 
-  Widget _poleChip(FilterPole p, List<DeviceSignal> all) {
+  Widget _poleChip(FilterPole p, List<DeviceSignal> all, double labelWidth) {
     final on = _poles.contains(p);
     final count = all.where(p.matches).length;
     return Pressable(
@@ -477,16 +468,29 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
             GlowDot(p.dot, size: 7, glow: 0),
             const SizedBox(width: 7),
             // Full label always visible: shrink-to-fit instead of ellipsis, so
-            // "No attention needed"/"Not monitored" are never clipped at large fonts
-            // while the two-per-row layout is kept.
+            // "Not monitored" is never clipped at large fonts while the
+            // two-per-row layout is kept. Every label sits in a box as wide as
+            // the longest one, so all labels scale by the same factor.
             Expanded(
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
-                child: Text(p.label, maxLines: 1, style: UiText.menuItem),
+                child: SizedBox(
+                  width: labelWidth,
+                  child: Text(p.label, maxLines: 1, softWrap: false, style: UiText.menuItem),
+                ),
               ),
             ),
-            if (on) Text('✓', style: UiText.sans(12, 800, color: Ui.acc)),
+            const SizedBox(width: 4),
+            // The check's space is always reserved, so selecting an option
+            // never changes the room its label has.
+            Visibility(
+              visible: on,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: Text('✓', style: UiText.sans(12, 800, color: Ui.acc)),
+            ),
           ],
         ),
       ),
@@ -531,8 +535,8 @@ class _DeviceListScreenState extends State<DeviceListScreen> {
       final hint = noDevices
           ? 'Devices will appear here once ASSAS discovers them.'
           : q.isNotEmpty
-              ? 'Nothing matches “$q”${_poles.isNotEmpty ? ' in $_filterSummary' : ''}.'
-              : 'No devices in $_filterSummary.';
+              ? 'Nothing matches “$q”${_poles.isNotEmpty ? ' with the selected filters' : ''}.'
+              : 'No devices match the selected filters.';
       return [
         SliverToBoxAdapter(
           child: EmptyDashed(

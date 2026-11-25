@@ -124,3 +124,30 @@ class ConnectionLook {
     return 'LAST SYNC · $ago';
   }
 }
+
+/// Two-line connection wording used by the phone and the on-device display.
+/// Stale data does not mean the link to the appliance is lost: the link line
+/// reads CONNECTED exactly as when live, and only the sync line says OUTDATED,
+/// in the warning colour. Live and disconnected read as in [ConnectionLook].
+class ConnectionWording {
+  ConnectionWording._();
+
+  static ConnectionStatus _link(ConnectionStatus c) =>
+      c == ConnectionStatus.stale ? ConnectionStatus.live : c;
+
+  static String text(ConnectionStatus c) => ConnectionLook.text(_link(c));
+
+  static Color color(ConnectionStatus c) => ConnectionLook.color(_link(c));
+
+  /// "OUTDATED" when stale; otherwise "SYNCED NOW" / the last-sync time.
+  static String synced(ConnectionStatus c, DateTime? last) => ConnectionLook.synced(c, last);
+
+  /// The sync line's colour, or null for its normal colour.
+  static Color? syncedColor(ConnectionStatus c) =>
+      c == ConnectionStatus.stale ? ConnectionLook.color(ConnectionStatus.stale) : null;
+
+  /// For screen readers.
+  static String semantics(ConnectionStatus c) => c == ConnectionStatus.stale
+      ? 'Connected, but the data is outdated'
+      : ConnectionLook.text(c);
+}

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import '../../state/app_state.dart';
 import '../../theme/assas_ui.dart';
 import '../../widgets/coming_soon.dart';
-import '../../widgets/ui_icons.dart';
+import '../../widgets/filter_button.dart';
 import '../../widgets/ui_kit.dart';
 import '../../widgets/ui_memory.dart';
 import 'alert_details_screen.dart';
@@ -107,36 +107,6 @@ class _AlertListScreenState extends State<AlertListScreen> {
   void _setTab(_AlertTab t) {
     setState(() => _tab = t);
     UiMemory.setAlertTab(t.name);
-  }
-
-  bool get _filterActive => _shown.isNotEmpty;
-
-  // Active severities, strongest first — for a stable dot/summary.
-  List<Severity> get _selectedBySeverity =>
-      _shown.toList()..sort((a, b) => b.index.compareTo(a.index));
-
-  // Count only on the button ("1 filter" / "2 filters"); the severity NAMES live
-  // in the filter panel, so the button stays compact and fixed-width.
-  String get _filterSummary => _shown.isEmpty
-      ? ''
-      : _shown.length == 1
-          ? '1 filter'
-          : '${_shown.length} filters';
-
-  Color get _summaryDotColor =>
-      _shown.isEmpty ? Ui.acc : _severityColors(_selectedBySeverity.first).foreground;
-
-  // Fixed content width for the filter pill = the LONGEST possible state
-  // ("3 filters" — all three severities — with the dot), measured at the current
-  // font scale so the pill never resizes between "Filter" and any count. No
-  // ghost widget, so no duplicate text.
-  double _pillContentWidth(BuildContext context) {
-    final tp = TextPainter(
-      text: TextSpan(text: '3 filters', style: UiText.sans(11.5, 700)),
-      textDirection: TextDirection.ltr,
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout();
-    return 15 + 4 + 5 + 4 + tp.width; // icon + gap + dot + gap + text
   }
 
   @override
@@ -248,7 +218,9 @@ class _AlertListScreenState extends State<AlertListScreen> {
   double _tabsExtent(BuildContext context, bool stacked) {
     final s = _systemScale(context);
     final tabH = stacked ? 30 + 28 * s : 22 + 18 * s;
-    return math.max(tabH, 36) + 14; // max(tab, pill) + vertical padding + buffer
+    // max(tab, button) + vertical padding (10) + the button's bottom inset (4)
+    // + the bottom hairline (1), so the button keeps its full fixed size.
+    return math.max(tabH, FilterButton.size) + 15;
   }
 
   Widget _tabs(List<SecurityAlert>? alerts, bool stacked) {
@@ -387,50 +359,16 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   // ---------- Filter control (in the tabs row) ----------
-  // Same shape, colours and font as the devices-list filter button: shows
-  // "Filter" when inactive and the summary ("1 filter" / "2 filters") with a
-  // severity-coloured dot when active.
-  Widget _pillRow(String text, {required bool dot}) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          UiIcon(UiIcons.filter, size: 15, stroke: 2, color: Ui.ink),
-          const SizedBox(width: 4),
-          if (dot) ...[GlowDot(_summaryDotColor, size: 5, glow: 0), const SizedBox(width: 4)],
-          Text(text, style: UiText.sans(11.5, 700)),
-        ],
-      );
-
+  // The same icon-only, fixed-size button as the devices list.
   Widget _filterPill() => CompositedTransformTarget(
         link: _filterLink,
         child: OverlayPortal(
           controller: _filterMenu,
           overlayChildBuilder: (context) => _filterOverlay(),
-          child: Pressable(
+          child: FilterButton(
             key: const ValueKey('alertFilterButton'),
+            selected: _shown.length,
             onTap: () => setState(_filterMenu.toggle),
-            semanticLabel: 'Filter alerts by severity, ${_filterActive ? _filterSummary : 'off'}',
-            child: Glass(
-              color: _filterActive ? Ui.mix(Ui.acc, .22, Ui.surf) : Ui.fade(Ui.surf, .82),
-              border: _filterActive ? Ui.mix(Ui.acc, .45, Ui.line) : Ui.line,
-              radius: UiRadius.search,
-              blur: 16,
-              height: 36,
-              padding: const EdgeInsets.symmetric(horizontal: 7),
-              // Fixed, compact width across states: reserve the width of the
-              // widest content ("2 filters"), so the pill never resizes between
-              // "Filter" and any count and the tabs keep every spare pixel. The
-              // icon+text are centred together within that width, so "Filter"
-              // doesn't leave a gap on the right.
-              child: SizedBox(
-                width: _pillContentWidth(context),
-                child: Center(
-                  widthFactor: 1,
-                  child: _filterActive
-                      ? _pillRow(_filterSummary, dot: true)
-                      : _pillRow('Filter', dot: false),
-                ),
-              ),
-            ),
           ),
         ),
       );
