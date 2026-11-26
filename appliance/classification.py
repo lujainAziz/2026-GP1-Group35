@@ -187,7 +187,7 @@ DHCP_SIGNATURES = {
     # Confirmed on this network: modern iOS/iPadOS (2 devices identified by mDNS
     # model at class_score 90/100).
     (1, 121, 3, 6, 15, 108, 114, 119, 162, 252): "Apple Device",
-    # Confirmed on this network: Windows PRL on the Dell laptop "lujain".
+    # Confirmed on this network: Windows PRL on a Dell laptop.
     (1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252, 114): "Computer",
 }
 

@@ -41,7 +41,7 @@ class _StatusScreenState extends State<StatusScreen> {
   Timer? _timer;
   bool _refreshing = false;
 
-  // New-phone notice (Maraheb's spec, part 3).
+  // New-phone notice (Spec, part 3).
   int? _lastPhoneId; // highest session id seen; null until the first check
   String? _newPhoneName; // shown for 10 s
   Timer? _noticeTimer;

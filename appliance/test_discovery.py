@@ -545,9 +545,9 @@ class DisplayDeviceTypeTests(unittest.TestCase):
         )
 
     def test_private_mac_with_hostname_stays_generic(self):
-        # .234 in the live inventory: private MAC but hostname "LUJAIN".
+        # A private MAC with a hostname that carries no device type.
         self.assertEqual(
-            display_device_type(None, "02:00:00:00:00:0a", "LUJAIN", None, None),
+            display_device_type(None, "02:00:00:00:00:0a", "EXAMPLE-HOST", None, None),
             "Generic / Unknown",
         )
 
@@ -645,16 +645,16 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
         self.assertEqual(score, discovery.SCORES["os_hint"])
 
     def test_zflip3_hostname_rescores_to_mobile(self):
-        # Real case 02:5a:06:00:00:06: the phone family in the hostname is
-        # form-factor evidence, so it stays Mobile (Android).
-        self._insert("aa:00:00:00:00:15", hostname="Z-Flip3-alkhas-b-noura")
+        # The phone family in the hostname is form-factor evidence, so it
+        # stays Mobile (Android).
+        self._insert("aa:00:00:00:00:15", hostname="Z-Flip3-example")
         discovery.rescore_stored_evidence(verbose=False)
         dtype, score, _ = self._get("aa:00:00:00:00:15")
         self.assertEqual(dtype, "Mobile (Android)")
         self.assertEqual(score, discovery.SCORES["hostname"])
 
     def test_android_signature_with_extra_options_rescores_to_os_hint(self):
-        # Fix 2 real case: Z-Flip3 PRL = base Android + 114 + 108 (RFC 8925).
+        # Fix 2: Z-Flip3 PRL = base Android + 114 + 108 (RFC 8925).
         # Exact-tuple lookup missed it; tolerant matching classifies it, and it
         # is OS-only -> "Android Device" at os_hint (no hostname evidence here).
         self._insert("aa:00:00:00:00:16",
@@ -667,7 +667,7 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
     def test_zflip3_hostname_plus_signature_stays_mobile(self):
         # With the phone-family hostname AND the Android signature, the
         # form-factor hostname (90) wins over the OS signature (os_hint).
-        self._insert("aa:00:00:00:00:17", hostname="Z-Flip3-alkhas-b-noura",
+        self._insert("aa:00:00:00:00:17", hostname="Z-Flip3-example",
                      dhcp_signature="1,3,6,15,26,28,51,58,59,43,114,108")
         discovery.rescore_stored_evidence(verbose=False)
         dtype, score, _ = self._get("aa:00:00:00:00:17")
@@ -709,7 +709,7 @@ class RescoreStoredEvidenceTests(unittest.TestCase):
 
     def test_unmatched_hostname_stays_unknown(self):
         # .234-like: hostname present but matches no hint, no other evidence.
-        self._insert("aa:00:00:00:00:05", hostname="LUJAIN")
+        self._insert("aa:00:00:00:00:05", hostname="EXAMPLE-HOST")
         discovery.rescore_stored_evidence(verbose=False)
         self.assertIsNone(self._get("aa:00:00:00:00:05")[0])
 
@@ -1708,13 +1708,13 @@ class MdnsNameExtractionTests(unittest.TestCase):
 
     def test_ptr_instance_name(self):
         pkt = DNS(qr=1, an=DNSRR(rrname="_rdlink._tcp.local", type="PTR",
-                                 rdata="Lujain-iPhone._rdlink._tcp.local"))
-        self.assertEqual(discovery.extract_mdns_instance_name(pkt), "Lujain-iPhone")
+                                 rdata="Example-iPhone._rdlink._tcp.local"))
+        self.assertEqual(discovery.extract_mdns_instance_name(pkt), "Example-iPhone")
 
     def test_escaped_dot_in_instance_label(self):
         # \. is an escaped dot inside one label, not a separator.
-        labels = discovery._split_dns_labels("Lujains\\.iPhone._rdlink._tcp.local")
-        self.assertEqual(labels, ["Lujains.iPhone", "_rdlink", "_tcp", "local"])
+        labels = discovery._split_dns_labels("Examples\\.iPhone._rdlink._tcp.local")
+        self.assertEqual(labels, ["Examples.iPhone", "_rdlink", "_tcp", "local"])
 
     def test_service_only_owner_rejected(self):
         pkt = DNS(qr=1, an=DNSRR(rrname="_rdlink._tcp.local", type="A",
@@ -2700,9 +2700,9 @@ class OpaqueHostnameTests(unittest.TestCase):
 
     def test_uuid_ranks_below_dhcp_name(self):
         self.assertLess(discovery.hostname_quality(self.UUID),
-                        discovery.hostname_quality("Maraheb_PC"))
+                        discovery.hostname_quality("Example_PC"))
         self.assertLess(discovery.hostname_quality("a7f3e9c1b2d84f60a7f3e9c1b2d84f60"),
-                        discovery.hostname_quality("Maraheb_PC"))
+                        discovery.hostname_quality("Example_PC"))
 
     def test_dhcp_option_12_replaces_stored_uuid(self):
         mac = "a8:42:a1:01:02:03"
@@ -2713,15 +2713,15 @@ class OpaqueHostnameTests(unittest.TestCase):
             Ether(src=mac, dst="ff:ff:ff:ff:ff:ff") /
             IP(src="192.168.100.40", dst="255.255.255.255") /
             UDP(sport=68, dport=67) / BOOTP(chaddr=b"\x00" * 16) /
-            DHCP(options=[("hostname", b"Maraheb_PC"),
+            DHCP(options=[("hostname", b"Example_PC"),
                           ("vendor_class_id", b"MSFT 5.0"), "end"])
         )))
-        self.assertEqual(self._hostname(mac), "Maraheb_PC")
+        self.assertEqual(self._hostname(mac), "Example_PC")
 
     def test_normal_names_keep_their_previous_score(self):
         # Scores measured on the code before this change.
-        expected = {"Marahebs-Ipad": 60, "TL-SG105E": 90,
-                    "LG_Smart_Laundry2_open": 90, "iPhone": 60, "Maraheb_PC": 60}
+        expected = {"Examples-Ipad": 60, "TL-SG105E": 90,
+                    "LG_Smart_Laundry2_open": 90, "iPhone": 60, "Example_PC": 60}
         for name, score in expected.items():
             self.assertEqual(discovery.hostname_quality(name), score, name)
             self.assertEqual(discovery._usable_mdns_name(name), name, name)
