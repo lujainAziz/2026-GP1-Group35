@@ -393,4 +393,72 @@ void main() {
     expect(pos.pixels, 0);
     expect(find.bySemanticsLabel('Back to top'), findsNothing);
   });
+
+  testWidgets('pinned tabs header: rounded card like the alert cards, opaque screen-colour '
+      'background, first alert not covered, at normal and large text', (tester) async {
+    // Normal, large system text, and the app's largest (zoom 1.2 x system 1.3).
+    for (final (zoom, scale) in [(1.0, 1.0), (1.0, 1.3), (1.2, 1.3)]) {
+      SharedPreferences.setMockInitialValues({});
+      await _loadFonts();
+      final state = AppState(_Repo([
+        for (var i = 0; i < 11; i++) _mk('o$i', Severity.high, 100 - i),
+        _mk('done', Severity.high, 0, state: AlertState.resolved),
+      ]));
+      addTearDown(state.dispose);
+      addTearDown(tester.view.reset);
+      await tester.runAsync(state.refresh);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 1600);
+      await tester.pumpWidget(MaterialApp(
+        theme: MobileTheme.light,
+        home: Builder(
+          builder: (c) => MediaQuery(
+            data: MediaQuery.of(c).copyWith(textScaler: TextScaler.linear(scale)),
+            child: DesignScale(
+              zoom: zoom,
+              child: Material(color: Ui.bg, child: AlertListScreen(state: state)),
+            ),
+          ),
+        ),
+      ));
+      await tester.pump(const Duration(milliseconds: 400));
+      final reason = 'zoom=$zoom scale=$scale';
+      expect(tester.takeException(), isNull, reason: reason);
+
+      final button = find.byKey(const ValueKey('alertFilterButton'));
+      final cardFinder = find.ancestor(
+        of: button,
+        matching: find.byWidgetPredicate((w) =>
+            w is Container && w.decoration == surfCard(UiRadius.alertCard)),
+      );
+      expect(cardFinder, findsOneWidget, reason: '$reason: tabs row sits in an alert-card-style card');
+      final outer = tester.widget<ColoredBox>(
+          find.ancestor(of: cardFinder, matching: find.byType(ColoredBox)).first);
+      expect(outer.color, Ui.bg, reason: '$reason: opaque background is the screen colour');
+
+      // Card inset by the alert cards' margin on both sides (in design pixels).
+      final card = tester.getRect(cardFinder);
+      final screenW = tester.getSize(find.byType(AlertListScreen)).width;
+      final unit = card.width / (screenW - 2 * UiSpace.pageCards); // DesignScale factor
+      expect(card.left / unit, moreOrLessEquals(UiSpace.pageCards, epsilon: 0.5), reason: reason);
+
+      // Everything in the row stays inside the card; the button keeps 44x44.
+      final filter = tester.getRect(button);
+      expect(tester.getSize(button), const Size.square(FilterButton.size), reason: reason);
+      expect(filter.top, greaterThanOrEqualTo(card.top), reason: reason);
+      expect(filter.bottom, lessThanOrEqualTo(card.bottom), reason: reason);
+      final resolved = tester.getRect(find.text('Resolved').first);
+      expect(resolved.left, greaterThanOrEqualTo(card.left), reason: reason);
+      expect(resolved.right, lessThanOrEqualTo(filter.left), reason: reason);
+      expect(resolved.bottom, lessThanOrEqualTo(card.bottom), reason: reason);
+
+      // The first alert starts below the pinned header (a gap below the card).
+      final header = tester.getRect(find.ancestor(of: cardFinder, matching: find.byType(ClipRect)).first);
+      final firstAlert = tester.getRect(find.byType(TimelineAlertCard).first);
+      expect(card.bottom, lessThan(header.bottom), reason: '$reason: gap below the card');
+      expect(firstAlert.top, greaterThanOrEqualTo(header.bottom), reason: '$reason: first alert not covered');
+
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
 }
