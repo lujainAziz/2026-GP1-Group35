@@ -208,13 +208,10 @@ events), **Not detected** (no event involves the device). Malware names are the 
 All resource and reliability measurements in this document are preliminary Release 1 measurements. Formal non-functional requirement testing is scheduled for Release 2.
 
 Each run was taken with only the appliance services running, using
-`appliance/tools/clean_resource_run.sh`, which wraps
 `appliance/tools/resource_sampler.py` (2 hours, one sample every 10 s). The sampler reads
 `/proc/stat` (total-device CPU 0–100%), `/proc/meminfo` (`MemTotal − MemAvailable`, in MiB),
 `/sys/class/net/eth1/statistics` (throughput, bits per second) and the eve `stats`
-`capture.kernel_packets` / `kernel_drops` deltas (drop rate). A guard log (`agent-guard.log`) is
-written every 30 s during each run; in all three runs it records the precheck as passed and 0
-`PRESENT` entries.
+`capture.kernel_packets` / `kernel_drops` deltas (drop rate).
 
 **Targets as the sampler judges them** (`resource_sampler.py`): CPU — the **average** is at most
 75%; memory — the **maximum** is below 4096 MiB (4 GiB). Memory is total-device memory, not
@@ -226,8 +223,7 @@ adjusted by excluding any process.
 | 17 Nov 2026, 16:32–18:32 (light traffic) | 1.2 Mbps | 9.8% / 32.7% | 2.36 / 2.38 GiB | 0 of 1,320,585 | met | met | `evidence/resources/clean2/` |
 | 17 Nov 2026, 20:24–22:24 (heavier traffic) | 10.5 Mbps | 17.4% / 35.1% | 2.40 / 2.49 GiB | 0 of 9,162,670 | met | met | `evidence/resources/clean4/` |
 
-Each evidence folder holds `resource-2h-summary.json`, `resource-2h.csv` (720 samples) and
-`agent-guard.log`. Memory is shown in GiB (MiB ÷ 1024); the summaries record MiB.
+Each evidence folder holds `resource-2h-summary.json` and `resource-2h.csv` (720 samples). Memory is shown in GiB (MiB ÷ 1024); the summaries record MiB.
 
 - **5 November:** the CPU target was met; the memory target was not met (maximum 4470 MiB, above
   4096 MiB; average 4046 MiB). The audit below records what the memory consisted of.

@@ -154,7 +154,7 @@ strings) so any casing drift fails the test suite (extending `test_api.py` /
 
 ---
 
-## Mobile Alert Screens (`app/mobile`) ☑ (visual review outstanding)
+## Mobile Alert Screens (`app/mobile`) ☑ (visual review done in Release 1)
 
 A complete audit of every widget, screen, and code path gated by `Released.alerts` /
 `FeatureRelease.alerts` is produced and reviewed before the alerts flag is enabled. Code paths that
