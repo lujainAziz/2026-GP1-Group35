@@ -217,19 +217,26 @@ class _AlertListScreenState extends State<AlertListScreen> {
   // the first alert. Stacked tabs (name over count) are ~two text lines tall.
   double _tabsExtent(BuildContext context, bool stacked) {
     final s = _systemScale(context);
-    final tabH = stacked ? 30 + 28 * s : 22 + 18 * s;
-    // max(tab, button) + the card's inner vertical padding (10) + the button's
-    // bottom inset (4) + the card border (2 x 1) + the gaps above and below the
-    // card, so the button keeps its full fixed size and no alert is covered.
-    return math.max(tabH, FilterButton.size) + 16 + 2 * _tabsCardGap;
+    // One tab: _tabPad above the label, the label (two lines when stacked),
+    // _tabUnderlineGap + the 2px underline, then _tabPad below.
+    final tabH = (stacked ? 10 + 28 * s : 2 + 18 * s) +
+        2 * _tabPad + _tabUnderlineGap + 2;
+    // max(tab, button) + the card's vertical padding + the card border (2 x 1)
+    // + the gaps above and below the card, so the button keeps its full fixed
+    // size and no alert is covered.
+    return math.max(tabH, FilterButton.size) + 2 * _tabsCardPadV + 2 + 2 * _tabsCardGap;
   }
 
   // Gap above and below the tabs card inside the pinned header.
   static const double _tabsCardGap = 6;
-  // The card is inset by the alert cards' margin; this inner side padding (less
-  // the 1px border) brings the row back to the page text margin, so the row
-  // keeps its previous width and lines up with the big title.
-  static const double _tabsCardPadH = UiSpace.pageText - UiSpace.pageCards - 1;
+  // Inner padding of the tabs card: the alert cards' own horizontal padding on
+  // both sides, and an equal small padding above and below the row.
+  static const double _tabsCardPadH = UiSpace.cardPadH;
+  static const double _tabsCardPadV = 6;
+  // Inside one tab: equal space above the label and below the underline, and a
+  // small gap between the label and its underline.
+  static const double _tabPad = 8;
+  static const double _tabUnderlineGap = 4;
 
   Widget _tabs(List<SecurityAlert>? alerts, bool stacked) {
     final list = alerts ?? const <SecurityAlert>[];
@@ -244,12 +251,13 @@ class _AlertListScreenState extends State<AlertListScreen> {
           padding: const EdgeInsets.fromLTRB(
               UiSpace.pageCards, _tabsCardGap, UiSpace.pageCards, _tabsCardGap),
           child: Container(
-            alignment: Alignment.bottomCenter,
+            // The row is centred vertically: equal space above and below.
+            alignment: Alignment.center,
             clipBehavior: Clip.antiAlias,
             decoration: surfCard(UiRadius.alertCard),
-            padding: const EdgeInsets.fromLTRB(_tabsCardPadH, 4, _tabsCardPadH, 6),
+            padding: const EdgeInsets.symmetric(horizontal: _tabsCardPadH, vertical: _tabsCardPadV),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // Tabs grouped on the left; Expanded (not Flexible) so the free
                 // space lives HERE and the Filter is pushed to the far right even
@@ -257,39 +265,47 @@ class _AlertListScreenState extends State<AlertListScreen> {
                 // (never clips "Resolved").
                 Expanded(
                   child: Align(
-                    alignment: Alignment.bottomLeft,
+                    alignment: Alignment.centerLeft,
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
-                      alignment: Alignment.bottomLeft,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          for (final tab in _AlertTab.values) ...[
-                            if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
-                            _tabItem(
-                              tab,
-                              // Unread: this phone's DB count (the badge), not the page.
-                              tab == _AlertTab.unread
-                                  ? state.unreadCount ?? list.where(tab.matches).length
-                                  : list.where(tab.matches).length,
-                              stacked,
-                            ),
-                          ],
-                        ],
-                      ),
+                      alignment: Alignment.centerLeft,
+                      child: _tabsRow(list, stacked),
                     ),
                   ),
                 ),
                 // Free space between the tabs and the button; the button takes its
                 // fixed width from here and stays pinned to the right edge.
                 const SizedBox(width: 8),
-                Padding(padding: const EdgeInsets.only(bottom: 4), child: _filterPill()),
+                _filterPill(),
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _tabsRow(List<SecurityAlert> list, bool stacked) {
+    final row = Row(
+      // Bottom-aligned so every underline sits on one line. Stacked tabs are
+      // also stretched to one height (the Unread badge is a little taller than
+      // a plain count), so every label starts at the same top.
+      crossAxisAlignment: stacked ? CrossAxisAlignment.stretch : CrossAxisAlignment.end,
+      children: [
+        for (final tab in _AlertTab.values) ...[
+          if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
+          _tabItem(
+            tab,
+            // Unread: this phone's DB count (the badge), not the page.
+            tab == _AlertTab.unread
+                ? state.unreadCount ?? list.where(tab.matches).length
+                : list.where(tab.matches).length,
+            stacked,
+          ),
+        ],
+      ],
+    );
+    return stacked ? IntrinsicHeight(child: row) : row;
   }
 
   Widget _tabItem(_AlertTab tab, int count, bool stacked) {
@@ -323,7 +339,10 @@ class _AlertListScreenState extends State<AlertListScreen> {
         clipBehavior: Clip.none,
         children: [
           Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 12),
+            // _tabPad above the label; below it, room for the underline and
+            // then _tabPad again, so the tab is symmetric top to bottom.
+            padding: const EdgeInsets.only(
+                top: _tabPad, bottom: _tabUnderlineGap + 2 + _tabPad),
             // Tight layout: count UNDER the name (narrower). Otherwise side by
             // side on one line.
             child: stacked
@@ -341,7 +360,7 @@ class _AlertListScreenState extends State<AlertListScreen> {
           Positioned(
             left: 0,
             right: 0,
-            bottom: -1,
+            bottom: _tabPad,
             child: AnimatedScale(
               duration: const Duration(milliseconds: 300),
               curve: const Cubic(.3, .8, .2, 1),
