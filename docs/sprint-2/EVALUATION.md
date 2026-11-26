@@ -1,15 +1,22 @@
 # Sprint 2 — Evaluation
 
-This document covers two evaluations: **detection accuracy** on replayed attack traffic, and
+This document covers two evaluations: **detection accuracy** on a labelled attack dataset
+(IoT-23, offline), and
 **resource usage** of the appliance under load. Status markers: ☐ Planned · ◐ In progress ·
-☑ Done. **No detection or resource figure is recorded without a linked raw-evidence file** under
-`docs/sprint-2/evidence/`. No private network data (real addresses, MAC addresses or hostnames) is
+☑ Done. **No resource figure is recorded without a linked raw-evidence file** under
+`docs/sprint-2/evidence/`. The detection figures come from the offline IoT-23 run
+(`appliance/tools/IOT23_OFFLINE_TEST.md`) and are reported in Chapter 5 of the project report. No private network data (real addresses, MAC addresses or hostnames) is
 committed.
 
-**Detection-accuracy evaluation — not yet performed.** No dataset has been downloaded (the
-selection below awaits approval) and no replay has been run; the live appliance has only
-demonstrated that a detection travels end-to-end into the application, which is not a measure of
-accuracy. Datasets are downloaded only after explicit approval.
+**Detection evaluation — completed offline on IoT-23 (23-24 November 2026).** 20 malware captures
+and 3 benign captures from IoT-23 were read offline by Suricata on the appliance (`suricata -r`)
+with the device configuration and rule set unchanged, then processed by the real alert pipeline
+into a separate test database. No traffic was replayed and no malware was executed (procedure:
+`appliance/tools/IOT23_OFFLINE_TEST.md`). Assas raised alerts on the infected device in **16 of 20**
+malware captures (4 Strong, 12 Indirect, 0 Weak, 4 Not detected). There was no alert on any device
+in the benign captures (one low-severity protocol event in the Philips Hue capture was not
+associated with a device). Precision and recall were not computed, and CICIoT2023 was not tested in Release 1. Results
+are in section 3; full results are in Chapter 5 of the project report.
 
 **Resource-usage evaluation — measured; one target not met, one measurement pending.** The 2-hour
 live-traffic baseline is complete (CPU and packet-drop targets met; memory target not met). An
@@ -20,8 +27,13 @@ onward.
 
 ---
 
-## 1. Datasets (selection for approval) — ☐ HOLD, nothing downloaded
-Metadata gathered 2026-11-02 from the official sources (no dataset files fetched). SHA-256 is
+## 1. Datasets — ☑ IoT-23 used (offline evaluation); CICIoT2023 not tested in Release 1
+> **Record of the original plan (not used):** the selection and download procedure below were
+> written for the replay method in §2, which was not used. The evaluation read 20 malware and 3
+> benign IoT-23 captures offline on the appliance (`appliance/tools/IOT23_OFFLINE_TEST.md`);
+> results in §3.
+
+Metadata gathered 2026-11-02 from the official sources. SHA-256 is
 computed only after download; publisher checksums are recorded where available.
 
 **Download target is the replay host, not the Pi.** Datasets are downloaded onto the dedicated
@@ -72,15 +84,17 @@ therefore sized on the replay host (recorded in §2 once finalized), not on the 
   302-redirects to the CIC portal), so exact per-file sizes are not available without access; an
   HTTP `HEAD` at download captures them. The raw PCAP set is large (multi-GB per attack).
 
-### Download procedure
+### Download procedure (original plan, not used)
 The replay host and isolated network (§2) are finalized **first**. On approval, the selected files
 are downloaded **onto the replay host** (not the Pi); each file's size is confirmed against the
 autoindex, SHA-256 is computed after download and recorded here, then replay follows.
 
 ---
 
-## 2. Replay environment and method — ☐ to finalize BEFORE any download
-This setup is fixed before datasets are downloaded.
+## 2. Replay environment and method — not used (offline method used instead)
+> **Not used:** the replay method below was not used; the captures were read offline by Suricata on the appliance instead (`appliance/tools/IOT23_OFFLINE_TEST.md`).
+
+Original plan (kept as a record): this setup was to be fixed before any dataset was downloaded.
 - **Goal:** replayed traffic must reach the monitored interface `eth1` (the SPAN/mirror port),
   exactly like live monitoring — not injected into the appliance's own stack.
 - **Replay host:** a dedicated second machine on an **isolated lab network** (no bridge to the
@@ -108,7 +122,7 @@ This setup is fixed before datasets are downloaded.
   each attack by **time window + addresses**; an alert merely appearing during replay does **not**
   count.
 
-### Ready-to-run commands — HELD until approval (nothing downloaded)
+### Commands prepared for the replay method (not used)
 All on the **replay host** (never the Pi). `BASE` = the IndividualScenarios URL above.
 
 ```bash
@@ -147,24 +161,49 @@ detection judgement in §3 additionally requires mapping each fired signature's
 semantics (rule message/classtype) to the capture's labelled attack class;
 signatures unrelated to the label are recorded but do not count as detection.
 Undetected attacks are recorded as such, and alerts raised on the benign
-capture are recorded as false positives. Nothing here runs until the download
-approval.
+capture are recorded as false positives. This replay-based measurement was not
+run (see the note at the top of this section).
 
-## 3. Detection results — ☐ Planned
-Per-attack table (one row per labelled attack class), filled from the raw detection-event evidence:
+## 3. Detection results — ☑ Done (IoT-23, offline, 23-24 November 2026)
+Each malware capture was classified from the alert events that involve the infected device:
+**Strong** (at least one event from a signature classified as malware or command-and-control),
+**Indirect** (no such event, but at least one priority 1 or 2 event), **Weak** (only priority 3
+events), **Not detected** (no event involves the device). Malware names are the dataset's own labels
+(`appliance/tools/iot23_scenarios.txt`).
 
-| Dataset | Attack class | Time window | Related signature(s) | Signature matches the label? | Detected? | Raw evidence |
-|---|---|---|---|---|---|
-| *(pending)* | | | | | | |
+| Capture | Malware | Category |
+|---|---|---|
+| 1-1 | Hide and Seek | Indirect |
+| 3-1 | Muhstik | Strong |
+| 7-1 | Linux.Mirai | Indirect |
+| 8-1 | Hakai | Not detected |
+| 9-1 | Linux.Hajime | Indirect |
+| 17-1 | Kenjiro | Strong |
+| 20-1 | Torii | Not detected |
+| 21-1 | Torii | Not detected |
+| 33-1 | Kenjiro | Strong |
+| 34-1 | Mirai | Indirect |
+| 35-1 | Mirai | Indirect |
+| 36-1 | Okiru | Indirect |
+| 39-1 | IRCBot | Indirect |
+| 42-1 | Trojan | Indirect |
+| 43-1 | Mirai | Indirect |
+| 44-1 | Mirai | Indirect |
+| 48-1 | Mirai | Indirect |
+| 49-1 | Mirai | Strong |
+| 52-1 | Mirai | Indirect |
+| 60-1 | Gafgyt | Not detected |
 
-- **Precision and recall are computed only for attack classes whose labels permit it** (a window
-  and addresses that isolate the attack traffic); classes whose labels do not support the
-  computation are reported descriptively, not scored.
-- Alerts raised on benign traffic are recorded separately as false positives, with the signature,
-  count and evidence path.
+- **Result:** alerts on the infected device in **16 of 20** malware captures: 4 Strong, 12
+  Indirect, 0 Weak, 4 Not detected.
+- **Totals:** 14,783,458 alert events, 1,096 alerts after grouping. Every stored alert was
+  associated with the infected device.
+- **Benign captures** (Philips Hue, Amazon Echo, Somfy door lock): no alert on any device (one
+  low-severity protocol event in the Philips Hue capture was not associated with a device).
+- Precision and recall were not computed.
 - The signature set has partial coverage by design: undetected attacks are recorded as such, with
   no full-coverage assumption.
-- Raw detection-event slices and the matching tool's output are saved under `evidence/detection/`.
+- Full results are in Chapter 5 of the project report.
 
 ## 4. Resources — ☑ 2-hour live-traffic baseline complete (2026-11-02 13:37–15:37 UTC)
 
