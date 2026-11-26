@@ -40,7 +40,7 @@ ingested, consistent with a live system.
 /alerts?limit=5&offset=5 → [1217,1210,1215,1214,1213]   → disjoint
 ```
 
-**Authentication and state change over the LAN (192.168.100.236), paired
+**Authentication and state change over the LAN (192.0.2.236), paired
 session:**
 ```
 no token : GET /alerts/open_count → 401 ;  PATCH /alerts/{id} → 401

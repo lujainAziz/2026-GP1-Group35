@@ -35,15 +35,15 @@ service; security alert display and state management; and device signals from un
 the alert screens; a validated packet-drop measurement with the corrected tool; and a resource
 measurement taken without the development agent co-resident.
 
-**What is still in progress / not yet done:** the detection-accuracy evaluation on replayed attack
-traffic (awaiting approval to download the datasets); and confirming the appliance's memory usage
+**What is still in progress / not yet done:** confirming the appliance's memory usage
 against its target (the recorded measurement did not meet it).
 
 Status legend: ☐ Planned · ◐ In progress · ☑ Done & tested. Every "Done" row links to the evidence
 (commit, log path, or test). Results without evidence are not recorded.
 
-Repo: `github.com/lujainAziz/Assas`, branch `sprint-2` (branched from tag `sprint-1` = `4786e3c`).
-Commit links use `https://github.com/lujainAziz/Assas/commit/<hash>`.
+Repo: `github.com/lujainAziz/2026-GP1-Group35`; the `sprint-2` branch (branched from tag `sprint-1` =
+`4786e3c`) was merged into `main`.
+Commit links use `https://github.com/lujainAziz/2026-GP1-Group35/commit/<hash>`.
 
 **Branch sync with `main`.** `sprint-2` was cut at PR #14 (`4786e3c`). `main` then advanced to
 PR #18 (`c8e42e5`) with UI/design updates not initially present in `sprint-2`; an earlier status
@@ -81,7 +81,7 @@ pass / fail / not-tested verdicts (automated vs live) are in `VERIFICATION.md`.
 | Alert ingestion | Resume safely across restarts and log rotation | Security Alert Ingestion | ☑ | `test_alerts.py` |
 | Alert service | Authenticated access to view alerts and update their state | Security Alert Service | ☑ | `test_api.py`, `test_frontend_contract.py`, `partBC-live.txt` |
 | Alert display & state management | Single alert list; view details; per-device alerts; manage New/Reviewed/Resolved | Security Alert Display and State Management | ☑ code+tests; visual review outstanding | `test/alerts_test.dart`, `evidence/ui/`, `evidence/partD-pbi22-live.md` |
-| Detection accuracy | Evaluation on replayed attack traffic | Evaluation | ☐ dataset download outstanding | `EVALUATION.md` |
+| Detection accuracy | Offline evaluation on a labelled attack dataset (IoT-23) | Evaluation | ☑ done (offline IoT-23, 23-24 November 2026) | `EVALUATION.md` §3 |
 
 ---
 
@@ -352,9 +352,9 @@ row in the details.
 
 ## Evaluation
 Two evaluations, by function:
-- **Detection accuracy** on replayed attack traffic — **not yet performed**: no dataset has been
-  downloaded (awaiting approval) and no replay has run. The on-device test showed only that a
-  detection travels end-to-end into the application, which is not an accuracy measure.
+- **Detection accuracy** — **done** offline on IoT-23 (23-24 November 2026): Assas raised alerts on
+  the infected device in 16 of 20 malware captures (4 Strong, 12 Indirect, 0 Weak, 4 Not
+  detected), and no alert on any device in the benign captures (`EVALUATION.md` §3).
 - **Resource usage** — measured. The 2-hour live-traffic baseline is complete (CPU and packet-drop
   targets met; **memory target not met**). The additional run **taken without the development agent
   co-resident is complete** and confirms the **memory target is still not met**; its packet-drop
