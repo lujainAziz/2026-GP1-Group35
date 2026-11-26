@@ -98,7 +98,7 @@ class DhcpSignatureMatchTests(unittest.TestCase):
             self.assertEqual(type_from_dhcp_signature(sig), dtype, sig)
 
     def test_zflip3_android_signature_is_android_device(self):
-        # Real case 02:5a:06:00:00:06: base Android PRL + 114 + 108 (RFC 8925).
+        # Z-Flip3 PRL: base Android PRL + 114 + 108 (RFC 8925).
         # Android option-55 is OS-only -> "Android Device", never a phone.
         self.assertEqual(type_from_dhcp_signature(self.ZFLIP3), "Android Device")
 
@@ -291,8 +291,8 @@ class AndroidOsTokenTests(unittest.TestCase):
                          "Mobile (Android)")
 
     def test_zflip3_hostname_stays_mobile(self):
-        # Real case: 02:5a:06:00:00:06 hostname "Z-Flip3-alkhas-b-noura".
-        self.assertEqual(type_from_hostname("Z-Flip3-alkhas-b-noura"),
+        # A phone-family hostname (Z-Flip3) followed by a free-text suffix.
+        self.assertEqual(type_from_hostname("Z-Flip3-example"),
                          "Mobile (Android)")
 
     def test_os_hint_is_overridden_by_form_factor_evidence(self):
@@ -329,9 +329,9 @@ class VendorInferenceTests(unittest.TestCase):
 
     def test_hostname_expanded_brand_needles(self):
         expected = {
-            "Z-Flip3-alkhas-b-noura": "Samsung Electronics",
+            "Z-Flip3-example": "Samsung Electronics",
             "Galaxy-S23-Ultra": "Samsung Electronics",
-            "Fold5-Noura": "Samsung Electronics",
+            "Fold5-Example": "Samsung Electronics",
             "HUAWEI_P30": "Huawei",
             "MatePad-Pro": "Huawei",
             "POCO-F5": "Xiaomi",
@@ -352,7 +352,7 @@ class VendorInferenceTests(unittest.TestCase):
         for hostname, vendor in expected.items():
             with self.subTest(hostname=hostname):
                 self.assertEqual(vendor_from_model_in_hostname(hostname), vendor)
-        for hostname in ("Bader-s-A52s", "Android-2", "honorato-pc",
+        for hostname in ("User-s-A52s", "Android-2", "honorato-pc",
                          "tecnologia-pc", "vivo-fibra", "reno-pc", "pocopc",
                          "flip-phone", "LAPTOP-A6CMND2G", "ultra-pc",
                          "note-12"):

@@ -38,7 +38,7 @@ Future<String> readPhoneName() async {
   return name.length > 40 ? name.substring(0, 40) : name;
 }
 
-/// Confirm before pairing (Maraheb's spec, part 1).
+/// Confirm before pairing (Spec, part 1).
 /// Returns the phone name to send, or null when the user cancels
 /// (then no request is sent).
 Future<String?> showPairConfirm(BuildContext context) {
