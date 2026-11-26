@@ -34,6 +34,9 @@ class _MainShellState extends State<MainShell> {
   /// the dashboard. Empty set = All.
   final _deviceFilter = ValueNotifier<Set<FilterPole>?>(null);
 
+  /// Set when the dashboard opens the Alerts tab: show All, scrolled to the top.
+  final _alertsAll = ValueNotifier<bool>(false);
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +52,7 @@ class _MainShellState extends State<MainShell> {
   void dispose() {
     _state.removeListener(_onSessionEnded);
     _deviceFilter.dispose();
+    _alertsAll.dispose();
     _state.dispose();
     super.dispose();
   }
@@ -79,6 +83,11 @@ class _MainShellState extends State<MainShell> {
     _goTo(1);
   }
 
+  void _openAlerts() {
+    _alertsAll.value = true;
+    _goTo(2);
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottom = math.max(22.0, MediaQuery.paddingOf(context).bottom + 8);
@@ -87,10 +96,10 @@ class _MainShellState extends State<MainShell> {
         state: _state,
         onOpenDevices: () => _openDevices(const {}),
         onOpenUnrecognized: () => _openDevices(const {FilterPole.untrusted}),
-        onOpenAlerts: () => _goTo(2),
+        onOpenAlerts: _openAlerts,
       ),
       DeviceListScreen(state: _state, filterRequest: _deviceFilter),
-      AlertListScreen(state: _state),
+      AlertListScreen(state: _state, allRequest: _alertsAll),
       SettingsScreen(state: _state),
     ];
     return Scaffold(

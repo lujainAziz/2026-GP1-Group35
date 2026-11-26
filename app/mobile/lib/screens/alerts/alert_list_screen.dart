@@ -50,9 +50,12 @@ BadgeColors _severityColors(Severity s) => switch (s) {
 /// One list for Threat and Anomaly alerts with All / Open / Resolved tabs, a
 /// severity filter, a newest/most-severe sort, and a back-to-top button.
 class AlertListScreen extends StatefulWidget {
-  const AlertListScreen({super.key, required this.state});
+  const AlertListScreen({super.key, required this.state, this.allRequest});
 
   final AppState state;
+
+  /// Set to true by the dashboard to open this tab on All, scrolled to the top.
+  final ValueNotifier<bool>? allRequest;
 
   @override
   State<AlertListScreen> createState() => _AlertListScreenState();
@@ -60,6 +63,7 @@ class AlertListScreen extends StatefulWidget {
 
 class _AlertListScreenState extends State<AlertListScreen> {
   _AlertTab _tab = _AlertTab.all;
+  bool _tabChanged = false;
 
   final ScrollController _scroll = ScrollController();
   bool _showTop = false;
@@ -77,10 +81,12 @@ class _AlertListScreenState extends State<AlertListScreen> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
+    widget.allRequest?.addListener(_onAllRequest);
+    _onAllRequest();
     // Bring back the tab + sort/filter choices from last time.
     UiMemory.alertTab().then((name) {
       for (final t in _AlertTab.values) {
-        if (t.name == name && mounted) setState(() => _tab = t);
+        if (t.name == name && mounted && !_tabChanged) setState(() => _tab = t);
       }
     });
     UiMemory.alertSeverities().then((names) {
@@ -93,7 +99,18 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant AlertListScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.allRequest != widget.allRequest) {
+      oldWidget.allRequest?.removeListener(_onAllRequest);
+      widget.allRequest?.addListener(_onAllRequest);
+      _onAllRequest();
+    }
+  }
+
+  @override
   void dispose() {
+    widget.allRequest?.removeListener(_onAllRequest);
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
     super.dispose();
@@ -105,8 +122,16 @@ class _AlertListScreenState extends State<AlertListScreen> {
   }
 
   void _setTab(_AlertTab t) {
+    _tabChanged = true;
     setState(() => _tab = t);
     UiMemory.setAlertTab(t.name);
+  }
+
+  void _onAllRequest() {
+    if (widget.allRequest?.value != true) return;
+    _setTab(_AlertTab.all);
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    widget.allRequest?.value = false;
   }
 
   @override
