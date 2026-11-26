@@ -19,7 +19,7 @@ Practical verification of each acceptance requirement. **Automated** = test suit
 observed on the running appliance. Synthetic/unit tests are **not** a substitute for the dataset
 detection evaluation, which was completed offline on 23-24 November 2026 (row D). No test data was written into
 production logs; live evidence is redacted of addresses/MACs. Commit links:
-`github.com/lujainAziz/Assas/commit/<hash>`.
+`github.com/lujainAziz/2026-GP1-Group35/commit/<hash>`.
 
 Legend: ✅ pass · ❌ fail · ☐ not tested.
 
@@ -71,9 +71,6 @@ address-less event, both gateways excluded. Evidence: `evidence/*.md`/`.txt`.
   GEM/dma-buf root-only); any memory-reduction proposal is blocked on a
   privileged breakdown first (`EVALUATION.md` memory section). No reduction
   claimed or applied.
-- **Dataset detection evaluation** — plan ready in `EVALUATION.md`; downloads
-  held for approval.
-- **Merge `sprint-2` → main** at sprint close (owner).
 
 ## Reader-restart smoke test (#5) — sudo batch (smoke test only)
 This is a **smoke test** — it shows the reader comes back and keeps its alerts across a restart; it

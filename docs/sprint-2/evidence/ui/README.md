@@ -1,5 +1,7 @@
 # Mobile UI — Sprint 2 screens (screenshots for review)
 
+These screenshots show the Sprint 2 interface; later interface changes are shown in the project report.
+
 Screenshots generated headless via golden capture (`app/mobile/test/ui_goldens_test.dart`,
 `flutter test --update-goldens --dart-define=GOLDENS=true`). Default-font set at 390×844 @2x:
 - `alerts-tab.png` — Alerts list.

@@ -49,7 +49,7 @@ empty result. Never hardcodes an IP. DNS-SD is not attempted on Flutter Web (the
 native-only).
 
 **Use the IPv4 address.** A resolve of `_assas._tcp` / `assas-pi.local` returns multiple
-addresses — an IPv4 (e.g. `192.168.100.216`), a **global IPv6**, and loopback. The API
+addresses — an IPv4 (e.g. `192.0.2.216`), a **global IPv6**, and loopback. The API
 listens on IPv4 only (`0.0.0.0:8000`), so the app must connect over the **IPv4** result;
 the IPv6 address will refuse the connection. Prefer the A record / IPv4 endpoint from the
 mDNS result and ignore AAAA. This is deliberate — see Known limitations.
@@ -130,6 +130,14 @@ to log in.
 Ends the calling phone's session: its token stops working at once, and its alert
 read markers are deleted. Other paired phones are not affected. Returns `204`
 with no body.
+
+### GET /sessions
+The paired phones, for the display, ordered by `id`. Appliance only: a paired
+phone gets `403` (a caller without a token gets `401` first). Token hashes are never returned. A phone
+without a stored name reads `"Unnamed phone"`; no sessions table yet returns `[]`.
+```json
+[{"id": 1, "device_name": "Phone", "created_at": "2026-11-20T10:15:00"}]
+```
 
 ## Timestamps
 All timestamps are **server-local naive ISO-8601** to the second, e.g.
@@ -327,6 +335,55 @@ Aggregate counts. Shape:
   "by_device_type": [{"device_type": "Mobile (Apple)", "count": 4}]
 }
 ```
+
+---
+
+## GET /settings
+The single appliance setting: the switch for the active identification probes
+(unicast mDNS, NBNS name query, limited nmap). Needs a paired token (or the
+appliance itself, see Authentication).
+```json
+{"active_probes": false}
+```
+A setting that was never saved reads as `false`. `503` if the settings database is
+unavailable.
+
+## PUT /settings
+Saves the appliance setting. Needs a paired token (or the appliance itself, see
+Authentication). Body:
+```json
+{"active_probes": true}
+```
+`active_probes` must be a JSON boolean: a missing field, `1` or `"true"` gets
+`422`. Returns the saved setting, same shape as `GET /settings`. Saving the same
+value again changes nothing. `503` if the device database is not available yet.
+
+This writes only the setting; it never changes device rows, discovery state or
+classification. Discovery re-reads the value on its own schedule and applies it to
+the active probes.
+
+---
+
+## GET /activity
+Live capture activity: packet-rate samples and the protocols seen recently. Counters only, no addresses or payloads. Needs a paired token (or
+the appliance itself, see Authentication).
+```json
+{
+  "updated_at": 1795600000.0,
+  "sample_seconds": 5,
+  "samples": [{"time": 1795599990, "packets_per_second": 12.4}],
+  "protocols": ["ARP", "DNS", "MDNS", "TCP", "UDP"],
+  "protocol_window_seconds": 60,
+  "available": true,
+  "stale": false
+}
+```
+- `samples`: up to the last 12 five-second buckets; `time` is the bucket start in
+  Unix seconds.
+- `protocols`: protocols seen in the last `protocol_window_seconds`.
+- `updated_at`: Unix seconds of the last write; `stale` is `true` when that is more
+  than 15 seconds ago (or in the future).
+- Before any activity has been written: `{"available": false}` only.
 
 ---
 
