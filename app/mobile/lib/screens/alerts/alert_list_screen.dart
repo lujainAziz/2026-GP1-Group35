@@ -218,69 +218,76 @@ class _AlertListScreenState extends State<AlertListScreen> {
   double _tabsExtent(BuildContext context, bool stacked) {
     final s = _systemScale(context);
     final tabH = stacked ? 30 + 28 * s : 22 + 18 * s;
-    // max(tab, button) + vertical padding (10) + the button's bottom inset (4)
-    // + the bottom hairline (1), so the button keeps its full fixed size.
-    return math.max(tabH, FilterButton.size) + 15;
+    // max(tab, button) + the card's inner vertical padding (10) + the button's
+    // bottom inset (4) + the card border (2 x 1) + the gaps above and below the
+    // card, so the button keeps its full fixed size and no alert is covered.
+    return math.max(tabH, FilterButton.size) + 16 + 2 * _tabsCardGap;
   }
+
+  // Gap above and below the tabs card inside the pinned header.
+  static const double _tabsCardGap = 6;
+  // The card is inset by the alert cards' margin; this inner side padding (less
+  // the 1px border) brings the row back to the page text margin, so the row
+  // keeps its previous width and lines up with the big title.
+  static const double _tabsCardPadH = UiSpace.pageText - UiSpace.pageCards - 1;
 
   Widget _tabs(List<SecurityAlert>? alerts, bool stacked) {
     final list = alerts ?? const <SecurityAlert>[];
-    // Pinned strip: fills the header height, content sits at the bottom above
-    // the hairline; the big title scrolls away above it. The background is an
-    // OPAQUE gradient matching the screen background's direction and colours,
-    // so nothing ghosts through while scrolling and there is no flat band.
+    // Pinned strip: fills the header height; the big title scrolls away above
+    // it. The full-width background is OPAQUE and the screen's own base colour
+    // (no band, no hairline), so alerts never show through while scrolling.
+    // The tabs row sits in a rounded card styled like the alert cards.
     return ClipRect(
-      child: Container(
-          alignment: Alignment.bottomCenter,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [AssasColors.bgTop, AssasColors.bgMid],
-            ),
-            border: Border(bottom: BorderSide(color: Ui.line)),
-          ),
-          // Inset to the page text margin so the row lines up with the big title
-          // and the Filter's right edge meets the end of "unresolved alerts" above it.
-          padding: const EdgeInsets.fromLTRB(UiSpace.pageText, 4, UiSpace.pageText, 6),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Tabs grouped on the left; Expanded (not Flexible) so the free
-              // space lives HERE and the Filter is pushed to the far right even
-              // when the tabs are narrow. Shrinks slightly only as a last resort
-              // (never clips "Resolved").
-              Expanded(
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
+      child: ColoredBox(
+        color: Ui.bg,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+              UiSpace.pageCards, _tabsCardGap, UiSpace.pageCards, _tabsCardGap),
+          child: Container(
+            alignment: Alignment.bottomCenter,
+            clipBehavior: Clip.antiAlias,
+            decoration: surfCard(UiRadius.alertCard),
+            padding: const EdgeInsets.fromLTRB(_tabsCardPadH, 4, _tabsCardPadH, 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Tabs grouped on the left; Expanded (not Flexible) so the free
+                // space lives HERE and the Filter is pushed to the far right even
+                // when the tabs are narrow. Shrinks slightly only as a last resort
+                // (never clips "Resolved").
+                Expanded(
+                  child: Align(
                     alignment: Alignment.bottomLeft,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        for (final tab in _AlertTab.values) ...[
-                          if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
-                          _tabItem(
-                            tab,
-                            // Unread: this phone's DB count (the badge), not the page.
-                            tab == _AlertTab.unread
-                                ? state.unreadCount ?? list.where(tab.matches).length
-                                : list.where(tab.matches).length,
-                            stacked,
-                          ),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.bottomLeft,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          for (final tab in _AlertTab.values) ...[
+                            if (tab != _AlertTab.all) SizedBox(width: stacked ? 8 : 14),
+                            _tabItem(
+                              tab,
+                              // Unread: this phone's DB count (the badge), not the page.
+                              tab == _AlertTab.unread
+                                  ? state.unreadCount ?? list.where(tab.matches).length
+                                  : list.where(tab.matches).length,
+                              stacked,
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              // Free space between the tabs and the button; the button takes its
-              // fixed width from here and stays pinned to the right edge.
-              const SizedBox(width: 8),
-              Padding(padding: const EdgeInsets.only(bottom: 4), child: _filterPill()),
-            ],
+                // Free space between the tabs and the button; the button takes its
+                // fixed width from here and stays pinned to the right edge.
+                const SizedBox(width: 8),
+                Padding(padding: const EdgeInsets.only(bottom: 4), child: _filterPill()),
+              ],
+            ),
           ),
+        ),
       ),
     );
   }
