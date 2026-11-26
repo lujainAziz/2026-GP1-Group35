@@ -452,6 +452,32 @@ void main() {
       expect(resolved.right, lessThanOrEqualTo(filter.left), reason: reason);
       expect(resolved.bottom, lessThanOrEqualTo(card.bottom), reason: reason);
 
+      // The row is centred vertically: equal space above and below (within 1px),
+      // for the whole row, for the tabs group and for the button.
+      void centred(Rect r, String what) {
+        expect((r.top - card.top) - (card.bottom - r.bottom), moreOrLessEquals(0, epsilon: 1),
+            reason: '$reason: $what centred (top ${r.top - card.top}, bottom ${card.bottom - r.bottom})');
+      }
+      centred(tester.getRect(find.descendant(of: cardFinder, matching: find.byType(Row)).first), 'row');
+      centred(tester.getRect(find.descendant(of: cardFinder, matching: find.byType(FittedBox)).first), 'tabs');
+      centred(filter, 'filter button');
+
+      // Equal inner padding left and right: "All" to the card's left edge equals
+      // the button to the card's right edge.
+      final all = tester.getRect(find.text('All').first);
+      expect((all.left - card.left) - (card.right - filter.right), moreOrLessEquals(0, epsilon: 1),
+          reason: '$reason: left ${all.left - card.left}, right ${card.right - filter.right}');
+
+      // The selected tab's underline sits under its label, as far from the
+      // card's bottom edge as the label's top is from the card's top edge.
+      final underline = tester.getRect(find.descendant(
+          of: find.descendant(of: cardFinder, matching: find.byType(AnimatedScale)).first,
+          matching: find.byType(Container)));
+      expect(underline.top, greaterThan(all.bottom), reason: '$reason: underline below the label');
+      expect(underline.left, lessThanOrEqualTo(all.left + 1), reason: '$reason: underline under the label');
+      expect((all.top - card.top) - (card.bottom - underline.bottom), moreOrLessEquals(0, epsilon: 1),
+          reason: '$reason: label top ${all.top - card.top}, underline bottom ${card.bottom - underline.bottom}');
+
       // The first alert starts below the pinned header (a gap below the card).
       final header = tester.getRect(find.ancestor(of: cardFinder, matching: find.byType(ClipRect)).first);
       final firstAlert = tester.getRect(find.byType(TimelineAlertCard).first);
