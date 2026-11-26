@@ -59,7 +59,7 @@ that `sprint-2` had been showing. All Sprint 2 functionality is preserved.
 | Services | `assas-capture`, `assas-discovery`, `assas-api` | + `assas-suricata` (☑ active), `assas-suricata-rotate.timer` (☑ active), + `assas-alerts` (☑ active) |
 | Database | `devices`, `flows`, … | + `alerts`, `alert_ingest_state` tables (☑) |
 | API | inventory endpoints | + alert endpoints: view + state update (☑) |
-| Mobile | alerts UI gated off | alert list/details/per-device alerts + state management enabled (☑ code+tests; visual review outstanding) |
+| Mobile | alerts UI gated off | alert list/details/per-device alerts + state management enabled (☑ code+tests; visual review done in Release 1) |
 
 ## Requirements tracking
 Requirements grouped by function; the sections below carry the detail. Final per-requirement
