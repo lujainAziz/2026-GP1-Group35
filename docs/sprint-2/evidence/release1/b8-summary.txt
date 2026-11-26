@@ -1,0 +1,13 @@
+B8 8-hour run summary
+Samples: 97, from 2026-11-24T22:08:43+03:00 to 2026-11-25T06:08:57+03:00 (480 minutes)
+discovery  samples not active: 0; restarts during run: 0; process IDs seen: 1
+api        samples not active: 0; restarts during run: 0; process IDs seen: 1
+alerts     samples not active: 0; restarts during run: 0; process IDs seen: 1
+suricata   samples not active: 0; restarts during run: 0; process IDs seen: 1
+display app samples not running: 0
+alerts rows: start 102, end 103, times it decreased: 0, read errors: 0
+devices rows: start 65, end 65
+memory used MiB: avg 2573, max 2758
+CPU %: avg 9.6, max 18.1
+Suricata memory MiB: start 1178, end 1183, max 1183
+RESULT: PASS (no service stopped or restarted; alerts never decreased)
