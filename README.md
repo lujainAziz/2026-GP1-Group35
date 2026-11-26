@@ -175,6 +175,71 @@ The capture interface operates without an IP address.
 
 The appliance advertises its local API using Avahi (`_assas._tcp`) so the mobile application can discover it without relying on a fixed IP address.
 
+## Appliance Setup
+
+These steps set up the backend on the Raspberry Pi from the files in this repository. Values in `<angle brackets>` are machine-specific.
+
+**Prerequisites**
+
+- Raspberry Pi with two wired interfaces: `eth0` (management and discovery) and `eth1` (capture, connected to the switch mirror port). The units use these names.
+- Python 3 at `/usr/bin/python3`: `assas-discovery` and `assas-alerts` run with the system Python, not the virtual environment. `assas-alerts` runs as `root`; `assas-discovery` runs as `assas` with `CAP_NET_RAW` and `CAP_NET_ADMIN` (its drop-in `override.conf`).
+- Suricata installed from the Debian package: `appliance/suricata/gen_assas_yaml.py` builds the Assas configuration from the stock `/etc/suricata/suricata.yaml`.
+- Avahi (`avahi-daemon`) for the `_assas._tcp` service advertisement.
+- The units expect the repository at `/home/assas/assas` and a user `assas`. If yours differ, change the paths and `User=` lines in `appliance/systemd/` before installing.
+
+**Virtual environment and requirements**
+
+`assas-api` runs Uvicorn from the project virtual environment at `/home/assas/assas/.venv`:
+
+```bash
+cd <repo-dir>
+python3 -m venv .venv
+.venv/bin/pip install -r appliance/requirements.txt
+```
+
+**Suricata configuration**
+
+`assas-suricata` runs `suricata -c /etc/suricata/assas.yaml --af-packet=eth1`. Deploy the files from `appliance/suricata/`:
+
+```bash
+cd <repo-dir>/appliance/suricata
+python3 gen_assas_yaml.py        # writes assas.yaml next to the script
+sudo cp assas.yaml update.yaml disable.conf modify.conf assas-test.rules /etc/suricata/
+sudo cp assas-suricata.logrotate /etc/logrotate.d/suricata
+sudo suricata-update --offline -c /etc/suricata/update.yaml
+```
+
+`update.yaml` describes the check after `suricata-update`: the enabled-rule count must be exactly 53,147, and the 2016503 rule line must contain `flowbits:noalert`.
+
+**Install and enable the systemd units**
+
+```bash
+sudo cp <repo-dir>/appliance/systemd/*.service <repo-dir>/appliance/systemd/*.timer /etc/systemd/system/
+sudo cp -r <repo-dir>/appliance/systemd/assas-capture.service.d <repo-dir>/appliance/systemd/assas-discovery.service.d /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now assas-capture assas-suricata assas-discovery assas-api assas-alerts
+sudo systemctl enable --now assas-suricata-rotate.timer
+```
+
+**mDNS advertisement** (`appliance/avahi/README.md`):
+
+```bash
+sudo cp <repo-dir>/appliance/avahi/assas-api.service /etc/avahi/services/assas-api.service
+sudo systemctl reload avahi-daemon
+```
+
+**Check the services**
+
+```bash
+systemctl status assas-discovery assas-api assas-alerts assas-suricata
+systemctl status assas-capture assas-suricata-rotate.timer
+avahi-browse -rt _assas._tcp
+```
+
+`avahi-browse` should list the appliance on port 8000. The on-device display reads the local API at `http://127.0.0.1:8000` (`app/SETUP.md`).
+
+Not covered here: installing the Suricata and Avahi packages, and the Python packages that the system Python needs for assas-discovery (Scapy must be importable by /usr/bin/python3).
+
 ## Backend Services
 
 The backend runs through four long-running systemd services on the Raspberry Pi:

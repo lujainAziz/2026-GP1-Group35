@@ -31,12 +31,11 @@ The functions delivered in this sprint are:
 security alert ingestion (de-duplication, device linking, resume safety); the security alert
 service; security alert display and state management; and device signals from unresolved alerts.
 
-**What is implemented but still awaiting verification:** the operator's on-device visual review of
-the alert screens; a validated packet-drop measurement with the corrected tool; and a resource
-measurement taken without the development agent co-resident.
+The on-device visual review of the alert screens was completed in Release 1 (see the status block in VERIFICATION.md).
 
-**What is still in progress / not yet done:** confirming the appliance's memory usage
-against its target (the recorded measurement did not meet it).
+**Resource usage:** three 2-hour runs were taken with only the appliance services running. The
+memory target was not met on 5 November; the CPU and memory targets were met in both 17 November
+runs, with a validated packet-drop measurement (`EVALUATION.md` §4).
 
 Status legend: ☐ Planned · ◐ In progress · ☑ Done & tested. Every "Done" row links to the evidence
 (commit, log path, or test). Results without evidence are not recorded.
@@ -73,14 +72,14 @@ pass / fail / not-tested verdicts (automated vs live) are in `VERIFICATION.md`.
 | Threat detection | Community signature set installed and updatable | Suricata Configuration | ☑ | `partA-et-open-source.txt`, `partA-suricata-T.log` |
 | Threat detection | Event log with alert events (plus statistics for the drop rate) | Suricata Configuration | ☑ | `partA-eve-event-types.txt` |
 | Threat detection | Service definition consistent with the existing services | Suricata Configuration | ☑ | `assas-suricata.service` |
-| Resource usage | Within limits: total CPU ≤75% avg, memory under target | Evaluation | ◐ CPU and drop-rate PASS; memory target not met; drop re-measurement pending | `resources/`, `EVALUATION.md` |
+| Resource usage | Within limits: total CPU ≤75% avg, memory under target | Evaluation | ☑ CPU and memory targets met in both 17 November runs (memory not met on 5 November); drop measurement validated | `resources/clean*/`, `EVALUATION.md` §4 |
 | Alert ingestion | Record detections as security alerts | Security Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
 | Alert ingestion | Severity from detection priority (highest→Critical … lowest→Low) | Security Alert Ingestion | ☑ | `test_alerts.py` |
 | Alert ingestion | Link each alert to the device it concerns | Security Alert Ingestion | ☑ | `test_alerts.py` |
 | Alert ingestion | De-duplicate recurring detections; keep count and first/last time | Security Alert Ingestion | ☑ | `partBC-live.txt`, `test_alerts.py` |
 | Alert ingestion | Resume safely across restarts and log rotation | Security Alert Ingestion | ☑ | `test_alerts.py` |
 | Alert service | Authenticated access to view alerts and update their state | Security Alert Service | ☑ | `test_api.py`, `test_frontend_contract.py`, `partBC-live.txt` |
-| Alert display & state management | Single alert list; view details; per-device alerts; manage New/Reviewed/Resolved | Security Alert Display and State Management | ☑ code+tests; visual review outstanding | `test/alerts_test.dart`, `evidence/ui/`, `evidence/partD-pbi22-live.md` |
+| Alert display & state management | Single alert list; view details; per-device alerts; manage New/Reviewed/Resolved | Security Alert Display and State Management | ☑ code+tests; visual review done in Release 1 | `test/alerts_test.dart`, `evidence/ui/`, `evidence/partD-pbi22-live.md` |
 | Detection accuracy | Offline evaluation on a labelled attack dataset (IoT-23) | Evaluation | ☑ done (offline IoT-23, 23-24 November 2026) | `EVALUATION.md` §3 |
 
 ---
@@ -355,12 +354,12 @@ Two evaluations, by function:
 - **Detection accuracy** — **done** offline on IoT-23 (23-24 November 2026): Assas raised alerts on
   the infected device in 16 of 20 malware captures (4 Strong, 12 Indirect, 0 Weak, 4 Not
   detected), and no alert on any device in the benign captures (`EVALUATION.md` §3).
-- **Resource usage** — measured. The 2-hour live-traffic baseline is complete (CPU and packet-drop
-  targets met; **memory target not met**). The additional run **taken without the development agent
-  co-resident is complete** and confirms the **memory target is still not met**; its packet-drop
-  figure is recorded but **not yet validated** — a measurement-tool defect (the process-name
-  detector) has been fixed, and the **re-measurement of the drop rate is still pending** an
-  agent-free window.
+- **Resource usage** — three 2-hour runs, taken with only the appliance services running.
+  **5 November 2026:** CPU avg 36.7% (target met); memory max 4.37 GiB (**target not met**); its
+  drop figure is recorded but not validated (a measurement-tool defect, since fixed).
+  **17 November 2026:** two runs at about 1.2 Mbps and 10.5 Mbps — CPU avg 9.8% and 17.4%, memory
+  max 2.38 and 2.49 GiB, 0 packets dropped with a validated drop measurement; **CPU and memory
+  targets met** in both.
 
 Full figures, the memory accounting and the held replay commands are in `EVALUATION.md`.
 
@@ -627,5 +626,5 @@ Evidence: `evidence/alert-log-reset-2026-11-10.md`.
 - **Detection evaluation:** the offline IoT-23 evaluation was completed on
   23-24 November 2026: alerts on the infected device in 16 of 20 malware
   captures (`EVALUATION.md` §3).
-- **Memory target:** the 2-hour baseline included a co-resident development
-  agent; the <4 GB judgement awaits a clean run (`EVALUATION.md §4`).
+- **Memory target:** not met in the 5 November run (maximum 4.37 GiB); met in
+  both 17 November runs (`EVALUATION.md §4`).

@@ -1,0 +1,20 @@
+B7 restart test started 2026-11-24T21:58:43+03:00
+assas-discovery: always RestartSec=5s
+assas-api: always RestartSec=5s
+assas-alerts: always RestartSec=5s
+assas-suricata: always RestartSec=5s
+BEFORE: alert_ingest_state=4 alert_reads=240 alerts=102 app_settings=1 appliance_identity=1 daemon_heartbeat=1 device_addresses=257 devices=65 flows=3940332 live_activity=1 migrations=2 paired_sessions=4
+assas-discovery KILL: back_active_new_pid=5.1 s; ready=n/a s; NRestarts 0 -> 1
+assas-discovery TERM: back_active_new_pid=5.1 s; ready=n/a s; NRestarts 1 -> 2
+assas-api KILL: back_active_new_pid=5.1 s; ready=5.8 s; NRestarts 0 -> 1
+assas-api TERM: back_active_new_pid=5.3 s; ready=6.0 s; NRestarts 1 -> 2
+assas-alerts KILL: back_active_new_pid=5.1 s; ready=n/a s; NRestarts 0 -> 1
+assas-alerts TERM: back_active_new_pid=5.3 s; ready=n/a s; NRestarts 1 -> 2
+assas-suricata KILL: back_active_new_pid=5.3 s; ready=15.8 s; NRestarts 0 -> 1
+assas-suricata TERM: back_active_new_pid=7.4 s; ready=17.9 s; NRestarts 1 -> 2
+AFTER:  alert_ingest_state=4 alert_reads=240 alerts=102 app_settings=1 appliance_identity=1 daemon_heartbeat=1 device_addresses=257 devices=65 flows=3941721 live_activity=1 migrations=2 paired_sessions=4
+NRestarts=2	Id=assas-discovery.service	ActiveState=active
+NRestarts=2	Id=assas-api.service	ActiveState=active
+NRestarts=2	Id=assas-alerts.service	ActiveState=active
+NRestarts=2	Id=assas-suricata.service	ActiveState=active
+B7 restart test finished 2026-11-24T22:02:44+03:00

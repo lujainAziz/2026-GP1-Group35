@@ -18,12 +18,10 @@ in the benign captures (one low-severity protocol event in the Philips Hue captu
 associated with a device). Precision and recall were not computed, and CICIoT2023 was not tested in Release 1. Results
 are in section 3; full results are in Chapter 5 of the project report.
 
-**Resource-usage evaluation — measured; one target not met, one measurement pending.** The 2-hour
-live-traffic baseline is complete (CPU and packet-drop targets met; memory target not met). An
-additional run taken without the development agent co-resident is also complete and is reported
-alongside the baseline; it confirms the memory target is still not met, and its packet-drop figure
-is recorded but not yet validated (a measurement-tool defect, since fixed). Details in sections 4
-onward.
+**Resource-usage evaluation — three 2-hour runs, taken with only the appliance services
+running.** On 5 November 2026 the CPU target was met and the memory target was not (maximum
+4.37 GiB). On 17 November 2026 two runs, at about 1.2 Mbps and 10.5 Mbps of traffic, met the CPU
+and memory targets, with no packets dropped and a validated drop measurement. Details in section 4.
 
 ---
 
@@ -205,107 +203,47 @@ events), **Not detected** (no event involves the device). Malware names are the 
   no full-coverage assumption.
 - Full results are in Chapter 5 of the project report.
 
-## 4. Resources — ☑ 2-hour live-traffic baseline complete (2026-11-02 13:37–15:37 UTC)
+## 4. Resources — ☑ Three 2-hour runs (5 and 17 November 2026)
 
-**Standing verdict:** the baseline run's result is RETAINED as-is — CPU and
-drop-rate targets PASS, **the memory target was NOT met** under its stated
-conditions (the development agent co-resident and not excluded, as required).
-The agent-free clean run below is an **additional, independent measurement**;
-whatever it shows, it does not cancel or replace the baseline verdict — both
-results are reported side by side.
-All existing services + `assas-suricata` + `assas-alerts` running. **Scope:** baseline under *live
-house traffic*, not proof of performance under attack or heavy load; the attack-replay run (§2–3) is
-measured separately once datasets are approved.
+All resource and reliability measurements in this document are preliminary Release 1 measurements. Formal non-functional requirement testing is scheduled for Release 2.
 
-Method: `appliance/tools/resource_sampler.py 7200 10` reading `/proc/stat` (total-device CPU 0–100%),
-`/proc/meminfo` (`MemTotal−MemAvailable`), `/sys/class/net/eth1/statistics` (throughput), and the eve
-`stats` `capture.kernel_packets`/`kernel_drops` deltas (drop rate). Rules: ET Open 2026-11-02 (53,305
-sigs). Evidence: `evidence/resources/resource-2h.csv` (720 rows), `resource-2h-summary.json`,
-`appliance-footprint.txt`.
+Each run was taken with only the appliance services running, using
+`appliance/tools/clean_resource_run.sh`, which wraps
+`appliance/tools/resource_sampler.py` (2 hours, one sample every 10 s). The sampler reads
+`/proc/stat` (total-device CPU 0–100%), `/proc/meminfo` (`MemTotal − MemAvailable`, in MiB),
+`/sys/class/net/eth1/statistics` (throughput, bits per second) and the eve `stats`
+`capture.kernel_packets` / `kernel_drops` deltas (drop rate). A guard log (`agent-guard.log`) is
+written every 30 s during each run; in all three runs it records the precheck as passed and 0
+`PRESENT` entries.
 
-**Run verification:** duration **7200 s (exactly 2 h)**, 13:37:07→15:37:08 UTC; **720 samples**;
-inter-sample interval 10.0–11.0 s, mean 10.001 s, **no gap >15 s**; all five services `active` with
-**NRestarts=0** and "active since" predating the window (suricata/rotate 12:39 UTC, alerts 13:27,
-api 13:29, discovery/capture since 2026-10-29) → **continuous, no restarts** during the test.
+**Targets as the sampler judges them** (`resource_sampler.py`): CPU — the **average** is at most
+75%; memory — the **maximum** is below 4096 MiB (4 GiB). Memory is total-device memory, not
+adjusted by excluding any process.
 
-**Acceptance metrics are total-device CPU and total-device memory**, judged as-is; the total memory
-figure is **not** adjusted by excluding any process.
+| Run (UTC) | Traffic on `eth1` (avg) | CPU avg / max | Memory avg / max | Suricata packets dropped | CPU target | Memory target | Evidence |
+|---|---|---|---|---|---|---|---|
+| 5 Nov 2026, 02:26–04:26 | 6.58 Mbps | 36.7% / 53.4% | 3.95 / 4.37 GiB | 0 of 6,193,620 (drop measurement not validated, see below) | met | **not met** | `evidence/resources/clean/` |
+| 17 Nov 2026, 16:32–18:32 (light traffic) | 1.2 Mbps | 9.8% / 32.7% | 2.36 / 2.38 GiB | 0 of 1,320,585 | met | met | `evidence/resources/clean2/` |
+| 17 Nov 2026, 20:24–22:24 (heavier traffic) | 10.5 Mbps | 17.4% / 35.1% | 2.40 / 2.49 GiB | 0 of 9,162,670 | met | met | `evidence/resources/clean4/` |
 
-| Metric (acceptance) | Target | Measured | Verdict | Evidence |
-|---|---|---|---|---|
-| Total-device CPU | avg ≤ 75% | **avg 29.5%, max 39.9%** | **PASS** | `resource-2h-summary.json` |
-| Total-device memory | < 4 GB of 8 GB | **avg 4.90 GB, max 6.01 GB** (of 7.87 GB) | **NOT MET** (see note) | `resource-2h.csv`, `-summary.json` |
-| Traffic load | record | **rx avg ~12.0 kbps, tx ~0** (light live traffic) | — | `resource-2h.csv` |
-| Suricata packet-drop rate | record | **0.0%** — 0 drops / 163,368 pkts | **PASS** | `resource-2h-summary.json` |
+Each evidence folder holds `resource-2h-summary.json`, `resource-2h.csv` (720 samples) and
+`agent-guard.log`. Memory is shown in GiB (MiB ÷ 1024); the summaries record MiB.
 
-**Memory — why NOT MET and what it means:** total-device memory exceeded 4 GB, but a development
-agent was **co-resident on the appliance during this run (~2.4 GB RSS)** and is
-included in the figure as required. It is not part of the deployed appliance, so this baseline
-**overstates** the appliance's own memory. For context only (not a substitute for the acceptance
-figure), the appliance services' own RSS sum is **~1.49 GB** (`appliance-footprint.txt`:
-Suricata ~1.06, display ~0.20, discovery ~0.13, API ~0.08, alerts ~0.02). The target is therefore
-**not yet validly judged** — a representative run without the development agent is required before a
-pass/fail on memory is claimed.
+- **5 November:** the CPU target was met; the memory target was not met (maximum 4470 MiB, above
+  4096 MiB; average 4046 MiB). The audit below records what the memory consisted of.
+- **17 November:** in both runs the CPU and memory targets were met, Suricata dropped no packets,
+  the Suricata process stayed the same throughout (`suricata_pid_changes` 0) and the summaries mark
+  the drop measurement as valid. Before both runs, the on-device display application was changed to
+  stop its continuous animations (commit `54c05d1`, pull request #30, "Stop endless animations on
+  the Pi display to cut GPU memory", committed on 17 November 2026 at 15:33 UTC). The project report
+  treats the heavier-traffic run as the representative result.
 
-**This baseline is retained.** The clean run below is **additive** — it writes to
-`evidence/resources/clean/` and does **not** replace or erase the baseline results above
-(CPU target met, memory target not met, zero drops under light traffic).
-
-**Representative run without the development agent (to validly judge the memory target):** use
-`appliance/tools/clean_resource_run.sh`. It refuses to start while the development agent is present,
-samples only after that precheck passes, and records agent presence every 30 s to
-`clean/agent-guard.log`; the result is valid only if that log shows **zero `PRESENT`** entries.
-```
-# After the development agent's session on the Pi has fully exited:
-ASSAS_DEV_AGENT_PATTERN='<agent-process-name>' /home/assas/assas/appliance/tools/clean_resource_run.sh
-# -> evidence/resources/clean/resource-2h-summary.json + clean/agent-guard.log
-
-### Clean (agent-free) 2-hour run — COMPLETED 2026-11-05 02:26–04:26 UTC
-
-Results recorded AS-IS (`evidence/resources/clean/`); the baseline verdict above
-stands unchanged; this is the independent additional measurement.
-
-| Metric | Result | Verdict |
-|---|---|---|
-| Validity guard | `agent-guard.log`: precheck passed, **0 PRESENT** entries over the full window | valid agent-free run |
-| Sampling integrity | 720 samples / 7200 s, 0 gaps > 15 s (worst interval 11.0 s), 0 blank Suricata-stat samples | continuous |
-| Service continuity | all five services active since before the window, `NRestarts=0` throughout | continuous |
-| CPU | avg **36.71 %**, max 53.4 % | **PASS** (≤ 75 %) |
-| Memory | avg **4045.9 MB**, max **4470 MB**, min 3605 MB (steady ≈4.0 GB, no runaway growth: first-10 avg 4012 → last-10 avg 4086) | **NOT met** (< 4096 MB) |
-| Suricata drops | 0 of 6,193,620 packets; 0 resets; 0 missing samples; 721 valid deltas | **NOT VALIDATED** — see below |
-
-**Why the drop measurement is not validated:** `suricata_drop_measurement_valid`
-is false solely because `suricata_pid_start/end` were null. Cause identified
-(read-only check): the kernel reports Suricata's process name as
-`Suricata-Main`, while the sampler's detector matched the literal `suricata`
-only — a defect in the measurement tool, not in the service. Every other
-validity input was clean. **The drop figure is therefore recorded but NOT
-claimed as a pass.** Required fix: accept the real process name — implemented in
-`resource_sampler._is_suricata_comm` with a regression test; a re-run to obtain
-a fully validated drop measurement awaits the team's decision.
-
-**Memory analysis (read-only, post-run):** usage was steady around 4.0 GB with
-no leak-shaped growth. Top consumers at inspection: Suricata **≈1205 MB** (the
-53k-rule ET Open set dominates), the 7-inch display app ≈231 MB, discovery
-≈165 MB, API ≈117 MB, alerts reader (small) — appliance processes total
-**≈1.7–1.8 GB**. The remainder (~2.2–2.5 GB) is the Pi's desktop stack and
-system services (window manager, panels, VNC, journald, portals, kernel/anon).
-Proposals for the team (NOT applied): run the appliance headless in deployment
-(the desktop/VNC stack is not part of the product's function), and/or re-state
-the memory target against appliance processes; Suricata's footprint could also
-be reduced by further rule scoping — each option changes scope and needs a
-decision first.
-```
-Record the clean run's total-device memory here as the memory acceptance figure once it shows the
-agent absent throughout.
-
-
-### Memory accounting + units audit (read-only, 2026-11-05)
+### Memory accounting + units audit for the 5 November run (read-only, 2026-11-05)
 
 **Units audit (tool definition vs acceptance criterion):** `/proc/meminfo`
 values are KiB, so the sampler's figures are **MiB** and its 4096 threshold is
 **4 GiB (= 4.295 GB decimal)**; against a literal **4 GB (decimal)** the bound
-would be 3815 MiB. Readings of the clean run under each interpretation:
+would be 3815 MiB. Readings of the 5 November run under each interpretation:
 
 | Basis | avg 4046 MiB | max 4470 MiB |
 |---|---|---|
@@ -321,8 +259,8 @@ units explicitly (`mem_units` in the summary; CSV header `mem_used_mib`).
 `used = MemTotal − MemAvailable` = anonymous pages + shmem + unreclaimable
 kernel memory (reclaimable page cache excluded). At inspection:
 AnonPages ≈ 2163 MiB (process heaps — Suricata ≈ 1205 MiB dominant; the
-inspection-time figure also includes the dev agent ≈ 447 MiB which was ABSENT
-during the clean run), **Shmem ≈ 1740 MiB**, kernel unreclaimable ≈ 160 MiB,
+inspection-time figure also includes ≈ 447 MiB from a process that is not part
+of the appliance and was not running during the run), **Shmem ≈ 1740 MiB**, kernel unreclaimable ≈ 160 MiB,
 plus the MemAvailable heuristic margin.
 
 **Shmem distribution — what is PROVEN vs not (unprivileged vantage):**
@@ -358,20 +296,34 @@ the breakdown above exists (criterion, display and services unchanged):**
    total-device figure so the target can be judged on what the product actually
    controls (reporting change only — safe, no runtime effect).
 
-### Drop-measurement re-test — PENDING (not run; tool fixed and ready)
-The sampler defect (PID detector missing `Suricata-Main`) is fixed and the tool
-now samples the Suricata PID **every interval** (`suri_pid` CSV column;
-`suricata_pid_changes`/`pids_observed`/`pid_missing` in the summary) — a mid-run
-restart invalidates the measurement even if counters look clean. **The re-run to
-obtain a validated drop figure has NOT been performed** (it requires a fresh
-agent-free 2-hour window the team cannot allocate right now); it stays pending.
-The previous clean-run results are retained unchanged; the drop measurement
-there remains recorded-but-NOT-validated. When a window is available, run (new
-output dir, so nothing earlier is overwritten):
-```bash
-ASSAS_RES_OUTDIR=/home/assas/assas/docs/sprint-2/evidence/resources/clean2 \
-  /home/assas/assas/appliance/tools/clean_resource_run.sh
-```
+### Drop measurement — validated in the 17 November runs
+The 5 November summary records 0 drops but marks the drop measurement as not valid
+(`suricata_drop_measurement_valid: false`): the sampler looked for a process named `suricata`,
+while the kernel reports Suricata's process name as `Suricata-Main`, so no Suricata process ID was
+recorded. This was a defect in the measurement tool, not in the service. The sampler was fixed
+(`resource_sampler._is_suricata_comm`, with a regression test) and now records the Suricata
+process ID at every sample (`suri_pid` CSV column; `suricata_pid_changes`, `suricata_pids_observed`
+and `suricata_pid_missing_samples` in the summary), so a mid-run restart invalidates the
+measurement. Both 17 November runs were taken with the fixed tool: one Suricata process ID
+throughout, 0 missing samples, and `suricata_drop_measurement_valid: true`. The 5 November drop
+figure stays recorded but not validated.
+
+### Additional Release 1 runs (24-25 November 2026)
+Evidence: `evidence/release1/b7-restart.txt` and `evidence/release1/b8-summary.txt`.
+
+- **Restart test (24 November 2026, 21:58–22:02, +03:00).** `assas-discovery`, `assas-api`,
+  `assas-alerts` and `assas-suricata` (all `Restart=always`, `RestartSec=5s`) were each stopped once
+  with `KILL` and once with `TERM`. Each came back with a new process ID after 5.1–5.3 s, except
+  `assas-suricata` after `TERM` (7.4 s). Time until ready: `assas-api` 5.8 s (`KILL`) and 6.0 s
+  (`TERM`); `assas-suricata` 15.8 s and 17.9 s. `NRestarts` went from 0 to 2 for each service, and
+  all four were `active` at the end. Database row counts before and after were the same in every
+  table except `flows` (3,940,332 → 3,941,721).
+- **8-hour run (24 November 2026, 22:08 to 25 November 2026, 06:08, +03:00).** 97 samples over 480
+  minutes. For `discovery`, `api`, `alerts` and `suricata`: 0 samples not active, 0 restarts, one
+  process ID each. The display app was running in every sample. Alerts rows went from 102 to 103 and
+  never decreased (0 read errors); devices rows stayed at 65. Memory used: average 2573 MiB, maximum
+  2758 MiB. CPU: average 9.6%, maximum 18.1%. Suricata memory: 1178 MiB at the start, 1183 MiB at
+  the end and at most.
 
 ## 5. Capture scope verification (B4) — ☑ Done (2026-11-23)
 
