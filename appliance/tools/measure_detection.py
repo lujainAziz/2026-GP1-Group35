@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Detection-evaluation measurement (Sprint 2, EVALUATION.md §2–3).
 
+Written for the replay method, which was not used in Release 1; the IoT-23
+evaluation read the captures offline (see appliance/tools/IOT23_OFFLINE_TEST.md).
+
 Counts RAW Suricata alert events (pre-deduplication, straight from eve.json and
 its rotated files) inside a replay time window, matched to the replayed capture
 by its own lab addresses — an alert merely co-occurring with the window does

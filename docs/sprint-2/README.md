@@ -361,7 +361,7 @@ Two evaluations, by function:
   max 2.38 and 2.49 GiB, 0 packets dropped with a validated drop measurement; **CPU and memory
   targets met** in both.
 
-Full figures, the memory accounting and the held replay commands are in `EVALUATION.md`.
+Full figures and the memory accounting are in `EVALUATION.md`.
 
 ## Documentation discipline
 - Software/package versions, final configs, file/service paths, changes vs Sprint 1, and commit
