@@ -8,7 +8,10 @@
 > times; the test rules are SIDs 1000001-1000003 (1000004 retired); "Network
 > Risk" is renamed "Network Alert Level" (Sprint 4). This document records
 > Sprint 2 as delivered. Current behaviour: `docs/database-schema.md`,
-> `docs/API_CONTRACT.md`, `docs/sprint-2/threat-alert-titles.md`.
+> `docs/API_CONTRACT.md`, `docs/sprint-2/threat-alert-titles.md`. The detection
+> evaluation was not run as planned in the Evaluation section: only IoT-23 was
+> used, and the captures were read offline by Suricata on the appliance
+> (`suricata -r`); no traffic was replayed (see `EVALUATION.md`).
 
 **Scope:** signature-based threat detection and Threat Alerts. The PBI-13 / PBI-14 acceptance items
 and their status are tracked in `README.md` → *Requirements tracking*; this document is the
@@ -85,7 +88,7 @@ explanations, alert state management (Reviewed/Resolved), notifications, and rem
 A daemon `appliance/alerts.py` and systemd service `appliance/systemd/assas-alerts.service`
 (styled like the existing services, `After=assas-suricata.service`) read Suricata `alert` events
 from eve.json and write Threat Alerts into SQLite. Unit tests live in `appliance/test_alerts.py`
-using small offline PCAPs replayed with `suricata -r`.
+using small offline PCAPs read with `suricata -r`.
 
 **`alerts` table** — the ER-diagram columns plus two additive columns:
 
@@ -190,6 +193,10 @@ With the existing design and styling preserved, the released feature-flag state 
 
 ## Evaluation ◐
 
+> **Note:** items 1 and 2 describe the original plan, which was not carried out. Only IoT-23 was
+> used, and the captures were read offline by Suricata on the appliance (`suricata -r`); no traffic
+> was replayed. See `EVALUATION.md`.
+
 1. **Detection:** labeled attack traffic from CICIoT2023 and IoT-23 is replayed into the monitored
    interface. Dataset files are retrieved only after approval.
    - Detection is measured from the raw Suricata `alert` events, before deduplication.
@@ -213,7 +220,7 @@ With the existing design and styling preserved, the released feature-flag state 
 - `README.md` — scope and differences from Sprint 1.
 - `PLAN.md` — this implementation plan.
 - `TESTING.md` — test instructions and recorded results.
-- `EVALUATION.md` — replay setup, detection results, and resource measurements.
+- `EVALUATION.md` — detection evaluation method and results, and resource measurements.
 
 Planned versus completed and tested work is tracked with the status legend above and updated as
 each item lands.
